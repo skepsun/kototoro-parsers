@@ -10,6 +10,15 @@ plugins {
 group = "org.koitharu"
 version = "1.0"
 
+repositories {
+    // 优先使用国内镜像
+    google()
+    maven("https://maven.aliyun.com/repository/google")
+    maven("https://maven.aliyun.com/repository/gradle-plugin")
+    maven("https://maven.aliyun.com/repository/public")
+    mavenCentral()
+}
+
 tasks.test {
     useJUnitPlatform()
 }
