@@ -2,13 +2,16 @@ package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Cookie
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.MangaLoaderContext
 import org.skepsun.kototoro.parsers.MangaParserAuthProvider
+import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
 import org.skepsun.kototoro.parsers.MangaSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedMangaParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.ArrayList
@@ -35,51 +38,176 @@ import java.util.EnumSet
  */
 @MangaSourceParser("NOVELIA_WENKU", "轻小说机翻(文库)", "zh", type = ContentType.NOVEL)
 internal class NoveliaWenku(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.NOVELIA_WENKU, pageSize = 24), MangaParserAuthProvider {
+    PagedMangaParser(context, MangaParserSource.NOVELIA_WENKU, pageSize = 24), 
+    MangaParserAuthProvider, 
+    MangaParserCredentialsAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("n.novelia.cc")
+    
+    // 登录域名（独立的认证服务器）
+    private val authDomain = "auth.novelia.cc"
+    
+    // 内存中的JWT token
+    private var authTokenMemory: String? = null
 
-    override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
-        .add("Referer", "https://$domain/")
-        .add("Origin", "https://$domain")
-        .build()
+    override fun getRequestHeaders(): Headers {
+        val builder = super.getRequestHeaders().newBuilder()
+            .add("Referer", "https://$domain/")
+            .add("Origin", "https://$domain")
+            .add("Accept", "application/json")
+        
+        // 优先使用内存中的API登录token
+        val token = authTokenMemory ?: getTokenFromCookies()
+        
+        if (token != null) {
+            builder.add("Authorization", "Bearer $token")
+        }
+        
+        return builder.build()
+    }
+    
+    /**
+     * 从Cookie中获取token（兼容旧的WebView登录方式）
+     */
+    private fun getTokenFromCookies(): String? {
+        val cookies = context.cookieJar.getCookies(domain)
+        return cookies.firstOrNull { 
+            it.name.lowercase().contains("token") || 
+            it.name.lowercase().contains("jwt") ||
+            it.name.lowercase().contains("auth")
+        }?.value
+    }
 
     /**
-     * 登录URL - 使用WebView登录
+     * 登录URL - 指向认证服务器
      */
-    override val authUrl: String = "https://$domain/login"
+    override val authUrl: String = "https://$authDomain/?app=n&theme=system"
 
     /**
      * 检查是否已登录
      */
     override suspend fun isAuthorized(): Boolean {
-        return context.cookieJar
-            .getCookies(domain)
-            .any { it.isLoginCookie() }
+        val token = authTokenMemory ?: getTokenFromCookies()
+        return token?.isNotBlank() == true
     }
 
     /**
      * 获取登录用户名
+     * 从JWT token的payload中解析用户名
      */
     override suspend fun getUsername(): String {
-        // 尝试调用API获取用户信息
-        return try {
-            val json = webClient.httpGet("https://$domain/api/user/info").parseJson()
-            json.optString("username", "").ifEmpty {
-                throw AuthRequiredException(source)
-            }
-        } catch (e: Exception) {
+        val token = authTokenMemory ?: getTokenFromCookies()
+        if (token.isNullOrBlank()) {
             throw AuthRequiredException(source)
         }
+        
+        // 解析JWT token获取用户名
+        return try {
+            // JWT格式: header.payload.signature
+            val parts = token.split(".")
+            if (parts.size != 3) {
+                throw ParseException("Invalid JWT token format", authUrl)
+            }
+            
+            // 解码payload (Base64)
+            val payload = parts[1]
+            val paddedPayload = payload + "=".repeat((4 - payload.length % 4) % 4)
+            val decoded = java.util.Base64.getDecoder().decode(paddedPayload)
+            val json = JSONObject(String(decoded, Charsets.UTF_8))
+            
+            // 从payload中提取用户名
+            json.optString("sub", "").ifEmpty {
+                json.optString("username", "").ifEmpty {
+                    "Novelia User"
+                }
+            }
+        } catch (e: Exception) {
+            throw ParseException("Failed to parse username from token: ${e.message}", authUrl)
+        }
     }
-
+    
     /**
-     * 检查Cookie是否是登录Cookie
+     * API登录实现
+     * 
+     * 登录端点: https://auth.novelia.cc/api/v1/auth/login
+     * 请求方法: POST
+     * 请求体: {"username": "xxx", "password": "xxx", "app": "n"}
+     * 响应: 直接返回JWT token字符串（不是JSON）
      */
-    private fun Cookie.isLoginCookie(): Boolean {
-        val name = name.lowercase()
-        // Novelia使用connect.sid作为session cookie
-        return name.contains("connect.sid") || name.contains("session")
+    override suspend fun login(username: String, password: String): Boolean {
+        val loginUrl = "https://$authDomain/api/v1/auth/login"
+        
+        // 构建登录请求体
+        val bodyJson = JSONObject().apply {
+            put("username", username)
+            put("password", password)
+            put("app", "n")  // n = novelia wenku
+        }
+        
+        // 使用原生HTTP请求（类似PicacgParser）
+        val conn = java.net.URL(loginUrl).openConnection() as javax.net.ssl.HttpsURLConnection
+        try {
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.doInput = true
+            conn.useCaches = false
+            conn.connectTimeout = 30000
+            conn.readTimeout = 30000
+            conn.instanceFollowRedirects = false
+            
+            // 写入请求体（必须在设置头之前准备好）
+            val jsonStr = bodyJson.toString()
+            val bytes = jsonStr.toByteArray(Charsets.UTF_8)
+            
+            // 设置请求头（简化，只保留必需的）
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("Content-Length", bytes.size.toString())
+            conn.setRequestProperty("Accept", "*/*")
+            conn.setRequestProperty("User-Agent", "curl/8.7.1")  // 使用curl的UA，已验证可用
+            
+            // 写入请求体
+            conn.outputStream.use { os -> 
+                os.write(bytes)
+                os.flush()
+            }
+            
+            // 获取响应
+            val status = conn.responseCode
+            val responseBody = if (status in 200..299) {
+                conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            } else {
+                conn.errorStream?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
+            }
+            
+            // 检查响应状态
+            if (status !in 200..299) {
+                throw ParseException("Login failed (HTTP $status): $responseBody", loginUrl)
+            }
+            
+            // 响应直接是JWT token字符串（不是JSON）
+            val token = responseBody.trim()
+            
+            if (token.isBlank()) {
+                throw ParseException("Login response is empty", loginUrl)
+            }
+            
+            // 验证token格式（JWT应该有3个部分）
+            if (token.split(".").size != 3) {
+                throw ParseException("Invalid token format: $token", loginUrl)
+            }
+            
+            // 保存token到内存
+            authTokenMemory = token
+            
+            // 同时保存到Cookie（用于持久化）
+            context.cookieJar.insertCookies(domain, "authorization=$token")
+            context.cookieJar.insertCookies(domain, "token=$token")
+            
+            return true
+            
+        } finally {
+            conn.disconnect()
+        }
     }
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
@@ -103,9 +231,12 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         val tags = LinkedHashSet<MangaTag>()
         
         // 等级过滤
-        tags += MangaTag("等级: 全部", "level:0", source)
-        tags += MangaTag("等级: 一般向", "level:1", source)
-        tags += MangaTag("等级: R18", "level:2", source)
+        tags += MangaTag("等级: 轻小说", "level:0", source)
+        tags += MangaTag("等级: 轻文学", "level:1", source)
+        tags += MangaTag("等级: 文学", "level:2", source)
+        tags += MangaTag("等级: 非小说", "level:3", source)
+        tags += MangaTag("等级: R18男性向", "level:4", source)
+        tags += MangaTag("等级: R18女性向", "level:5", source)
         
         return tags
     }
@@ -114,7 +245,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
      * 获取文库小说列表
      * API: GET /api/wenku?page={page}&pageSize={pageSize}&query={query}&level={level}
      * 
-     * 注意：需要登录认证，当前版本可能返回401错误
+     * 注意：需要登录认证，R18内容（level=4,5）需要额外的授权头
      */
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val apiPage = page - 1  // API使用0-based页码
@@ -133,12 +264,9 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
             append("&level=$levelFilter")
         }
         
-        val json = try {
-            webClient.httpGet(apiUrl).parseJson()
-        } catch (e: Exception) {
-            // 如果API调用失败（可能是认证问题），返回空列表
-            return emptyList()
-        }
+        // Cookie会自动从CookieJar发送
+        // 如果未登录，API会返回401/403错误
+        val json = webClient.httpGet(apiUrl).parseJson()
         
         return parseNovelList(json)
     }
@@ -241,7 +369,34 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         
         // novelId从参数传入，确保不为空
         
-        // 日文卷（中日对照）
+        // 中文卷（纯中文）- 默认显示
+        val volumesZh = json.optJSONArray("volumeZh")
+        if (volumesZh != null) {
+            for (i in 0 until volumesZh.length()) {
+                val volumeId = volumesZh.optString(i, "")
+                if (volumeId.isEmpty()) continue
+                
+                // 构建下载URL（纯中文版本）
+                val epubDownloadUrl = buildEpubDownloadUrl(novelId, volumeId, true)
+                
+                // 调试日志
+                println("NoveliaWenku: Building chapter URL (ZH) - novelId=$novelId, volumeId=$volumeId")
+                
+                chapters += MangaChapter(
+                    id = generateUid("/wenku/$novelId/${volumeId.urlEncoded()}/zh"),
+                    title = "$volumeId [EPUB]",  // 简化标题，不显示"(中文)"
+                    number = (i + 1).toFloat(),
+                    volume = 0,  // 使用volume=0，与中日对照版本区分
+                    url = "/wenku/$novelId/${volumeId.urlEncoded()}/zh",
+                    scanlator = "EPUB下载",
+                    uploadDate = 0,
+                    branch = null,  // 默认分支，不显示branch标签
+                    source = source,
+                )
+            }
+        }
+        
+        // 日文卷（中日对照）- 可选显示
         val volumesJp = json.optJSONArray("volumeJp")
         if (volumesJp != null) {
             for (i in 0 until volumesJp.length()) {
@@ -277,38 +432,11 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
                     id = generateUid("/wenku/$novelId/${volumeId.urlEncoded()}"),
                     title = chapterTitle,
                     number = (i + 1).toFloat(),
-                    volume = 0,
+                    volume = 1,  // 使用volume=1，与纯中文版本区分
                     url = "/wenku/$novelId/${volumeId.urlEncoded()}",
                     scanlator = "EPUB下载",
                     uploadDate = 0,
-                    branch = "中日对照",
-                    source = source,
-                )
-            }
-        }
-        
-        // 中文卷（纯中文）
-        val volumesZh = json.optJSONArray("volumeZh")
-        if (volumesZh != null) {
-            for (i in 0 until volumesZh.length()) {
-                val volumeId = volumesZh.optString(i, "")
-                if (volumeId.isEmpty()) continue
-                
-                // 构建下载URL（纯中文版本）
-                val epubDownloadUrl = buildEpubDownloadUrl(novelId, volumeId, true)
-                
-                // 调试日志
-                println("NoveliaWenku: Building chapter URL (ZH) - novelId=$novelId, volumeId=$volumeId")
-                
-                chapters += MangaChapter(
-                    id = generateUid("/wenku/$novelId/${volumeId.urlEncoded()}/zh"),
-                    title = "$volumeId (中文) [EPUB]",
-                    number = (i + 1).toFloat(),
-                    volume = 1,
-                    url = "/wenku/$novelId/${volumeId.urlEncoded()}/zh",
-                    scanlator = "EPUB下载",
-                    uploadDate = 0,
-                    branch = "纯中文",
+                    branch = "中日对照",  // 使用branch区分
                     source = source,
                 )
             }
@@ -364,15 +492,27 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         println("Parts: $parts")
         println("========================================")
         
-        // 检查是否是本地EPUB章节（已下载的）
-        // 本地章节URL格式：file:///path/to/file.cbz#chapter/0
+        // 检查是否是本地EPUB章节（已下载的）- NEW ARCHITECTURE
+        // 新架构使用epub://协议：epub://{manga_id}/chapter/{index}
+        if (chapter.url.startsWith("epub://")) {
+            println("========================================")
+            println("NoveliaWenku.getPages: LOCAL EPUB DETECTED (NEW ARCHITECTURE)")
+            println("URL: ${chapter.url}")
+            println("Returning empty list - content will be loaded by NovelContentLoader")
+            println("========================================")
+            // 本地EPUB章节由NovelContentLoader处理
+            // 返回空列表，避免使用漫画阅读器
+            return emptyList()
+        }
+        
+        // 向后兼容：检查旧格式的本地EPUB章节
         if (chapter.url.startsWith("file://") && chapter.url.contains("#chapter/")) {
             println("========================================")
-            println("NoveliaWenku.getPages: LOCAL EPUB DETECTED")
-            println("Returning empty list")
+            println("NoveliaWenku.getPages: LEGACY EPUB FORMAT DETECTED")
+            println("URL: ${chapter.url}")
+            println("Please re-download this manga to use the new EPUB architecture")
             println("========================================")
-            // 本地EPUB章节不支持在线阅读
-            // 返回空列表，避免使用漫画阅读器导致崩溃
+            // 旧格式不再支持，返回空列表
             return emptyList()
         }
         
@@ -431,7 +571,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         }
         
         // 根据是否是中文版本选择不同的参数
-        val mode = if (isZh) "zh" else "zh-jp"  // 默认使用中日对照
+        val mode = "zh" // 强制使用中文
         val translationsMode = "priority"  // 优先模式
         val translations = "sakura"  // 默认使用Sakura翻译
         
