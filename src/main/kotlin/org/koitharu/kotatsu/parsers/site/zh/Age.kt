@@ -21,6 +21,7 @@ import org.skepsun.kototoro.parsers.model.MangaPage
 import org.skepsun.kototoro.parsers.model.MangaParserSource
 import org.skepsun.kototoro.parsers.model.MangaState
 import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.MangaTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.YEAR_UNKNOWN
@@ -42,7 +43,7 @@ internal class Age(context: MangaLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("www.agedm.io", "www.age.tv")
 
-    private val filterTags: Set<MangaTag> by lazy { buildFilterTags() }
+    private val filterTagBundle by lazy { buildFilterTags() }
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
@@ -56,15 +57,19 @@ internal class Age(context: MangaLoaderContext) :
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions(
-        availableTags = filterTags,
-        availableStates = EnumSet.of(
-            MangaState.ONGOING,
-            MangaState.FINISHED,
-            MangaState.UPCOMING,
-        ),
-        availableContentTypes = EnumSet.of(ContentType.VIDEO),
-    )
+    override suspend fun getFilterOptions(): MangaListFilterOptions {
+        val (tags, groups) = filterTagBundle
+        return MangaListFilterOptions(
+            availableTags = tags,
+            tagGroups = groups,
+            availableStates = EnumSet.of(
+                MangaState.ONGOING,
+                MangaState.FINISHED,
+                MangaState.UPCOMING,
+            ),
+            availableContentTypes = EnumSet.of(ContentType.VIDEO),
+        )
+    }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val document = if (!filter.query.isNullOrBlank()) {
@@ -500,19 +505,32 @@ internal class Age(context: MangaLoaderContext) :
         }
     }
 
-    private fun buildFilterTags(): Set<MangaTag> {
-        fun tag(prefix: String, value: String, title: String = value) =
-            MangaTag(title, "$prefix:$value", source)
+    private fun buildFilterTags(): Pair<Set<MangaTag>, List<MangaTagGroup>> {
         val tags = LinkedHashSet<MangaTag>()
-        AGE_TYPES.forEach { tags += tag("type", it) }
-        AGE_LETTERS.forEach { tags += tag("letter", it) }
-        AGE_YEARS.forEach { tags += tag("year", it) }
-        AGE_GENRES.forEach { tags += tag("genre", it) }
-        AGE_RESOURCES.forEach { tags += tag("source", it) }
-        AGE_AREAS.forEach { tags += tag("area", it) }
-        AGE_SEASONS.forEach { (title, value) -> tags += tag("season", value, title) }
-        AGE_STATUSES.forEach { tags += tag("status", it) }
-        return tags
+        val groups = ArrayList<MangaTagGroup>()
+
+        fun addGroup(name: String, entries: Iterable<Pair<String, String>>) {
+            val groupTags = LinkedHashSet<MangaTag>()
+            entries.forEach { (title, key) ->
+                val t = MangaTag(title, key, source)
+                groupTags.add(t)
+                tags.add(t)
+            }
+            if (groupTags.isNotEmpty()) {
+                groups += MangaTagGroup(name, groupTags)
+            }
+        }
+
+        addGroup("类型", AGE_TYPES.map { it to "type:$it" })
+        addGroup("字母", AGE_LETTERS.map { it to "letter:$it" })
+        addGroup("年份", AGE_YEARS.map { it to "year:$it" })
+        addGroup("标签", AGE_GENRES.map { it to "genre:$it" })
+        addGroup("资源", AGE_RESOURCES.map { it to "source:$it" })
+        addGroup("地区", AGE_AREAS.map { it to "area:$it" })
+        addGroup("季度", AGE_SEASONS.map { (title, value) -> title to "season:$value" })
+        addGroup("状态", AGE_STATUSES.map { it to "status:$it" })
+
+        return tags to groups
     }
 
     private companion object {

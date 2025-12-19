@@ -18,6 +18,10 @@ public data class MangaPage(
 	 * Absolute url of the small page image if exists, null otherwise
 	 */
 	@JvmField public val preview: String?,
+	/**
+	 * Optional per-page request headers (e.g., Referer) to be applied when fetching the page/image.
+	 */
+	@JvmField public val headers: Map<String, String>? = null,
 	@JvmField public val source: MangaSource,
 )
 
