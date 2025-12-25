@@ -50,7 +50,7 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         "api.copy2000.online",
     )
     @OptIn(InternalParsersApi::class)
-    override val userAgentKey = ConfigKey.UserAgent("COPY/3.0.0")
+    override val userAgentKey = ConfigKey.UserAgent("COPY/3.0.6")
     // 线路设置：海外(0)/大陆(1)，用于 Header 的 region 以及优先尝试的 line
     @OptIn(InternalParsersApi::class)
     private val preferredLineKey = ConfigKey.PreferredImageServer(
@@ -70,6 +70,8 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
     
     // 作者名与其 path_word 的映射，用于点击作者搜索（参考 JS 配置）
     private val authorPathWordDict = mutableMapOf<String, String>()
+    
+    private var discoveryAttempted = false
     
     override val faviconDomain: String
         get() = "www.mangacopy.com"
@@ -196,60 +198,79 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
     }
 
     @OptIn(InternalParsersApi::class)
-    override fun getRequestHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", config[userAgentKey])
+override fun getRequestHeaders(): Headers {
+    val ts = (System.currentTimeMillis() / 1000).toString()
+    val sig = hmacSha256(COPY_SECRET, ts)
+    
+    val cal = java.util.Calendar.getInstance()
+    val year = cal.get(java.util.Calendar.YEAR)
+    val month = (cal.get(java.util.Calendar.MONTH) + 1).toString().padStart(2, '0')
+    val day = cal.get(java.util.Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
+    val dt = "$year.$month.$day"
+
+    val apiDomain = apiBase()
+    var tokenCookie = context.cookieJar.getCookies(apiDomain).find {
+        it.name.equals("token", ignoreCase = true) || it.name.equals("authorization", ignoreCase = true)
+    }
+    if (tokenCookie == null) {
+        val site = siteDomain()
+        context.cookieJar.copyCookies(site, apiDomain, arrayOf("token", "authorization"))
+        tokenCookie = context.cookieJar.getCookies(apiDomain).find {
+            it.name.equals("token", ignoreCase = true) || it.name.equals("authorization", ignoreCase = true)
+        }
+    }
+    val authHeader = tokenCookie?.value?.let { v ->
+        if (v.isNotBlank()) "Token $v" else "Token"
+    } ?: "Token"
+
+    return Headers.Builder()
+        .add("User-Agent", "COPY/3.0.6")
         .add("source", "copyApp")
         .add("deviceinfo", deviceInfo)
+        .add("dt", dt)
         .add("platform", "3")
-        .add("referer", "com.copymanga.app-3.0.0")
-        .add("version", "3.0.0")
+        .add("referer", "com.copymanga.app-3.0.6")
+        .add("version", "3.0.6")
         .add("device", device)
         .add("pseudoid", pseudoId)
         .add("Accept", "application/json")
         .add("region", config[preferredLineKey] ?: DEFAULT_REGION)
-        .apply {
-            // 附加 Token：从 Cookie 中读取（若存在）
-            val apiDomain = apiBase()
-            var tokenCookie = context.cookieJar.getCookies(apiDomain).find {
-                it.name.equals("token", ignoreCase = true) || it.name.equals("authorization", ignoreCase = true)
-            }
-            if (tokenCookie == null) {
-                // 如果 API 域没有 token，尝试从站点域拷贝指定 cookie 到 API 域
-                val site = siteDomain()
-                context.cookieJar.copyCookies(site, apiDomain, arrayOf("token", "authorization"))
-                tokenCookie = context.cookieJar.getCookies(apiDomain).find {
-                    it.name.equals("token", ignoreCase = true) || it.name.equals("authorization", ignoreCase = true)
-                }
-            }
-            val authHeader = tokenCookie?.value?.let { v ->
-                if (v.isNotBlank()) "Token $v" else "Token"
-            } ?: "Token"
-            add("authorization", authHeader)
-            // 认证时间戳与签名
-            val now = java.util.Date()
-            val cal = java.util.Calendar.getInstance().apply { time = now }
-            val year = cal.get(java.util.Calendar.YEAR)
-            val month = (cal.get(java.util.Calendar.MONTH) + 1).toString().padStart(2, '0')
-            val day = cal.get(java.util.Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
-            val ts = (now.time / 1000).toString()
-            add("dt", "$year.$month.$day")
-            add("x-auth-timestamp", ts)
-            val sig = hmacSha256(COPY_SECRET, ts)
-            add("x-auth-signature", sig)
-            add("umstring", "b4c89ca4104ea9a97750314d791520ac")
-        }
+        .add("authorization", authHeader)
+        .add("umstring", "b4c89ca4104ea9a97750314d791520ac")
+        .add("x-auth-timestamp", ts)
+        .add("x-auth-signature", sig)
         .build()
+}
 
     @OptIn(InternalParsersApi::class)
     private fun apiBase(): String {
         return baseUrlOverride ?: config[configKeyDomain]
     }
 
-    // 刷新 API 端点（优先使用配置的固定域 api.copy2000.online）
+    // 刷新 API 端点（优先尝试发现接口，若失败则使用配置或回退域）
     @OptIn(InternalParsersApi::class)
     private suspend fun refreshAppApi(): String {
         // 若已刷新过则复用缓存
         baseUrlOverride?.let { return it }
+        
+        if (!discoveryAttempted) {
+            discoveryAttempted = true
+            val discoveryUrl = "https://api.copy-manga.com/api/v3/system/network2?platform=3"
+            try {
+                // 此时尚未设置 baseUrlOverride，getRequestHeaders 会回退使用 config 域
+                val resp = webClient.httpGet(discoveryUrl, getRequestHeaders())
+                val json = resp.parseJson()
+                val api = json.optJSONObject("results")?.optJSONArray("api")?.optJSONArray(0)?.optString(0)
+                if (!api.isNullOrBlank()) {
+                    baseUrlOverride = api
+                    siteDomainOverride = if (api.startsWith("api.")) api.removePrefix("api.") else api
+                    return api
+                }
+            } catch (e: Exception) {
+                // 忽略发现异常，继续走默认流程
+            }
+        }
+        
         val host = config[configKeyDomain]
         baseUrlOverride = host
         // 同步推导站点域（移除 "api." 前缀）
@@ -261,7 +282,7 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
 
     // 统一的 210 抗刷重试 GET（返回 JSON）；用于详情与章节列表
     @OptIn(InternalParsersApi::class)
-    private suspend fun httpGetJsonWithAntiAbuse(url: String, headers: Headers, maxAttempts: Int = 5): JSONObject {
+    private suspend fun httpGetJsonWithAntiAbuse(url: String, headers: Headers, maxAttempts: Int = 3): JSONObject {
         var attempt = 0
         val defaultWaitMs = 40_000L
         while (attempt < maxAttempts) {
@@ -272,10 +293,19 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
                 return JSONObject()
             }
             if (response.code == 210) {
+                val body = runCatching { response.parseJson() }.getOrElse { JSONObject() }
+                val msg = body.optString("message")
+                
+                // 仅当明确提及等待时间时才重试；否则视为维护或区域限制，直接返回 body
+                val isRateLimit = msg.contains("seconds", ignoreCase = true) || 
+                                 msg.contains("available in", ignoreCase = true)
+                
+                if (!isRateLimit) {
+                    return body
+                }
+                
                 // 访问过于频繁，解析等待时间并重试
                 val waitMs = runCatching {
-                    val body = response.parseJson()
-                    val msg = body.optString("message")
                     val m = Regex("(\\d+)\\s*seconds").find(msg)
                     val seconds = m?.groups?.get(1)?.value?.toLongOrNull()
                         ?: msg.toLongOrNull()
@@ -437,25 +467,21 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         // 仅使用 API 详情与分组章节批量拉取（含 210 重试与参数回退）
         val base = refreshAppApi()
         val headers = getRequestHeaders()
-        val detailBase = "https://$base/api/v3/comic2/${manga.url}"
-        val detailParamCombos = listOf(
-            "?platform=3&_update=true",
-            "?platform=3&_update=true&in_mainland=true&request_id=",
-            "?in_mainland=true&_update=true&request_id=",
-            "?platform=3&_update=true&in_mainland=true",
-            "?platform=3&_update=true&request_id=",
-            "?platform=3",
-        )
-        var res: JSONObject? = null
-        for (suffix in detailParamCombos) {
-            val url = detailBase + suffix
-            val data = httpGetJsonWithAntiAbuse(url, headers)
-            val candidate = data.optJSONObject("results")
-            if (candidate != null) {
-                res = candidate
-                break
+        
+        var res: JSONObject? = fetchDetailsWithFallbackParams(base, manga.url, headers)
+        
+        // 若主域失败，尝试回退域
+        if (res == null) {
+            for (fallback in FALLBACK_DOMAINS) {
+                if (fallback == base) continue
+                res = fetchDetailsWithFallbackParams(fallback, manga.url, headers)
+                if (res != null) {
+                    baseUrlOverride = fallback
+                    break
+                }
             }
         }
+        
         if (res == null) return manga
         val comic = res.optJSONObject("comic") ?: return manga
 
@@ -504,34 +530,13 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         if (pathList.isEmpty()) pathList += "default"
 
         val chapters = ArrayList<MangaChapter>()
+        val currentBase = baseUrlOverride ?: base
         for (path in pathList) {
             var offset = 0
             while (true) {
-                val baseQuery = "https://$base/api/v3/comic/${manga.url}/group/$path/chapters?limit=100&offset=$offset"
-                val paramCombos = listOf(
-                    "&platform=3&_update=true&in_mainland=true&request_id=",
-                    "&platform=3&_update=true",
-                    "&_update=true",
-                    "&in_mainland=true&request_id=",
-                    "&platform=3",
-                )
-                var list: JSONArray = JSONArray()
-                var found = false
-                for (suffix in paramCombos) {
-                    val chUrl = baseQuery + suffix
-                    val groupData = httpGetJsonWithAntiAbuse(chUrl, headers)
-                    val results = groupData.optJSONObject("results")
-                    val candidate = results?.optJSONArray("list") ?: JSONArray()
-                    if (candidate.length() > 0) {
-                        list = candidate
-                        found = true
-                        break
-                    }
-                    // 若服务端明确返回 total=0，则继续下一个组合；否则视为未命中，尝试下一个
-                    val total = results?.optInt("total", 0) ?: 0
-                    if (total == 0) continue
-                }
-                if (!found) break
+                val list = fetchChaptersWithFallbackParams(currentBase, manga.url, path, offset, headers)
+                if (list == null || list.length() == 0) break
+                
                 for (j in 0 until list.length()) {
                     val c = list.optJSONObject(j) ?: continue
                     val serial = c.optString("name", "${offset + j + 1}")
@@ -567,40 +572,76 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         )
     }
 
+    private suspend fun fetchDetailsWithFallbackParams(base: String, mangaUrl: String, headers: Headers): JSONObject? {
+        val detailBase = "https://$base/api/v3/comic2/$mangaUrl"
+        val detailParamCombos = listOf(
+            "?in_mainland=true&request_id=&platform=3",
+            "?platform=3&_update=true",
+            "?platform=3&_update=true&in_mainland=true&request_id=",
+            "?in_mainland=true&_update=true&request_id=",
+            "?platform=3&_update=true&request_id=",
+            "?platform=3",
+        )
+        for (suffix in detailParamCombos) {
+            val data = httpGetJsonWithAntiAbuse(detailBase + suffix, headers)
+            val candidate = data.optJSONObject("results")
+            if (candidate != null) return candidate
+        }
+        return null
+    }
+
+    private suspend fun fetchChaptersWithFallbackParams(base: String, mangaUrl: String, groupPath: String, offset: Int, headers: Headers): JSONArray? {
+        val baseQuery = "https://$base/api/v3/comic/$mangaUrl/group/$groupPath/chapters?limit=100&offset=$offset"
+        val paramCombos = listOf(
+            "&in_mainland=true&request_id=",
+            "&platform=3&_update=true&in_mainland=true&request_id=",
+            "&platform=3&_update=true",
+            "&_update=true",
+            "&platform=3",
+        )
+        for (suffix in paramCombos) {
+            val groupData = httpGetJsonWithAntiAbuse(baseQuery + suffix, headers)
+            val results = groupData.optJSONObject("results")
+            val candidate = results?.optJSONArray("list")
+            if (candidate != null && candidate.length() > 0) return candidate
+            if (results?.optInt("total", -1) == 0) return JSONArray()
+        }
+        return null
+    }
+
     @OptIn(InternalParsersApi::class)
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         // 仅使用 API 读取章节内容（含 210 重试与参数回退组合）
         val base = refreshAppApi()
         val headers = getRequestHeaders()
-        val epBase = "https://$base/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
-        val preferredLine = config[preferredLineKey] ?: DEFAULT_REGION
-        val paramCombos = if (preferredLine == "0") {
-            listOf(
-                "?platform=3&_update=true&line=0",
-                "?platform=3&_update=true&line=1",
-                "?line=0&_update=true",
-                "?line=1&_update=true",
-                "?platform=3&_update=true&line=0&in_mainland=true&request_id=",
-                "?platform=3&_update=true&line=1&in_mainland=true&request_id=",
-                "?line=0&in_mainland=true&request_id=",
-                "?line=1&in_mainland=true&request_id=",
-                "?platform=3&line=0",
-                "?platform=3&line=1",
-            )
-        } else {
-            listOf(
-                "?platform=3&_update=true&line=1",
-                "?platform=3&_update=true&line=0",
-                "?line=1&_update=true",
-                "?line=0&_update=true",
-                "?platform=3&_update=true&line=1&in_mainland=true&request_id=",
-                "?platform=3&_update=true&line=0&in_mainland=true&request_id=",
-                "?line=1&in_mainland=true&request_id=",
-                "?line=0&in_mainland=true&request_id=",
-                "?platform=3&line=1",
-                "?platform=3&line=0",
-            )
+        
+        var pages = fetchPagesFromBase(base, chapter, headers)
+        if (pages.isEmpty()) {
+            for (fallback in FALLBACK_DOMAINS) {
+                if (fallback == base) continue
+                pages = fetchPagesFromBase(fallback, chapter, headers)
+                if (pages.isNotEmpty()) {
+                    baseUrlOverride = fallback
+                    break
+                }
+            }
         }
+        return pages
+    }
+
+    private suspend fun fetchPagesFromBase(base: String, chapter: MangaChapter, headers: Headers): List<MangaPage> {
+        val epBase = "https://$base/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
+        val paramCombos = listOf(
+            "?in_mainland=true&request_id=",
+            "?platform=3&_update=true&line=1",
+            "?platform=3&_update=true&line=0",
+            "?line=1&_update=true",
+            "?line=0&_update=true",
+            "?platform=3&_update=true&line=1&in_mainland=true&request_id=",
+            "?platform=3&_update=true&line=0&in_mainland=true&request_id=",
+            "?platform=3&line=1",
+            "?platform=3&line=0",
+        )
 
         for (suffix in paramCombos) {
             val url = epBase + suffix
@@ -868,6 +909,14 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         private const val DEFAULT_REGION = "1"
         private const val COPY_SECRET = "M2FmMDg1OTAzMTEwMzJlZmUwNjYwNTUwYTA1NjNhNTM="
         private const val COPY_SEARCH_API = "/api/kb/web/searchb/comics"
+        private val FALLBACK_DOMAINS = listOf(
+            "api.copy2000.online",
+            "api.copy2001.online",
+            "api.copy2002.online",
+            "api.copymanga.tv",
+            "api.copymanga.org",
+            "api.mangacopy.com"
+        )
         private val HAN_REGEX = Regex("[\\p{IsHan}]")
     }
 }

@@ -38,9 +38,26 @@ internal class Wenku8(context: MangaLoaderContext) :
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions(
-        availableTags = buildFilterTags(),
-    )
+    override suspend fun getFilterOptions(): MangaListFilterOptions {
+        val initialTags = LETTERS.map { letter ->
+            MangaTag("首字母 $letter", "initial:$letter", source)
+        }
+        val categoryTags = CATEGORIES.map { (name, value) ->
+            MangaTag(name, "class:$value", source)
+        }
+        val tagTags = buildTagGroups(source)
+        val rankTags = RANKINGS.map { (name, sort) ->
+            MangaTag(name, "rank:$sort", source)
+        }
+        val allTags = (initialTags + categoryTags + tagTags.flatMap { it.tags } + rankTags).toSet()
+        return MangaListFilterOptions(
+            availableTags = allTags,
+            tagGroups = listOf(
+                MangaTagGroup(title = "首字母", tags = initialTags.toSet()),
+                MangaTagGroup(title = "文库分类", tags = categoryTags.toSet()),
+            ) + tagTags + listOf(MangaTagGroup(title = "排行榜", tags = rankTags.toSet())),
+        )
+    }
 
     override val authUrl: String = "https://$domain/login.php"
 
@@ -180,7 +197,10 @@ internal class Wenku8(context: MangaLoaderContext) :
                 }
             }
             
-            val sanitized = content.html()
+            var sanitized = content.html()
+            // 压缩过多空行/换行
+            sanitized = sanitized.replace(Regex("(\\s*<br[^>]*>\\s*){3,}", RegexOption.IGNORE_CASE), "<br><br>")
+                .replace(Regex("(\\s*\\n){3,}"), "\n\n")
             val html = buildString {
                 append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>")
                 append("<style>")
@@ -313,12 +333,39 @@ internal class Wenku8(context: MangaLoaderContext) :
     }
 
     private fun buildCatalogUrl(filter: MangaListFilter, page: Int): String {
+        // 仅取第一个标签，互斥模式
+        val firstTag = filter.tags.firstOrNull()
+
+        // 排行独立使用
+        firstTag?.key?.takeIf { it.startsWith("rank:") }?.removePrefix("rank:")?.takeIf { it.isNotBlank() }?.let { sort ->
+            return buildString {
+                append("https://").append(domain)
+                    .append("/modules/article/toplist.php?sort=").append(sort)
+                if (page > 1) append("&page=").append(page)
+            }
+        }
+        // 标签单独使用
+        firstTag?.key?.takeIf { it.startsWith("tag:") }?.removePrefix("tag:")?.takeIf { it.isNotBlank() }?.let { tag ->
+            return buildString {
+                append("https://").append(domain)
+                    .append("/modules/article/tags.php?t=").append(tag)
+                if (page > 1) append("&page=").append(page)
+            }
+        }
+
+        // 首字母 / 文库分类只取一个标签（如果首字母 + 分类同时选，优先首字母）
+        val initialParam = firstTag?.key?.takeIf { it.startsWith("initial:") }?.removePrefix("initial:")
+        val classParam = firstTag?.key?.takeIf { it.startsWith("class:") }?.removePrefix("class:")
+
         val url = StringBuilder()
             .append("https://").append(domain)
             .append("/modules/article/articlelist.php")
         val params = ArrayList<String>(3)
-        filter.valueFor("initial")?.takeIf { it.isNotBlank() }?.let { params += "initial=$it" }
-        filter.valueFor("class")?.takeIf { it.isNotBlank() }?.let { params += "class=$it" }
+        initialParam?.takeIf { it.isNotBlank() }?.let { params += "initial=$it" }
+        // 仅当未选择首字母时才使用分类
+        if (initialParam.isNullOrBlank()) {
+            classParam?.takeIf { it.isNotBlank() }?.let { params += "class=$it" }
+        }
         if (page > 1) params += "page=$page"
         if (params.isNotEmpty()) {
             url.append('?').append(params.joinToString("&"))
@@ -415,18 +462,6 @@ internal class Wenku8(context: MangaLoaderContext) :
             ?.substringAfter(':')
     }
 
-    private fun buildFilterTags(): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
-        LETTERS.forEach { letter ->
-            tags += MangaTag("首字母 $letter", "initial:$letter", source)
-        }
-        tags += MangaTag("首字母 全部", "initial:", source)
-        CATEGORIES.forEach { (name, value) ->
-            tags += MangaTag(name, "class:$value", source)
-        }
-        return tags
-    }
-
 	private fun createErrorPage(message: String): MangaPage {
 		val html = buildErrorHtml(message)
 		return MangaPage(
@@ -472,5 +507,93 @@ internal class Wenku8(context: MangaLoaderContext) :
             "HJ文库" to "7",
             "一迅社" to "8",
         )
+        private val DAILY_TAGS = listOf(
+            "校园" to "%D0%A3%D4%BA",
+            "青春" to "%C7%E0%B4%BA",
+            "恋爱" to "%C1%B5%B0%AE",
+            "治愈" to "%D6%CE%D3%E0",
+            "群像" to "%C8%BA%CF%F1",
+            "竞技" to "%BE%BA%BC%B6",
+            "音乐" to "%D2%F4%C0%D6",
+            "美食" to "%C3%C0%CA%B3",
+            "旅行" to "%C2%C3%D0%D0",
+            "欢乐向" to "%BB%B6%C0%D6%CF%F2",
+            "经营" to "%BE%AD%D3%AA",
+            "职场" to "%D6%B0%B3%A1",
+            "斗智" to "%B6%B7%D6%C7",
+            "脑洞" to "%C4%D4%B6%B4",
+            "宅文化" to "%D5%AC%CE%C4%BB%AF",
+        )
+        private val FANTASY_TAGS = listOf(
+            "穿越" to "%B4%A9%D4%BD",
+            "奇幻" to "%C6%E6%BB%C3",
+            "魔法" to "%C4%A7%B7%A8",
+            "异能" to "%D2%EC%C4%DC",
+            "战斗" to "%D5%BD%B6%B7",
+            "科幻" to "%BF%C6%BB%C3",
+            "机战" to "%BB%FA%D5%BD",
+            "战争" to "%D5%BD%D5%F9",
+            "冒险" to "%C3%B2%CF%D5",
+            "龙傲天" to "%C1%FA%B0%C2%CC%EC",
+        )
+        private val DARK_TAGS = listOf(
+            "悬疑" to "%D0%F5%D2%F7",
+            "犯罪" to "%B7%B8%D7%EF",
+            "复仇" to "%B8%B4%B3%F0",
+            "黑暗" to "%BA%DA%B0%B5",
+            "猎奇" to "%C1%D8%C6%E6",
+            "惊悚" to "%BE%B5%CB%FE",
+            "间谍" to "%BC%E4%B5%DC",
+            "末日" to "%C4%A9%C8%D5",
+            "游戏" to "%D3%CE%CF%B7",
+            "大逃杀" to "%B4%F3%CC%D3%C9%B1",
+        )
+        private val CHARACTER_TAGS = listOf(
+            "青梅竹马" to "%C7%E0%C3%B7%D6%A1%C2%DE",
+            "妹妹" to "%C3%C3%C3%C3",
+            "女儿" to "%C5%AE%B6%F9",
+            "JK" to "JK",
+            "JC" to "JC",
+            "大小姐" to "%B4%F3%D0%A1%BD%E3",
+            "性转" to "%D0%D4%D7%AA",
+            "伪娘" to "%CE%E2%C4%EF",
+            "人外" to "%C8%CB%CD%E2",
+        )
+        private val SPECIAL_TAGS = listOf(
+            "后宫" to "%BA%F3%B9%AC",
+            "百合" to "%B0%D9%BA%CF",
+            "耽美" to "%B5%CF%C3%C0",
+            "NTR" to "NTR",
+            "女性视角" to "%C5%AE%D0%D4%CA%D3%BD%C7",
+        )
+        private val RANKINGS = listOf(
+            "总排行榜" to "allvisit",
+            "总推荐榜" to "allvote",
+            "月排行榜" to "monthvisit",
+            "月推荐榜" to "monthvote",
+            "周排行榜" to "weekvisit",
+            "周推荐榜" to "weekvote",
+            "日排行榜" to "dayvisit",
+            "日推荐榜" to "dayvote",
+            "最新入库" to "postdate",
+            "最近更新" to "lastupdate",
+            "总收藏榜" to "goodnum",
+            "字数排行" to "size",
+        )
+
+        private fun buildTagGroups(source: MangaSource): List<MangaTagGroup> {
+            fun toGroup(title: String, pairs: List<Pair<String, String>>): MangaTagGroup =
+                MangaTagGroup(
+                    title = title,
+                    tags = pairs.map { (name, value) -> MangaTag(name, "tag:$value", source) }.toSet(),
+                )
+            return listOf(
+                toGroup("日常系属性", DAILY_TAGS),
+                toGroup("幻想系属性", FANTASY_TAGS),
+                toGroup("黑深残属性", DARK_TAGS),
+                toGroup("人物属性", CHARACTER_TAGS),
+                toGroup("特殊属性", SPECIAL_TAGS),
+            )
+        }
     }
 }
