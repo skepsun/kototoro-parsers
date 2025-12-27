@@ -121,21 +121,21 @@ internal class PicacgParser(context: MangaLoaderContext) :
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions = try {
-        val dynamicTags = fetchAvailableKeywords()
-        val allTags = (dynamicTags + staticCategoryTags)
+    override suspend fun getFilterOptions(): MangaListFilterOptions {
+        val staticTags = staticCategoryTags
+        val dynamicTags = runCatching { fetchAvailableKeywords() }
+            .onFailure { println("PICACG TAGS: fetch keywords failed ${it.message}") }
+            .getOrDefault(emptySet())
+        val allTags = (dynamicTags + staticTags)
+        println("PICACG TAGS: static=${staticTags.size}, dynamic=${dynamicTags.size}, all=${allTags.size}")
         val groups = buildList<MangaTagGroup> {
-            if (staticCategoryTags.isNotEmpty()) add(MangaTagGroup("分类", staticCategoryTags))
+            if (staticTags.isNotEmpty()) add(MangaTagGroup("分类", staticTags))
             if (dynamicTags.isNotEmpty()) add(MangaTagGroup("关键词", dynamicTags))
         }
-        MangaListFilterOptions(
+        return MangaListFilterOptions(
             availableTags = allTags,
             availableLocales = setOf(Locale.CHINESE),
             tagGroups = groups,
-        )
-    } catch (_: Exception) {
-        MangaListFilterOptions(
-            availableLocales = setOf(Locale.CHINESE)
         )
     }
 
@@ -743,6 +743,9 @@ internal class PicacgParser(context: MangaLoaderContext) :
 
     private val staticCategoryTags: Set<MangaTag> = staticCategories.mapNotNullToSet { t ->
         t.takeIf { it.isNotBlank() }?.let { MangaTag(title = it, key = it.lowercase(Locale.ROOT), source = source) }
+    }
+    init {
+        println("PICACG TAGS INIT: staticCategories=${staticCategories.size}, staticTags=${staticCategoryTags.size}")
     }
 
     private fun isStaticCategory(name: String?): Boolean {
