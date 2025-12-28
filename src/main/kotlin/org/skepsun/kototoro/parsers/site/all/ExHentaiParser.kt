@@ -75,6 +75,7 @@ internal class ExHentaiParser(
 
     override suspend fun getFilterOptions() = MangaListFilterOptions(
         availableTags = mapTags(),
+        tagGroups = cachedTagGroups,
         availableContentTypes = EnumSet.of(
             ContentType.DOUJINSHI,
             ContentType.MANGA,
@@ -272,7 +273,7 @@ internal class ExHentaiParser(
         get() = "ahegao,anal,angel,apron,bandages,bbw,bdsm,beauty mark,big areolae,big ass,big breasts,big clit,big lips," +
             "big nipples,bikini,blackmail,bloomers,blowjob,bodysuit,bondage,breast expansion,bukkake,bunny girl,business suit," +
             "catgirl,centaur,cheating,chinese dress,christmas,collar,corset,cosplaying,cowgirl,crossdressing,cunnilingus," +
-            "dark skin,daughter,deepthroat,defloration,demon girl,double penetration,dougi,dragon,drunk,elf,exhibitionism,farting," +
+            "dark skin,daughter,deepthroat,defloration,demon girl,double penetration,double vaginal,dougi,dragon,drunk,elf,exhibitionism,farting," +
             "females only,femdom,filming,fingering,fishnets,footjob,fox girl,furry,futanari,garter belt,ghost,giantess," +
             "glasses,gloves,goblin,gothic lolita,growth,guro,gyaru,hair buns,hairy,hairy armpits,handjob,harem,hidden sex," +
             "horns,huge breasts,humiliation,impregnation,incest,inverted nipples,kemonomimi,kimono,kissing,lactation," +
@@ -282,22 +283,391 @@ internal class ExHentaiParser(
             "sex toys,shemale,sister,small breasts,smell,sole dickgirl,sole female,squirting,stockings,sundress,sweating," +
             "swimsuit,swinging,tail,tall girl,teacher,tentacles,thigh high boots,tomboy,transformation,twins,twintails," +
             "unusual pupils,urination,vore,vtuber,widow,wings,witch,wolf girl,x-ray,yuri,zombie,sole male,males only,yaoi," +
-            "tomgirl,tall man,oni,shotacon,prostate massage,policeman,males only,huge penis,fox boy,feminization,dog boy,dickgirl on male,big penis"
+            "tomgirl,tall man,oni,shotacon,prostate massage,policeman,males only,huge penis,fox boy,feminization,dog boy,dickgirl on male,big penis," +
+            "triple vaginal,fff threesome,fft threesome,ffm threesome,mmf threesome,mmt threesome,mtf threesome,ttf threesome,ttt threesome,ttm threesome," +
+            "real doll,strap-on,speculum,tail plug,tube,vacbed,wooden horse,wormhole,apparel bukkake,cum bath,giant sperm," +
+            "internal urination,omorashi,public use,scat insertion,chikan,confinement,food on body,forniphilia,human cattle,petplay,slave,smalldom," +
+            "tickling,fanny packing,harness,shibari,stuck in wall,abortion,cannibalism,catfight,cbt,cuntbusting,dismantling,electric shocks,ryona," +
+            "snuff,torture,trampling,wrestling,autofellatio,autopaizuri,clone,phone sex,selfcest,solo action,table masturbation,blind,handicapped,mute," +
+            "gender change,gender morph,dickgirl on dickgirl,dickgirl on female,male on dickgirl,first person perspective,coach,mesugaki,prostitution,tutor," +
+            "dickgirls only,netorase,aunt,cousin,daughter,granddaughter,grandmother,inseki,niece,oyakodon,shimaidon,forced exposure,voyeurism,low bestiality," +
+            "low guro,low incest,low lolicon,low scat,low smegma,focus anal,focus blowjob,focus paizuri"
 
-    private fun mapTags(): Set<MangaTag> {
+    private val tagTranslations = mapOf(
+        "ahegao" to "阿黑颜",
+        "anal" to "爆肛",
+        "angel" to "天使",
+        "apron" to "围裙",
+        "bandages" to "绷带",
+        "bbw" to "胖女人",
+        "bdsm" to "调教",
+        "beauty mark" to "美人痣",
+        "big areolae" to "大乳晕",
+        "big ass" to "大屁股",
+        "big breasts" to "巨乳",
+        "big clit" to "大阴蒂",
+        "big lips" to "大嘴唇💋",
+        "big nipples" to "大乳头",
+        "big penis" to "大根",
+        "bikini" to "比基尼👙",
+        "blackmail" to "要挟",
+        "bloomers" to "布鲁马",
+        "blowjob" to "口交",
+        "bodysuit" to "紧身衣裤",
+        "bondage" to "束缚",
+        "breast expansion" to "乳房膨胀",
+        "bukkake" to "颜射",
+        "bunny girl" to "兔女郎",
+        "business suit" to "西装",
+        "catgirl" to "猫女",
+        "centaur" to "半人马",
+        "cheating" to "出轨",
+        "chinese dress" to "旗袍",
+        "christmas" to "圣诞装🤶",
+        "collar" to "项圈",
+        "corset" to "紧身胸衣",
+        "cosplaying" to "Cosplay",
+        "cowgirl" to "牛女孩",
+        "crossdressing" to "异性装",
+        "cunnilingus" to "舔阴",
+        "dark skin" to "黑皮",
+        "daughter" to "女儿",
+        "deepthroat" to "深喉",
+        "defloration" to "破处",
+        "demon girl" to "恶魔女孩",
+        "dickgirl on male" to "扶上男",
+        "dog boy" to "狗男孩",
+        "double penetration" to "双重插入",
+        "double vaginal" to "双插阴道",
+        "dougi" to "练功服🥋",
+        "dragon" to "龙🐉",
+        "drunk" to "醉酒",
+        "elf" to "精灵🧝‍♀️",
+        "exhibitionism" to "露阴癖",
+        "farting" to "放屁",
+        "females only" to "纯女性⚢",
+        "femdom" to "女性主导",
+        "feminization" to "女性化",
+        "filming" to "摄像",
+        "fingering" to "指法",
+        "fishnets" to "渔网",
+        "footjob" to "足交",
+        "fox boy" to "狐男",
+        "fox girl" to "狐女",
+        "furry" to "毛茸茸",
+        "futanari" to "扶她",
+        "garter belt" to "吊袜带",
+        "ghost" to "幽灵👻",
+        "giantess" to "女巨人",
+        "glasses" to "眼镜👓",
+        "gloves" to "手套",
+        "goblin" to "哥布林",
+        "gothic lolita" to "哥特萝莉装",
+        "growth" to "巨大化",
+        "guro" to "猎奇",
+        "gyaru" to "辣妹",
+        "hair buns" to "丸子头",
+        "hairy" to "多毛",
+        "hairy armpits" to "腋毛",
+        "handjob" to "打手枪",
+        "harem" to "后宫",
+        "hidden sex" to "隐蔽性交",
+        "horns" to "角",
+        "huge breasts" to "超乳",
+        "huge penis" to "巨根",
+        "humiliation" to "屈辱",
+        "impregnation" to "受孕",
+        "incest" to "乱伦",
+        "inverted nipples" to "乳头内陷",
+        "kemonomimi" to "兽耳",
+        "kimono" to "和服👘",
+        "kissing" to "接吻💏",
+        "lactation" to "母乳",
+        "latex" to "乳胶紧身衣",
+        "leg lock" to "勾腿",
+        "leotard" to "紧身衣",
+        "lingerie" to "情趣内衣",
+        "lizard girl" to "蜥蜴女孩",
+        "lolicon" to "萝莉",
+        "maid" to "女仆装",
+        "males only" to "纯男性⚣",
+        "masked face" to "假面",
+        "masturbation" to "自慰",
+        "midget" to "侏儒",
+        "miko" to "巫女装",
+        "milf" to "熟女",
+        "mind break" to "洗脑",
+        "mind control" to "催眠",
+        "monster girl" to "魔物娘",
+        "mother" to "母亲",
+        "muscle" to "肌肉",
+        "nakadashi" to "中出",
+        "netorare" to "NTR",
+        "nose hook" to "鼻吊钩",
+        "nun" to "修女服",
+        "nurse" to "护士装",
+        "oil" to "油",
+        "oni" to "鬼",
+        "paizuri" to "乳交",
+        "panda girl" to "熊猫娘",
+        "pantyhose" to "连裤袜",
+        "piercing" to "穿孔",
+        "pixie cut" to "精灵头",
+        "policeman" to "警服",
+        "policewoman" to "警服",
+        "ponytail" to "马尾辫",
+        "pregnant" to "怀孕",
+        "prostate massage" to "前列腺按摩",
+        "rape" to "强奸",
+        "rimjob" to "舔肛",
+        "robot" to "机器人🤖",
+        "scat" to "粪便💩",
+        "scat insertion" to "粪便插入",
+        "schoolgirl uniform" to "女生制服",
+        "sex toys" to "性玩具",
+        "shemale" to "人妖♂",
+        "shotacon" to "正太",
+        "sister" to "姐妹",
+        "small breasts" to "贫乳",
+        "smell" to "气味",
+        "sole dickgirl" to "单扶她",
+        "sole female" to "单女主",
+        "sole male" to "单男主",
+        "squirting" to "潮吹",
+        "stockings" to "长筒袜",
+        "sundress" to "夏装",
+        "sweating" to "出汗",
+        "swimsuit" to "泳装",
+        "swinging" to "换妻",
+        "tail" to "尾巴",
+        "tall girl" to "高个女",
+        "tall man" to "高个男",
+        "teacher" to "教师",
+        "tentacles" to "触手",
+        "thigh high boots" to "高筒靴",
+        "tomboy" to "假小子",
+        "ttf threesome" to "扶女扶3P",
+        "ttm threesome" to "扶扶男3P",
+        "ttt threesome" to "扶3P",
+        "tomgirl" to "伪娘",
+        "triple vaginal" to "三插阴道",
+        "transformation" to "变身",
+        "twins" to "双胞胎",
+        "twintails" to "双马尾",
+        "unusual pupils" to "异瞳",
+        "urination" to "排尿",
+        "vore" to "吞食",
+        "vtuber" to "虚拟主播",
+        "widow" to "寡妇",
+        "wings" to "翅膀",
+        "witch" to "女巫装",
+        "wolf girl" to "狼女孩",
+        "x-ray" to "透视",
+        "yaoi" to "男同",
+        "yuri" to "百合",
+        "aunt" to "阿姨",
+        "cousin" to "表姐妹",
+        "daughter" to "女儿",
+        "granddaughter" to "孙女",
+        "grandmother" to "祖母",
+        "inseki" to "姻亲",
+        "niece" to "侄女",
+        "oyakodon" to "亲子丼",
+        "shimaidon" to "手足丼",
+        "ffm threesome" to "女男女3P",
+        "mmf threesome" to "男女男3P",
+        "mmt threesome" to "男扶男3P",
+        "mtf threesome" to "男扶女3P",
+        "fff threesome" to "女3P",
+        "fft threesome" to "女扶女3P",
+        "real doll" to "充气娃娃",
+        "strap-on" to "穿戴式阳具",
+        "speculum" to "扩张器",
+        "tail plug" to "尾塞",
+        "tube" to "插管",
+        "vacbed" to "真空床",
+        "wooden horse" to "木马",
+        "wormhole" to "虫洞",
+        "apparel bukkake" to "穿衣颜射",
+        "cum bath" to "精液浴",
+        "giant sperm" to "巨大精子",
+        "internal urination" to "内部排尿",
+        "omorashi" to "漏尿",
+        "public use" to "肉便器",
+        "chikan" to "痴汉",
+        "confinement" to "监禁",
+        "food on body" to "女体盛",
+        "forniphilia" to "人体家具",
+        "human cattle" to "人类饲养",
+        "petplay" to "人宠",
+        "slave" to "奴隶",
+        "smalldom" to "逆体格差",
+        "tickling" to "挠痒",
+        "fanny packing" to "人肉腰包",
+        "harness" to "挽具",
+        "shibari" to "捆绑",
+        "stuck in wall" to "卡在墙上",
+        "abortion" to "堕胎",
+        "cannibalism" to "食人",
+        "catfight" to "猫斗",
+        "cbt" to "虐屌",
+        "cuntbusting" to "阴道破坏",
+        "dismantling" to "拆解",
+        "electric shocks" to "电击",
+        "ryona" to "凌虐",
+        "snuff" to "杀害",
+        "torture" to "拷打",
+        "trampling" to "践踏",
+        "wrestling" to "摔角",
+        "autofellatio" to "自吹",
+        "autopaizuri" to "自乳交",
+        "clone" to "克隆",
+        "phone sex" to "电话性爱",
+        "selfcest" to "自交",
+        "solo action" to "自摸",
+        "table masturbation" to "桌角自慰",
+        "blind" to "失明",
+        "handicapped" to "残疾",
+        "mute" to "哑巴",
+        "gender change" to "性转换",
+        "gender morph" to "男体化",
+        "dickgirl on dickgirl" to "扶上扶",
+        "dickgirl on female" to "扶上女",
+        "male on dickgirl" to "男上扶",
+        "first person perspective" to "第一人称视角",
+        "coach" to "教练",
+        "mesugaki" to "雌小鬼",
+        "prostitution" to "卖淫",
+        "tutor" to "家庭教师",
+        "dickgirls only" to "纯扶她",
+        "netorase" to "绿帽癖",
+        "forced exposure" to "强制暴露",
+        "voyeurism" to "偷窥",
+        "low bestiality" to "低存在兽交",
+        "low guro" to "低存在猎奇",
+        "low incest" to "低存在乱伦",
+        "low lolicon" to "低存在萝莉",
+        "low scat" to "低存在排便",
+        "low smegma" to "低存在阴垢",
+        "focus anal" to "高存在肛交",
+        "focus blowjob" to "高存在口交",
+        "focus paizuri" to "高存在乳交",
+        "zombie" to "丧尸🧟‍♀️",
+    )
+
+    private val isChineseLocale: Boolean
+        get() = context.getPreferredLocales().firstOrNull()?.language == "zh"
+
+    private val groupedTagKeys = mapOf(
+        "行为玩法" to listOf(
+            "anal", "double penetration", "double vaginal", "triple vaginal", "paizuri", "cunnilingus", "footjob",
+            "handjob", "blowjob", "rimjob", "sex toys", "strap-on", "speculum", "tail plug", "tube", "vacbed",
+            "wooden horse", "wormhole", "apparel bukkake", "cum bath", "bukkake", "nakadashi", "fingering",
+            "squirting", "urination", "omorashi", "public use", "scat", "scat insertion", "chikan", "confinement",
+            "bondage", "shibari", "bdsm", "femdom", "petplay", "slave", "smalldom", "tickling", "humiliation",
+            "rape", "netorare", "cheating", "voyeurism", "exhibitionism", "hidden sex", "forced exposure", "filming",
+            "guro", "cannibalism", "cbt", "cuntbusting", "dismantling", "ryona", "snuff", "torture", "trampling",
+            "wrestling", "electric shocks", "stuck in wall", "fanny packing", "frottage"
+        ),
+        "关系/多P" to listOf(
+            "ffm threesome", "mmf threesome", "mmt threesome", "mtf threesome", "ttf threesome", "ttt threesome",
+            "ttm threesome", "fff threesome", "fft threesome", "harem", "group", "solo action", "autofellatio",
+            "autopaizuri", "selfcest", "dickgirls only", "females only", "males only", "sole male", "sole female",
+            "sole dickgirl", "incest", "inseki", "sister", "mother", "father", "aunt", "cousin", "daughter",
+            "granddaughter", "grandmother", "niece", "oyakodon", "shimaidon", "prostitution", "netorase", "swinging",
+            "mesugaki"
+        ),
+        "身体/外观" to listOf(
+            "big breasts", "huge breasts", "gigantic breasts", "big nipples", "inverted nipples", "small breasts",
+            "big ass", "tall girl", "tall man", "midget", "giantess", "muscle", "growth", "pregnant", "lactation",
+            "dark skin", "gyaru", "hairy", "hairy armpits", "beauty mark", "ahegao", "big clit", "big lips",
+            "big penis", "huge penis", "prostate massage", "feminization", "futanari", "shemale", "gender change",
+            "gender morph"
+        ),
+        "服饰/角色扮演" to listOf(
+            "maid", "nurse", "miko", "kimono", "chinese dress", "schoolgirl uniform", "bikini", "swimsuit",
+            "lingerie", "stockings", "pantyhose", "fishnets", "garter belt", "thigh high boots", "leotard",
+            "bloomers", "corset", "business suit", "bunny girl", "catgirl", "policewoman", "policeman", "nun",
+            "cheerleader", "latex", "sundress", "apron", "bandages", "gothic lolita", "cosplaying", "crossdressing",
+            "masked face", "gloves", "collar", "harness", "tail", "panda girl"
+        ),
+        "物种/种族" to listOf(
+            "angel", "demon girl", "oni", "monster girl", "elf", "goblin", "fox girl", "fox boy", "wolf girl",
+            "catgirl", "dog boy", "mermaid", "centaur", "slime", "ghost", "vampire", "zombie", "robot", "dragon",
+            "lizard girl", "panda girl"
+        ),
+        "精神/变身" to listOf(
+            "mind break", "mind control", "transformation", "gender morph", "gender change", "sleeping", "drunk"
+        ),
+    )
+
+    private fun groupTitle(raw: String): String {
+        return if (isChineseLocale) raw else when (raw) {
+            "行为玩法" -> "Actions"
+            "关系/多P" -> "Relations"
+            "身体/外观" -> "Body"
+            "服饰/角色扮演" -> "Outfits/Cosplay"
+            "物种/种族" -> "Species"
+            "精神/变身" -> "Mind/Transform"
+            else -> raw
+        }
+    }
+
+    private fun displayTagTitle(key: String): String {
+        return if (isChineseLocale) {
+            tagTranslations[key] ?: key
+        } else {
+            key.toTitleCase(Locale.ENGLISH)
+        }
+    }
+
+    private fun buildTagMap(): Map<String, MangaTag> {
         val tagElements = tags.split(",")
-        val result = ArraySet<MangaTag>(tagElements.size)
+        val result = LinkedHashMap<String, MangaTag>(tagElements.size)
         for (tag in tagElements) {
             val el = tag.trim()
             if (el.isEmpty()) continue
-            result += MangaTag(
-                title = el.toTitleCase(Locale.ENGLISH),
+            result[el] = MangaTag(
+                title = displayTagTitle(el),
                 key = el,
                 source = source,
             )
         }
         return result
     }
+
+    private val cachedTagMap: Map<String, MangaTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { buildTagMap() }
+    private val cachedTagsSet: Set<MangaTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { cachedTagMap.values.toSet() }
+    private val tagKeyToGroup: Map<String, String> by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        buildMap {
+            groupedTagKeys.forEach { (group, keys) ->
+                keys.forEach { put(it, group) }
+            }
+        }
+    }
+
+    private fun mapTags(): Set<MangaTag> = cachedTagsSet
+
+    private fun mapTagGroups(): List<MangaTagGroup> {
+        val tagMap = cachedTagMap
+        val used = HashSet<String>(tagMap.size)
+        val groups = mutableListOf<MangaTagGroup>()
+        groupedTagKeys.forEach { (name, keys) ->
+            val list = keys.mapNotNull { key ->
+                tagMap[key]?.also { used += key }
+            }
+            if (list.isNotEmpty()) {
+                groups += MangaTagGroup(groupTitle(name), list.toSet())
+            }
+        }
+        val remaining = tagMap.filterKeys { it !in used }.values.toSet()
+        if (remaining.isNotEmpty()) {
+            groups += MangaTagGroup(groupTitle(if (isChineseLocale) "其他" else "Others"), remaining)
+        }
+        return groups
+    }
+
+    private val cachedTagGroups: List<MangaTagGroup> by lazy(LazyThreadSafetyMode.PUBLICATION) { mapTagGroups() }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
@@ -394,7 +764,8 @@ internal class ExHentaiParser(
     private fun Element.parseTags(): Set<MangaTag> {
 
         fun Element.parseTag() = textOrNull()?.let {
-            MangaTag(title = it.toTitleCase(Locale.ENGLISH), key = it, source = source)
+            // 优先复用已缓存的 Tag，避免重复创建与翻译
+            cachedTagMap[it] ?: MangaTag(title = displayTagTitle(it), key = it, source = source)
         }
 
         val result = ArraySet<MangaTag>()

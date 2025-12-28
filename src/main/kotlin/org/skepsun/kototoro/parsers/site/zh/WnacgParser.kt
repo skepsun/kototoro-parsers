@@ -6,6 +6,8 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.MangaLoaderContext
+import org.skepsun.kototoro.parsers.MangaParserAuthProvider
+import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
 import org.skepsun.kototoro.parsers.MangaSourceParser
@@ -45,7 +47,12 @@ import org.jsoup.HttpStatusException
 internal class WnacgParser(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.WNACG, 30),
     FavoritesProvider,
-    FavoritesSyncProvider {
+    FavoritesSyncProvider,
+    MangaParserAuthProvider,
+    MangaParserCredentialsAuthProvider {
+
+    override val authUrl: String
+        get() = "https://$domain/"
 
     override val configKeyDomain = ConfigKey.Domain("www.wnacg.com")
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
@@ -209,6 +216,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
         val doc = httpGetHtmlWithBackoff(url)
         return parseMangaList(doc)
     }
+
 
     private fun parseMangaList(doc: Document): List<Manga> {
         // 优先解析首页分区：div.title_sort + div.bodywrap
@@ -670,6 +678,38 @@ internal class WnacgParser(context: MangaLoaderContext) :
         }
         val newReq = builder.build()
         return chain.proceed(newReq)
+    }
+
+    // ==== Auth impl ====
+    override suspend fun login(username: String, password: String): Boolean {
+        val url = "https://$domain/users-check_login.html".toHttpUrl()
+        val headers = Headers.Builder()
+            .add("content-type", "application/x-www-form-urlencoded")
+            .add("Referer", "https://$domain/")
+            .add("Origin", "https://$domain")
+            .build()
+        val resp = webClient.httpPost(url, "login_name=${username.urlEncoded()}&login_pass=${password.urlEncoded()}", headers)
+        if (!resp.isSuccessful) return false
+        val json = runCatching { org.json.JSONObject(resp.parseRaw()) }.getOrNull() ?: return false
+        val html = json.optString("html")
+        return html.contains("登錄成功")
+    }
+
+    override suspend fun isAuthorized(): Boolean = runCatching {
+        // 若无 Cookie 会抛 AuthRequiredException
+        val headers = authorizedHeaders()
+        val resp = webClient.httpGet("https://$domain/users-addfav-id-210814.html", headers)
+        resp.isSuccessful && !resp.parseRaw().contains("login_form", ignoreCase = true)
+    }.getOrDefault(false)
+
+    override suspend fun getUsername(): String {
+        val headers = authorizedHeaders()
+        val resp = webClient.httpGet("https://$domain/users-index.html", headers)
+        if (resp.code == 401 || resp.code == 403) throw AuthRequiredException(source)
+        val doc = resp.parseHtml()
+        return doc.selectFirst("div.header span, div.header a[href*=users]")?.text()?.trim()
+            ?.ifBlank { null }
+            ?: throw AuthRequiredException(source)
     }
 
     private fun extractIdFromUrl(url: String?): String? {
