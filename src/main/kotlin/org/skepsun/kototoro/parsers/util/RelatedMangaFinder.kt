@@ -31,6 +31,10 @@ public class RelatedMangaFinder(
         if (words.isEmpty()) {
             return emptyList()
         }
+        
+        // 日志：记录 seed 的 ID 和 URL
+        println("[RelatedMangaFinder] seed.id=${seed.id} seed.url='${seed.url}' seed.title='${seed.title}'")
+        
         val results = words.map { keyword ->
             scope.async {
                 try {
@@ -45,6 +49,13 @@ public class RelatedMangaFinder(
                             query = keyword,
                         ),
                     )
+                    
+                    // 日志：记录搜索结果和过滤情况
+                    result.forEach { manga ->
+                        val willFilter = manga.id == seed.id
+                        println("[RelatedMangaFinder] result: id=${manga.id} url='${manga.url}' title='${manga.title}' willFilterAsSeed=$willFilter")
+                    }
+                    
                     result.filter { it.id != seed.id && it.containKeyword(keyword) }
                 } catch (e: Exception) {
                     emptyList()
@@ -53,6 +64,7 @@ public class RelatedMangaFinder(
         }.awaitAll()
         return results.minBy { if (it.isEmpty()) Int.MAX_VALUE else it.size }
     }
+
 
     private fun Manga.containKeyword(keyword: String): Boolean {
         return title.contains(keyword, ignoreCase = true)

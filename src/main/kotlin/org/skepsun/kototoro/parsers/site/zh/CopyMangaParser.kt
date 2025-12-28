@@ -71,7 +71,7 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         "api.copy2000.online",
     )
     @OptIn(InternalParsersApi::class)
-    override val userAgentKey = ConfigKey.UserAgent("COPY/3.0.0")
+    override val userAgentKey = ConfigKey.UserAgent("COPY/3.0.6")
     // 线路设置：海外(0)/大陆(1)，用于 Header 的 region 以及优先尝试的 line
     @OptIn(InternalParsersApi::class)
     private val preferredLineKey = ConfigKey.PreferredImageServer(
@@ -365,13 +365,13 @@ override fun getRequestHeaders(): Headers {
     val authHeader = getAuthToken()?.let { v -> "Token $v" } ?: "Token"
 
     return Headers.Builder()
-        .add("User-Agent", "COPY/3.0.0")
+        .add("User-Agent", "COPY/3.0.6")
         .add("source", "copyApp")
         .add("deviceinfo", deviceInfo)
         .add("dt", dt)
         .add("platform", "3")
-        .add("referer", "com.copymanga.app-3.0.0")
-        .add("version", "3.0.0")
+        .add("referer", "com.copymanga.app-3.0.6")
+        .add("version", "3.0.6")
         .add("device", device)
         .add("pseudoid", pseudoId)
         .add("Accept", "application/json")
@@ -423,6 +423,7 @@ override fun getRequestHeaders(): Headers {
                 val id = comic.optString("path_word")
                 val title = comic.optString("name")
                 val cover = comic.optString("cover")
+                logDebug("favorites: id=$id title=$title cover=$cover")
                 val tags = (comic.optJSONArray("theme") ?: JSONArray()).mapJSON { t ->
                     val n = t.optString("name")
                     MangaTag(title = n, key = n, source = source)
@@ -697,6 +698,7 @@ override fun getRequestHeaders(): Headers {
                 val id = comic.optString("path_word")
                 val title = comic.optString("name")
                 val cover = comic.optString("cover")
+                logDebug("list: id=$id title=$title cover=$cover")
                 val tagsArray = comic.optJSONArray("theme") ?: JSONArray()
                 val tags = tagsArray.mapJSON { t ->
                     val n = t.optString("name")
@@ -760,6 +762,7 @@ override fun getRequestHeaders(): Headers {
 
         val title = comic.optString("name", manga.title).ifBlank { manga.title }
         val cover = comic.optString("cover", manga.coverUrl).ifBlank { manga.coverUrl }
+        logDebug("details: url=${manga.url} title=$title cover=$cover authors=${authorPathWordDict.keys.joinToString()}")
         val desc = comic.optString("brief", manga.description).ifBlank { manga.description }
         val stateStr = comic.optString("status", "")
         val state = when (stateStr.lowercase()) {
@@ -794,6 +797,7 @@ override fun getRequestHeaders(): Headers {
         val chapters = ArrayList<MangaChapter>()
         val currentBase = baseUrlOverride ?: base
         for (path in pathList) {
+            logDebug("chapters: branch=${manga.url} group=$path base=$currentBase")
             var offset = 0
             while (true) {
                 val list = fetchChaptersWithFallbackParams(currentBase, manga.url, path, offset, headers)
@@ -881,6 +885,7 @@ override fun getRequestHeaders(): Headers {
         if (pages.isEmpty()) {
             for (fallback in FALLBACK_DOMAINS) {
                 if (fallback == base) continue
+                logDebug("pages: retry base=$fallback chapter=${chapter.url}")
                 pages = fetchPagesFromBase(fallback, chapter, headers)
                 if (pages.isNotEmpty()) {
                     baseUrlOverride = fallback
@@ -907,6 +912,7 @@ override fun getRequestHeaders(): Headers {
 
         for (suffix in paramCombos) {
             val url = epBase + suffix
+            logDebug("pages: fetch url=$url")
             val data = httpGetJsonWithAntiAbuse(url, headers)
             val res = data.optJSONObject("results") ?: JSONObject()
             val chapterObj = res.optJSONObject("chapter") ?: JSONObject()
@@ -1061,18 +1067,34 @@ override fun getRequestHeaders(): Headers {
         val site = siteDomain()
 
         return if (isImageRequest) {
+            // 图片请求：不设置 Referer（匹配 Venera 的行为，JS 配置没有为图片设置特殊 headers）
+            // 或者使用图片 CDN 自身的域作为 Referer
+            val originSite = when {
+                host.contains("mangacopy.com", ignoreCase = true) -> "www.mangacopy.com"
+                host.contains("copy-manga.com", ignoreCase = true) -> "copy-manga.com"
+                host.contains("copy2000.online", ignoreCase = true) -> "copy2000.online"
+                else -> site
+            }
             val builder = req.newBuilder()
-                // 与终端示例严格对齐：不设置 Accept/Accept-Language，仅设置 UA/Referer/Origin
-                .removeHeader("Accept")
-                .removeHeader("accept")
-                .removeHeader("Accept-Language")
-                .removeHeader("accept-language")
-                .header("User-Agent", UserAgents.CHROME_DESKTOP)
-                .header("Referer", "https://${site}/")
-                .header("Origin", "https://${site}")
-                // 避免在图片请求上携带认证头导致服务端拒绝
+                // 直接使用标准的图片 Accept 头，避免服务端因缺失 Accept 而拒绝
+                .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                // 与 JS curl 对齐：显式允许 gzip/deflate/br，移除 Content-Encoding
+                .header("Accept-Encoding", "gzip, deflate, br")
+                .removeHeader("Content-Encoding")
+                .removeHeader("content-encoding")
+                // 覆盖 Host，避免被上游公共拦截器改成 API 域
+                .header("Host", host)
+                // 使用移动 WebView UA（与 JS 配置接近）
+                .header("User-Agent", UserAgents.CHROME_MOBILE)
+                // 对齐 JS 行为，为图片请求附带站点域 Referer/Origin
+                .header("Referer", "https://$originSite/")
+                .header("Origin", "https://$originSite")
+                // 移除认证头，让图片请求与 JS curl 一致（不带 token）
                 .removeHeader("Authorization")
                 .removeHeader("authorization")
+                .removeHeader("Cookie")
+                .removeHeader("cookie")
                 // 清理 App 特征头，避免静态域安全校验拒绝
                 .removeHeader("source")
                 .removeHeader("deviceinfo")
@@ -1086,29 +1108,29 @@ override fun getRequestHeaders(): Headers {
                 .removeHeader("x-auth-signature")
                 .removeHeader("umstring")
 
-            // 始终移除 Cookie，匹配 Python 验证脚本的最小化图片请求头，避免部分 CDN 对 Cookie 的异常处理导致 500
-            val newReq = builder.removeHeader("Cookie").removeHeader("cookie").build()
+            val newReq = builder.build()
             val resp = chain.proceed(newReq)
             val ct = resp.header("Content-Type").orEmpty()
             return if (ct.contains("octet-stream", ignoreCase = true)) {
                 resp.newBuilder().header("Content-Type", "image/jpeg").build()
             } else resp
+
         } else if (!isApiRequest && req.method == "GET") {
             // 统一处理非 API 的 GET：放宽 Accept，设置 Referer/Origin，移除 App 特征与认证头
             val newReq = req.newBuilder()
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,image/png,image/*,*/*;q=0.8")
                 .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                 .header("User-Agent", config[userAgentKey])
-                .apply {
-                    val originSite = when {
-                        host.contains("mangacopy.com", ignoreCase = true) -> "www.mangacopy.com"
-                        host.contains("copy-manga.com", ignoreCase = true) -> "copy-manga.com"
-                        host.contains("copy2000.online", ignoreCase = true) -> "copy2000.online"
-                        else -> site
-                    }
-                    header("Referer", "https://$originSite/")
-                    header("Origin", "https://$originSite")
-                }
+                // .apply {
+                //     val originSite = when {
+                //         host.contains("mangacopy.com", ignoreCase = true) -> "www.mangacopy.com"
+                //         host.contains("copy-manga.com", ignoreCase = true) -> "copy-manga.com"
+                //         host.contains("copy2000.online", ignoreCase = true) -> "copy2000.online"
+                //         else -> site
+                //     }
+                //     header("Referer", "https://$originSite/")
+                //     header("Origin", "https://$originSite")
+                // }
                 .removeHeader("Authorization")
                 .removeHeader("authorization")
                 .removeHeader("Cookie")
@@ -1168,6 +1190,9 @@ override fun getRequestHeaders(): Headers {
 
     private fun logAuth(msg: String) {
         kotlin.runCatching { println("[CopyMangaAuth] $msg") }
+    }
+    private fun logDebug(msg: String) {
+        kotlin.runCatching { println("[CopyMangaDebug] $msg") }
     }
 
     private fun generateDeviceInfo(): String {

@@ -296,10 +296,14 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		regex.findAll(doc.html()).take(10).forEach { m ->
 			val href = m.groupValues[2]
 			val title = m.groupValues[3]
+			// 规范化 URL：移除域名前缀，确保使用相对路径
+			val relUrl = normalizeMangaUrl(href.removePrefix(baseUrl()).removePrefix(mobileBaseUrl()))
+			val generatedId = generateUid(relUrl)
+			println("[YkmhParser] parseLatest: title='$title' href='$href' relUrl='$relUrl' generatedId=$generatedId")
 			list.add(
 				Manga(
-					id = generateUid(href),
-					url = href.removePrefix(baseUrl()),
+					id = generatedId,
+					url = relUrl,
 					publicUrl = href,
 					coverUrl = "${baseUrl()}/images/default/cover.png",
 					title = title,
@@ -342,11 +346,19 @@ internal class YkmhParser(context: MangaLoaderContext) :
 					href.startsWith("/") -> baseUrl() + href
 					else -> "${baseUrl()}/$href"
 				}
-				val relUrl = absolute.removePrefix(baseUrl()).removePrefix(mobileBaseUrl())
+				val rawRelUrl = absolute.removePrefix(baseUrl()).removePrefix(mobileBaseUrl())
+				// 规范化 URL：移除章节后缀（如 /299812.html），只保留漫画路径
+				val relUrl = normalizeMangaUrl(rawRelUrl)
+				val uidSource = relUrl.ifEmpty { href }
+				val generatedId = generateUid(uidSource)
+				
+				// 详细日志：追踪 ID 生成
+				println("[YkmhParser] parseList: title='$title' href='$href' absolute='$absolute' rawRelUrl='$rawRelUrl' relUrl='$relUrl' uidSource='$uidSource' generatedId=$generatedId")
+				
 				val coverAbs = cover?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("http")) it else baseUrl() + it }
 				list.add(
 					Manga(
-						id = generateUid(href),
+						id = generatedId,
 						url = relUrl.ifEmpty { href },
 						publicUrl = absolute,
 						coverUrl = coverAbs,
@@ -359,11 +371,13 @@ internal class YkmhParser(context: MangaLoaderContext) :
                         source = source,
                         contentRating = ContentRating.SAFE,
                     )
+
                 )
             }
         }
         return list
     }
+
 
     override suspend fun getDetails(manga: Manga): Manga {
 		val href = if (manga.url.startsWith("http")) manga.url else baseUrl() + manga.url
@@ -483,4 +497,22 @@ internal class YkmhParser(context: MangaLoaderContext) :
 	}
 
     override suspend fun getPageUrl(page: MangaPage): String = page.url
+    
+    /**
+     * 规范化漫画 URL：移除章节后缀，只保留漫画路径
+     * 例如：/manhua/wotaitaishinvzigaozhongsheng/299812.html -> /manhua/wotaitaishinvzigaozhongsheng/
+     */
+    private fun normalizeMangaUrl(url: String): String {
+        // 匹配 /manhua/名称/ 或 /book/名称/ 模式，移除后面的章节部分
+        val mangaPathRegex = Regex("^(/(?:manhua|book)/[^/]+)(?:/.*)?$")
+        val match = mangaPathRegex.find(url)
+        return if (match != null) {
+            "${match.groupValues[1]}/"  // 确保以 / 结尾
+        } else {
+            // 如果不匹配，返回原始 URL（去除末尾 .html 后缀）
+            url.replace(Regex("\\.html$"), "").let { 
+                if (!it.endsWith("/")) "$it/" else it 
+            }
+        }
+    }
 }
