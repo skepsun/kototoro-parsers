@@ -6,6 +6,7 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.Jsoup
 import org.skepsun.kototoro.parsers.InternalParsersApi
 import org.skepsun.kototoro.parsers.MangaLoaderContext
 import org.skepsun.kototoro.parsers.MangaSourceParser
@@ -95,37 +96,151 @@ internal class Rawkuma(context: MangaLoaderContext) :
         availableTags = defaultGenres,
     )
 
-    override fun getRequestHeaders() = Headers.Builder()
+    override fun getRequestHeaders(): Headers = headersWithReferer("https://$domain/")
+
+    private fun headersWithReferer(referer: String) = Headers.Builder()
         .add("User-Agent", UserAgents.CHROME_DESKTOP)
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
         .add("Accept-Language", "en-US,en;q=0.9,ja;q=0.8")
-        .add("Referer", "https://$domain/")
+        .add("Referer", referer)
         .build()
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-        val url = buildString {
-            append("https://$domain/manga/?page=$page")
-            
-            if (!filter.query.isNullOrEmpty()) {
-                append("&s=${filter.query!!.urlEncoded()}")
-            }
-            
-            val orderParam = when (order) {
-                SortOrder.POPULARITY -> "popular"
-                SortOrder.NEWEST -> "newest"
-                SortOrder.ALPHABETICAL -> "alphabet"
-                else -> "update"
-            }
-            append("&order=$orderParam")
-            
-            // 添加 genre 过滤（单选）
-            filter.tags.firstOrNull()?.let { tag ->
-                append("&the_genre=${tag.key}")
-            }
+        // 优先使用站点的 advanced_search Ajax 接口，失败再退回静态页
+        fetchListViaAjax(page, order, filter)?.let { list ->
+            logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' tag=${filter.tags.firstOrNull()?.key} size=${list.size} url=admin-ajax (advanced_search)")
+            return list
         }
 
-        val doc = webClient.httpGet(url.toHttpUrl(), getRequestHeaders()).parseHtml()
+        val candidates = listOf(
+            buildLibraryUrl(page, order, filter) to "https://$domain/library/",
+            buildMangaPageUrl(page, order, filter) to "https://$domain/manga/",
+            buildFallbackUrl(page, order, filter) to "https://$domain/manga/"
+        )
+
+        for ((idx, candidate) in candidates.withIndex()) {
+            val (url, referer) = candidate
+            val list = runCatching {
+                val doc = webClient.httpGet(url.toHttpUrl(), headersWithReferer(referer)).parseHtml()
+                parseMangaList(doc)
+            }.getOrElse { emptyList() }
+            val altSuffix = if (idx > 0) " (alt$idx)" else ""
+            logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' tag=${filter.tags.firstOrNull()?.key} size=${list.size} url=$url$altSuffix")
+            if (list.isNotEmpty()) return list
+        }
+        return emptyList()
+    }
+
+    private suspend fun fetchListViaAjax(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga>? {
+        val (orderParam, orderBy) = mapOrder(order)
+        val form = mapOf(
+            "action" to "advanced_search",
+            "search_term" to filter.query.orEmpty(),
+            // 实测 Ajax 分页读取 page 参数，附带 the_page 兼容
+            "page" to page.toString(),
+            "paged" to page.toString(),
+            "the_page" to page.toString(),
+            "the_genre" to filter.tags.firstOrNull()?.key.orEmpty(),
+            "the_author" to "",
+            "the_artist" to "",
+            "the_exclude" to "",
+            "the_type" to "",
+            "the_status" to "",
+            "project" to "0",
+            "order" to orderParam,
+            "orderby" to orderBy,
+        )
+        val ajaxHeaders = Headers.Builder()
+            .add("User-Agent", UserAgents.CHROME_DESKTOP)
+            .add("Accept", "*/*")
+            .add("Accept-Language", "en-US,en;q=0.9,ja;q=0.8")
+            .add("Origin", "https://$domain")
+            .add("Referer", "https://$domain/library/")
+            .add("Cache-Control", "no-cache")
+            .add("X-Requested-With", "XMLHttpRequest")
+            .add("Upgrade-Insecure-Requests", "1")
+            .build()
+
+        val result = runCatching {
+            webClient.httpPost("https://$domain/wp-admin/admin-ajax.php".toHttpUrl(), form, ajaxHeaders)
+        }.getOrElse { return null }.parseRaw()
+
+        val list = parseAjaxHtml(result)
+        if (list != null) return list
+
+        // 若首次请求被 CF 拦截（返回空或挑战页），预热一次 library，再重试一次
+        if (!warmupDone) {
+            warmupDone = true
+            runCatching { webClient.httpGet("https://$domain/library/".toHttpUrl(), headersWithReferer("https://$domain/")) }
+            val retryHtml = runCatching {
+                webClient.httpPost("https://$domain/wp-admin/admin-ajax.php".toHttpUrl(), form, ajaxHeaders)
+            }.getOrElse { return emptyList() }.parseRaw()
+            return parseAjaxHtml(retryHtml) ?: emptyList()
+        }
+
+        return emptyList()
+    }
+
+    private fun parseAjaxHtml(html: String): List<Manga>? {
+        if (html.isBlank() || html.contains("No results", ignoreCase = true)) return emptyList()
+        if (html.contains("challenge-platform", ignoreCase = true) || html.contains("cf-chl-bypass", ignoreCase = true)) {
+            return null
+        }
+        val doc = Jsoup.parse(html, "https://$domain/")
         return parseMangaList(doc)
+    }
+
+    private companion object {
+        var warmupDone = false
+    }
+
+    private fun buildLibraryUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+        append("https://$domain/library/?")
+        append("the_page=$page")
+        append("&the_genre=${filter.tags.firstOrNull()?.key.orEmpty()}")
+        append("&the_author=&the_artist=&the_exclude=&the_type=&the_status=")
+        append("&search_term=${filter.query.orEmpty().urlEncoded()}")
+        val (orderParam, orderBy) = mapOrder(order)
+        append("&project=0&order=$orderParam&orderby=$orderBy")
+    }
+
+    private fun buildFallbackUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+        append("https://$domain/manga/?page=$page")
+
+        if (!filter.query.isNullOrEmpty()) {
+            append("&search_term=${filter.query!!.urlEncoded()}")
+        }
+
+        val (_, orderBy) = mapOrder(order)
+        append("&order=$orderBy")
+
+        filter.tags.firstOrNull()?.let { tag ->
+            append("&the_genre=${tag.key}")
+        }
+    }
+
+    private fun buildMangaPageUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+        append("https://$domain/manga/page/$page/")
+
+        if (!filter.query.isNullOrEmpty()) {
+            append("?s=${filter.query!!.urlEncoded()}")
+        } else {
+            append("?")
+        }
+
+        val (_, orderBy) = mapOrder(order)
+        append("order=$orderBy")
+
+        filter.tags.firstOrNull()?.let { tag ->
+            append("&the_genre=${tag.key}")
+        }
+    }
+
+    private fun mapOrder(order: SortOrder): Pair<String, String> = when (order) {
+        SortOrder.POPULARITY -> "desc" to "popular"
+        SortOrder.NEWEST -> "desc" to "newest"
+        SortOrder.ALPHABETICAL -> "asc" to "alphabet"
+        else -> "desc" to "updated"
     }
 
     private fun parseMangaList(doc: Document): List<Manga> {
@@ -155,12 +270,12 @@ internal class Rawkuma(context: MangaLoaderContext) :
         }.orEmpty()
         
         // 标题可能在当前元素内或兄弟元素
-        val parent = element.parent()
-        val titleElement = element.selectFirst("h1, h2, h3, .series-title, .tt") 
-            ?: parent?.selectFirst("h1, h2, h3, a > h1")
-        val title = titleElement?.text()?.trim() 
-            ?: img?.attr("alt")?.trim() 
-            ?: ""
+        val title = element.attrOrNull("title")
+            ?: element.attrOrNull("data-title")
+            ?: element.selectFirst("h1, h2, h3, .series-title, .tt, .font-medium, .manga-title")
+                ?.text()?.trim()
+            ?: img?.attr("alt")?.trim()
+            ?: element.text().trim()
         
         return Manga(
             id = generateUid(relativeUrl),
@@ -182,8 +297,14 @@ internal class Rawkuma(context: MangaLoaderContext) :
         val url = manga.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val doc = webClient.httpGet(url.toHttpUrl(), getRequestHeaders()).parseHtml()
         
-        // 标题
-        val title = doc.selectFirst("h1")?.text()?.trim() ?: manga.title
+        // 标题：优先 meta，再取非 “Last Updates” 的 h1，避免列表页标题污染
+        val title = doc.selectFirst("meta[property=og:title]")?.attrOrNull("content")
+            ?.substringBefore(" - ", missingDelimiterValue = "")
+            ?.takeIf { it.isNotBlank() }
+            ?: doc.select("h1")
+                .firstOrNull { !it.text().contains("last updates", ignoreCase = true) }
+                ?.text()?.trim()
+            ?: manga.title
         
         // 别名
         val altTitle = doc.selectFirst("h1 + div, h1 + span, .alternative, .other-name")?.text()?.trim()
@@ -220,6 +341,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         // 获取 manga_id 用于 AJAX 请求
         val mangaId = doc.selectFirst("input#manga_id, input[name=manga_id]")?.attr("value")
             ?: doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
+            ?: extractMangaIdFromHx(doc)
             ?: extractMangaIdFromScript(doc)
         
         // 章节 - 优先使用 AJAX 端点
@@ -241,6 +363,16 @@ internal class Rawkuma(context: MangaLoaderContext) :
         )
     }
 
+    private fun extractMangaIdFromHx(doc: Document): String? {
+        val hxAttr = doc.selectFirst("#chapter-list[hx-get], [data-hx-get], [hx-get]")
+            ?.attrOrNull("hx-get")
+            ?: doc.selectFirst("#chapter-list")?.attrOrNull("data-hx-get")
+        if (!hxAttr.isNullOrBlank()) {
+            Regex("manga_id=([0-9]+)").find(hxAttr)?.groupValues?.get(1)?.let { return it }
+        }
+        return null
+    }
+
     private fun extractMangaIdFromScript(doc: Document): String? {
         // 尝试从 JavaScript 中提取 manga_id
         val scripts = doc.select("script").map { it.html() }
@@ -255,6 +387,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
 
     private suspend fun fetchChaptersViaAjax(mangaId: String): List<MangaChapter> {
         val chapters = mutableListOf<MangaChapter>()
+        val seenUrls = mutableSetOf<String>()
         var page = 1
         val maxPages = 50 // 安全限制
         
@@ -265,63 +398,27 @@ internal class Rawkuma(context: MangaLoaderContext) :
             
             if (html.isBlank() || html.contains("No chapters") || html.trim() == "0") break
             
-            val doc = org.jsoup.Jsoup.parse(html)
+            val doc = org.jsoup.Jsoup.parse(html, "https://$domain/")
+            val containers = doc.select("div[data-chapter-number], li[data-chapter-number], article[data-chapter-number]")
+            val chapterElements = if (containers.isNotEmpty()) {
+                containers.mapNotNull { container ->
+                    container.selectFirst("a[href*='/chapter-']")?.let { it to container }
+                }
+            } else {
+                doc.select("a[href*='/chapter-']").map { it to null }
+            }.distinctBy { it.first.attr("href") }
+            logDebug("ajax page=$page elements=${chapterElements.size}")
             
-            // 选择章节容器 div[data-chapter-number]
-            val chapterContainers = doc.select("div[data-chapter-number]")
+            if (chapterElements.isEmpty()) break
             
-            if (chapterContainers.isEmpty()) break
-            
-            chapterContainers.forEach { container ->
-                try {
-                    // 从 data-chapter-number 属性获取章节号
-                    val dataChapterNum = container.attr("data-chapter-number").toFloatOrNull()
-                    
-                    // 从容器内的 a 标签获取章节 URL
-                    val linkElement = container.selectFirst("a[href*='/chapter-']") ?: return@forEach
-                    val href = linkElement.attr("href").let {
-                        if (it.startsWith("http")) it else "https://$domain$it"
-                    }
-                    val relativeUrl = href.toRelativeUrl(domain)
-                    
-                    // 章节号 - 优先使用 data-chapter-number，否则从 URL 提取
-                    val chapterNumber = dataChapterNum ?: run {
-                        val chapterMatch = Regex("/chapter-(\\d+)").find(href)
-                        chapterMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (chapters.size + 1f)
-                    }
-                    
-                    // 章节标题 - 从 span 获取
-                    val titleText = container.selectFirst(".flex.flex-row span, span")?.text()?.trim()
-                    val chapterInt = chapterNumber.toInt()
-                    val title = if (!titleText.isNullOrEmpty()) {
-                        titleText
-                    } else if (chapterNumber == chapterInt.toFloat()) {
-                        "Chapter $chapterInt"
-                    } else {
-                        "Chapter $chapterNumber"
-                    }
-                    
-                    // 日期 - 从 time 标签获取
-                    val dateText = container.selectFirst("time")?.text()?.trim()
-                    val uploadDate = parseDate(dateText)
-                    
-                    chapters.add(
-                        MangaChapter(
-                            id = generateUid(relativeUrl),
-                            title = title,
-                            number = chapterNumber,
-                            volume = 0,
-                            url = relativeUrl,
-                            uploadDate = uploadDate,
-                            source = source,
-                            scanlator = null,
-                            branch = null,
-                        )
-                    )
-                } catch (e: Exception) {
-                    // 忽略解析失败的章节
+            var addedOnPage = 0
+            chapterElements.forEach { (element, container) ->
+                buildChapter(element, container, chapters.size + 1f, seenUrls)?.let { chapter ->
+                    chapters.add(chapter)
+                    addedOnPage++
                 }
             }
+            if (addedOnPage == 0) break
             
             page++
         }
@@ -354,90 +451,115 @@ internal class Rawkuma(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseChaptersFromHtml(doc: Document): List<MangaChapter> {
-        val chapters = mutableListOf<MangaChapter>()
+    private fun buildChapter(
+        element: Element,
+        container: Element?,
+        fallbackNumber: Float,
+        seenUrls: MutableSet<String> = mutableSetOf(),
+    ): MangaChapter? {
+        val href = element.attrOrNull("href")?.toAbsoluteUrl(domain) ?: return null
+        if (href.isBlank()) return null
+        val relativeUrl = href.toRelativeUrl(domain)
+        if (!seenUrls.add(relativeUrl)) return null
+        val resolvedContainer = container ?: element.takeIf { it.hasAttr("data-chapter-number") }
+            ?: element.parents().firstOrNull { it.hasAttr("data-chapter-number") }
         
-        // 优先使用 div[data-chapter-number] 容器
-        val chapterContainers = doc.select("div[data-chapter-number]")
+        val dateText = element.selectFirst("time, span.chapterdate, .chapterdate")?.text()?.trim()
+        val uploadDate = parseDate(dateText)
         
-        if (chapterContainers.isNotEmpty()) {
-            chapterContainers.forEach { container ->
-                try {
-                    val dataChapterNum = container.attr("data-chapter-number").toFloatOrNull()
-                    val linkElement = container.selectFirst("a[href*='/chapter-']") ?: return@forEach
-                    val href = linkElement.attrAsAbsoluteUrl("href")
-                    val relativeUrl = href.toRelativeUrl(domain)
-                    
-                    val chapterNumber = dataChapterNum ?: run {
-                        val chapterMatch = Regex("/chapter-(\\d+)").find(href)
-                        chapterMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (chapters.size + 1f)
-                    }
-                    
-                    val titleText = container.selectFirst(".flex.flex-row span, span")?.text()?.trim()
-                    val chapterInt = chapterNumber.toInt()
-                    val title = if (!titleText.isNullOrEmpty()) {
-                        titleText
-                    } else if (chapterNumber == chapterInt.toFloat()) {
-                        "Chapter $chapterInt"
-                    } else {
-                        "Chapter $chapterNumber"
-                    }
-                    
-                    val dateText = container.selectFirst("time")?.text()?.trim()
-                    val uploadDate = parseDate(dateText)
-                    
-                    chapters.add(
-                        MangaChapter(
-                            id = generateUid(relativeUrl),
-                            title = title,
-                            number = chapterNumber,
-                            volume = 0,
-                            url = relativeUrl,
-                            uploadDate = uploadDate,
-                            source = source,
-                            scanlator = null,
-                            branch = null,
-                        )
-                    )
-                } catch (e: Exception) {
-                    // 忽略
-                }
-            }
-        } else {
-            // 回退到旧的选择方式
-            val chapterElements = doc.select("a[href*='/chapter-']")
-                .filter { it.attr("href").contains("/chapter-") }
-                .distinctBy { it.attr("href") }
-            
-            chapterElements.forEachIndexed { index, element ->
-                try {
-                    val href = element.attrAsAbsoluteUrl("href")
-                    val relativeUrl = href.toRelativeUrl(domain)
-                    val chapterMatch = Regex("/chapter-(\\d+)").find(href)
-                    val chapterNumber = chapterMatch?.groupValues?.get(1)?.toFloatOrNull() ?: (index + 1f)
-                    val chapterInt = chapterNumber.toInt()
-                    val title = if (chapterNumber == chapterInt.toFloat()) "Chapter $chapterInt" else "Chapter $chapterNumber"
-                    
-                    chapters.add(
-                        MangaChapter(
-                            id = generateUid(relativeUrl),
-                            title = title,
-                            number = chapterNumber,
-                            volume = 0,
-                            url = relativeUrl,
-                            uploadDate = 0L,
-                            source = source,
-                            scanlator = null,
-                            branch = null,
-                        )
-                    )
-                } catch (e: Exception) {
-                    // 忽略
-                }
-            }
+        val rawTitle = extractChapterTitle(element, resolvedContainer)
+        val parentDataNum = resolvedContainer?.attrOrNull("data-chapter-number")
+        val selfDataNum = element.attrOrNull("data-num")
+        val chapterNumber = extractChapterNumber(href, element, rawTitle, resolvedContainer) ?: fallbackNumber
+        val title = chooseChapterTitle(rawTitle, chapterNumber)
+        val slug = href.substringAfter("/chapter-").substringBefore("/")
+        logDebug("chapter href=$href rel=$relativeUrl slug=$slug rawTitle='$rawTitle' data-num=$selfDataNum parent-data-num=$parentDataNum number=$chapterNumber title='$title'")
+        
+        return MangaChapter(
+            id = generateUid(relativeUrl),
+            title = title,
+            number = chapterNumber,
+            volume = 0,
+            url = relativeUrl,
+            uploadDate = uploadDate,
+            source = source,
+            scanlator = null,
+            branch = null,
+        )
+    }
+
+    private fun extractChapterTitle(element: Element, container: Element?): String {
+        val directTitle = element.selectFirst(".chapter-name, .chapternum, .chapter-number")?.text()?.trim()
+        if (!directTitle.isNullOrEmpty()) return directTitle
+        
+        val containerTitle = container?.selectFirst("span")?.text()?.trim()
+        if (!containerTitle.isNullOrEmpty()) return containerTitle
+        
+        element.select("span").mapNotNull { it.text().trim().takeIf(String::isNotEmpty) }
+            .firstOrNull { it.contains("chapter", ignoreCase = true) || it.startsWith("ch", ignoreCase = true) }
+            ?.let { return it }
+        
+        val dateText = element.selectFirst("time, span.chapterdate, .chapterdate")?.text()?.trim().orEmpty()
+        val combinedText = element.text().trim()
+        return if (dateText.isNotEmpty()) combinedText.replace(dateText, "").trim() else combinedText
+    }
+
+    private fun extractChapterNumber(href: String, element: Element, rawTitle: String, container: Element?): Float? {
+        container?.attrOrNull("data-chapter-number")?.toFloatOrNull()?.let { return it }
+
+        element.attrOrNull("data-num")?.toFloatOrNull()?.let { return it }
+        
+        href.substringAfter("/chapter-", "").substringBefore("/")
+            .substringBefore(".").replace("-", ".").toFloatOrNull()
+            ?.let { return it }
+        
+        if (rawTitle.isNotBlank()) {
+            Regex("ch(?:apter)?\\s*([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE).find(rawTitle)
+                ?.groupValues?.get(1)?.toFloatOrNull()?.let { return it }
+            Regex("([0-9]+(?:\\.[0-9]+)?)").find(rawTitle)?.groupValues?.get(1)?.toFloatOrNull()?.let { return it }
         }
         
-        return chapters.distinctBy { it.url }.sortedBy { it.number }
+        return null
+    }
+
+    private fun formatChapterTitle(chapterNumber: Float): String {
+        val chapterInt = chapterNumber.toInt()
+        return if (chapterNumber == chapterInt.toFloat()) "Chapter $chapterInt" else "Chapter $chapterNumber"
+    }
+
+    private fun chooseChapterTitle(rawTitle: String, chapterNumber: Float): String {
+        if (rawTitle.isBlank()) return formatChapterTitle(chapterNumber)
+        val rawNumber = Regex("([0-9]+(?:\\.[0-9]+)?)").find(rawTitle)?.groupValues?.get(1)?.toFloatOrNull()
+        val chapterInt = chapterNumber.toInt()
+        val rawInt = rawNumber?.toInt()
+        return if (rawNumber != null && rawInt != chapterInt) {
+            formatChapterTitle(chapterNumber)
+        } else {
+            rawTitle
+        }
+    }
+
+    private fun logDebug(msg: String) {
+        kotlin.runCatching { println("[Rawkuma] $msg") }
+    }
+
+    private fun parseChaptersFromHtml(doc: Document): List<MangaChapter> {
+        // 章节链接格式: /manga/[slug]/chapter-[number].[id]/
+        val containers = doc.select("div[data-chapter-number], li[data-chapter-number], article[data-chapter-number]")
+        val chapterElements = if (containers.isNotEmpty()) {
+            containers.mapNotNull { container ->
+                container.selectFirst("a[href*='/chapter-']")?.let { it to container }
+            }
+        } else {
+            doc.select("a[href*='/chapter-'], .chbox a, .eplister a, ul.clap li a")
+                .filter { it.attr("href").contains("/chapter-") }
+                .map { it to null }
+        }.distinctBy { it.first.attr("href") }
+        
+        val seenUrls = mutableSetOf<String>()
+        return chapterElements.mapIndexedNotNull { index, (element, container) ->
+            buildChapter(element, container, index + 1f, seenUrls)
+        }.sortedBy { it.number } // 升序排列
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
