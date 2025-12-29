@@ -1,6 +1,7 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Document
@@ -55,7 +56,12 @@ internal class Bilinovel(context: MangaLoaderContext) :
         "bilinovel.live",
     )
 
-    override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_MOBILE)
+    // 预设 UA：列表页使用移动端，详情/章节使用桌面端 Chrome 131
+    private val mobileUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.203 Mobile Safari/537.36"
+    private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    
+    // 不暴露 userAgentKey 给用户配置，内部默认使用移动端 UA
+    override val userAgentKey = ConfigKey.UserAgent(mobileUserAgent)
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
@@ -156,12 +162,21 @@ internal class Bilinovel(context: MangaLoaderContext) :
         return groups
     }
 
-    override fun getRequestHeaders() = super.getRequestHeaders().newBuilder()
+    // 列表页面使用移动端 UA（返回正确的 HTML 结构）
+    override fun getRequestHeaders() = Headers.Builder()
+        .add("User-Agent", mobileUserAgent)
         .add("Referer", "https://$domain/")
         .add("Origin", "https://$domain")
-        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-        // 不强制 Accept-Encoding，交给 OkHttp 透明解压（避免拿到未解压的 br/gzip 原始数据）
+        .build()
+
+    // 详情/章节页面使用桌面端 Chrome 131 UA（避免截断和 Chrome 浏览器提示）
+    private fun getDesktopHeaders() = Headers.Builder()
+        .add("User-Agent", desktopUserAgent)
+        .add("Referer", "https://$domain/")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .build()
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -345,7 +360,8 @@ internal class Bilinovel(context: MangaLoaderContext) :
 
     override suspend fun getDetails(manga: Manga): Manga {
         val url = manga.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
-        val response = webClient.httpGet(url, getRequestHeaders())
+        // 详情页使用桌面端 UA
+        val response = webClient.httpGet(url, getDesktopHeaders())
         if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
             context.requestBrowserAction(this, url)
         }
@@ -385,15 +401,55 @@ internal class Bilinovel(context: MangaLoaderContext) :
     private suspend fun fetchChapters(manga: Manga): List<MangaChapter> {
         val catalogUrl = manga.url.replace(Regex("\\.html$"), "").removeSuffix("/") + "/catalog"
         val url = catalogUrl.let { if (it.startsWith("http")) it else "https://$domain$it" }
-        val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+        val doc = webClient.httpGet(url, getDesktopHeaders()).parseHtml()
         val chapters = mutableListOf<MangaChapter>()
         
-        // 新版结构解析
-        val volumeElements = doc.select(".volume-item, .catalog-volume, .volume-title, .volume-bar")
-        if (volumeElements.isNotEmpty()) {
-            var volumeIndex = 0
-            volumeElements.forEach { volume ->
-                val volumeName = volume.selectFirst(".chapter-bar h3, .volume-name, h3, .title")?.text()?.trim()
+        // 按顺序遍历所有 li 元素，识别卷标题和章节
+        // 卷标题结构: <li class="chapter-bar chapter-li"><h3>第一卷</h3></li>
+        // 章节结构: <li class="chapter-li jsChapter"><a class="chapter-li-a" href="...">章节名</a></li>
+        val allItems = doc.select("ol.chapter-ol li, ul.chapter-ol li, .catalog-volume li, .volume-list li")
+        var volumeIndex = 0
+        var currentVolumeName: String? = null  // 记录当前卷标题文本
+        
+        allItems.forEach { li ->
+            when {
+                // 卷标题: li.chapter-bar 包含 h3
+                li.hasClass("chapter-bar") -> {
+                    val volumeName = li.selectFirst("h3")?.text()?.trim()
+                    if (!volumeName.isNullOrEmpty()) {
+                        currentVolumeName = volumeName  // 保存原始卷标题
+                        volumeIndex++
+                    }
+                }
+                // 章节: li.jsChapter 包含章节链接
+                li.hasClass("jsChapter") -> {
+                    val a = li.selectFirst("a.chapter-li-a, a")
+                    if (a != null) {
+                        val hrefValue = a.attr("href")
+                        if (hrefValue.startsWith("javascript:", ignoreCase = true)) return@forEach
+                        val href = a.attrAsAbsoluteUrlOrNull("href")?.toRelativePath() ?: return@forEach
+                        val title = a.selectFirst(".chapter-index")?.text()?.trim() ?: a.text().trim()
+                        if (title.isEmpty()) return@forEach
+                        chapters += MangaChapter(
+                            id = generateUid(href),
+                            title = title,
+                            number = chapters.size + 1f,
+                            volume = volumeIndex,
+                            url = href,
+                            scanlator = currentVolumeName,  // 使用 scanlator 存储卷名，UI 用于显示分卷标题
+                            uploadDate = 0,
+                            branch = null,  // branch=null 实现扁平列表，volume 用于分卷标题
+                            source = source,
+                        )
+                    }
+                }
+            }
+        }
+        
+        // 备选方案：如果上述方法没有解析到章节，尝试其他选择器
+        if (chapters.isEmpty()) {
+            volumeIndex = 0
+            doc.select(".volume-item, .catalog-volume, .volume-title, .volume-bar").forEach { volume ->
                 val volumeChapters = volume.select("li.chapter-li.jsChapter a.chapter-li-a, .chapter-item a, a.chapter-link")
                 volumeChapters.forEach { a ->
                     val hrefValue = a.attr("href")
@@ -408,19 +464,18 @@ internal class Bilinovel(context: MangaLoaderContext) :
                         url = href,
                         scanlator = null,
                         uploadDate = 0,
-                        branch = volumeName,
+                        branch = null,
                         source = source,
                     )
                 }
                 volumeIndex++
             }
-        } else {
-            // 备选方案：解析 flat 结构 (类似 Markdown 转换后的结果)
-            var currentVolumeName: String? = null
-            var volumeIndex = 0
+        }
+        
+        // 最后备选：从所有列表链接中提取
+        if (chapters.isEmpty()) {
             doc.select("#volumes-list > *, .catalog-content > *").forEach { element ->
                 if (element.tagName() == "h3" || element.hasClass("volume-title")) {
-                    currentVolumeName = element.text().trim()
                     volumeIndex++
                 } else if (element.tagName() == "ul" || element.hasClass("chapter-list")) {
                     element.select("a").forEach { a ->
@@ -436,7 +491,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
                             url = href,
                             scanlator = null,
                             uploadDate = 0,
-                            branch = currentVolumeName,
+                            branch = null,
                             source = source,
                         )
                     }
@@ -495,16 +550,19 @@ internal class Bilinovel(context: MangaLoaderContext) :
         var currentUrl: String? = initialUrl
         var pageCount = 0
 
+        // 章节内容使用桌面端 UA
+        val contentHeaders = getDesktopHeaders()
+
         while (currentUrl != null && pageCount < 30) { // Safety limit: 30 pages per chapter
             if (seenPages.contains(currentUrl)) break
             seenPages.add(currentUrl)
 
             val doc = runCatching {
-                webClient.httpGet(currentUrl!!, getRequestHeaders()).parseHtml()
+                webClient.httpGet(currentUrl!!, contentHeaders).parseHtml()
             }.getOrNull() ?: break
 
-            val content = doc.selectFirst("#acontent") ?: doc.selectFirst("#article") ?: doc.selectFirst(".content")
-                ?: break
+            val content = doc.selectFirst("#TextContent") ?: doc.selectFirst("#acontent") ?: doc.selectFirst("#article") ?: doc.selectFirst(".read-content")
+                ?: doc.selectFirst(".content") ?: break
 
             // 移除广告/脚本/多余空行以及防爬虫提示
             content.select("script, style, iframe, ins, .co, .google-auto-placed").remove()
@@ -611,7 +669,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
-        keys.add(userAgentKey)
+        // 不暴露 userAgentKey 给用户设置，内部已预设最优 UA 策略
     }
 
     override suspend fun getPageUrl(page: MangaPage): String = page.url
