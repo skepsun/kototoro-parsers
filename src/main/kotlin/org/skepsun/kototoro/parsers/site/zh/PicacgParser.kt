@@ -65,7 +65,7 @@ import java.net.CookiePolicy
  * - Most list endpoints require token; on HTTP 401 it throws AuthRequiredException.
  */
 // @Broken("Temporarily disabled per release 9.4.2 requirements")
-@MangaSourceParser("PICACG", "Picacg", "zh", type = ContentType.HENTAI_MANGA)
+@MangaSourceParser("PICACG", "哔咔漫画", "zh", type = ContentType.HENTAI_MANGA)
 internal class PicacgParser(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.PICACG, pageSize = 24), Interceptor, MangaParserAuthProvider, MangaParserCredentialsAuthProvider, FavoritesProvider, FavoritesSyncProvider {
 

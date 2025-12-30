@@ -27,7 +27,9 @@ import org.skepsun.kototoro.parsers.util.attrAsRelativeUrl
 import org.skepsun.kototoro.parsers.util.attrOrNull
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
+import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
+import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import java.net.URLEncoder
 import java.util.EnumSet
 
@@ -37,7 +39,7 @@ import java.util.EnumSet
  * - 详情：基础元信息（标题/封面/描述）；生成观看章节
  * - 视频：从 <video>、LD+JSON、脚本字符串中提取 m3u8/mp4
  */
-@Broken("Under development")
+// @Broken("Under development")
 @MangaSourceParser(name = "NIUNIUZY", title = "牛牛资源", locale = "zh", type = ContentType.VIDEO)
 internal class Niuniuzy(
     context: MangaLoaderContext,
@@ -86,6 +88,12 @@ internal class Niuniuzy(
         order: SortOrder,
         filter: MangaListFilter,
     ): List<Manga> {
+        // 优先使用 API 列表，保证封面与标题准确；若 API 返回空并且有筛选，则回退 HTML 抓取
+        fetchListFromApi(page, filter)?.let { list ->
+            if (list.isNotEmpty()) return list
+            if (filter.tags.isEmpty() && filter.query.isNullOrBlank()) return list
+        }
+
         val url = buildListUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         val out = ArrayList<Manga>(pageSize)
@@ -178,7 +186,95 @@ internal class Niuniuzy(
             }
         }
 
-        return out
+        return enrichListWithApi(out)
+    }
+
+    private suspend fun fetchListFromApi(page: Int, filter: MangaListFilter): List<Manga>? {
+        try {
+            val url = buildApiListUrl(page, filter)
+            val raw = webClient.httpGet(url, getRequestHeaders()).parseRaw()
+            val json = JSONObject(raw)
+            val data = when {
+                json.has("list") -> json.getJSONArray("list")
+                json.has("data") -> json.getJSONArray("data")
+                else -> return null
+            }
+            if (data.length() == 0) return emptyList()
+
+            val ids = ArrayList<String>(data.length())
+            val basic = HashMap<String, JSONObject>()
+            for (i in 0 until data.length()) {
+                val item = data.optJSONObject(i) ?: continue
+                val id = item.optString("vod_id", item.optString("id", ""))
+                if (id.isBlank()) continue
+                ids.add(id)
+                basic[id] = item
+            }
+            if (ids.isEmpty()) return emptyList()
+
+            val detailUrl = "https://$domain/api.php/provide/vod/?ac=detail&ids=${ids.joinToString(",")}"
+            val detailJson = JSONObject(webClient.httpGet(detailUrl, getRequestHeaders()).parseRaw())
+            val detailArr: JSONArray = when {
+                detailJson.has("list") -> detailJson.getJSONArray("list")
+                detailJson.has("data") -> detailJson.getJSONArray("data")
+                else -> JSONArray()
+            }
+            val detailMap = HashMap<String, JSONObject>()
+            for (i in 0 until detailArr.length()) {
+                val obj = detailArr.optJSONObject(i) ?: continue
+                val id = obj.optString("vod_id", obj.optString("id", ""))
+                if (id.isNotBlank()) detailMap[id] = obj
+            }
+
+            val result = ArrayList<Manga>(ids.size)
+            for (id in ids) {
+                val detail = detailMap[id]
+                val base = detail ?: basic[id] ?: continue
+                val name = detail?.optString("vod_name", null)
+                    ?: basic[id]?.optString("vod_name", basic[id]?.optString("name", null))
+                    ?: "未命名"
+                val pic = detail?.optString("vod_pic", null)?.takeIf { it.isNotBlank() }
+                    ?: basic[id]?.optString("vod_pic", null)?.takeIf { it.isNotBlank() }
+                val cover = pic?.toAbsoluteUrlOrNull(domain) ?: pic
+                val typeName = detail?.optString("type_name", null) ?: basic[id]?.optString("type_name", null).orEmpty()
+                val tag = typeName.takeIf { it.isNotBlank() }?.let { MangaTag(it, it, source) }
+                val remarks = detail?.optString("vod_remarks", null)
+                    ?: basic[id]?.optString("vod_remarks", null)
+                    ?: detail?.optString("vod_sub", null)
+                val relUrl = "/index.php/vod/detail/id/$id.html"
+
+                result.add(
+                    Manga(
+                        id = generateUid(relUrl),
+                        url = relUrl,
+                        publicUrl = relUrl.toAbsoluteUrl(domain),
+                        title = name,
+                        altTitles = remarks?.takeIf { it.isNotBlank() }?.let { setOf(it) } ?: emptySet(),
+                        coverUrl = cover,
+                        largeCoverUrl = cover,
+                        authors = emptySet(),
+                        tags = tag?.let { setOf(it) } ?: emptySet(),
+                        state = null,
+                        description = base.optString("vod_content", "").takeIf { it.isNotBlank() },
+                        contentRating = ContentRating.SAFE,
+                        source = source,
+                        rating = RATING_UNKNOWN,
+                    ),
+                )
+            }
+            return result
+        } catch (_: Exception) {
+            return null
+        }
+    }
+
+    private fun buildApiListUrl(page: Int, filter: MangaListFilter): String {
+        val sb = StringBuilder("https://").append(domain).append("/api.php/provide/vod/?ac=list&pg=").append(page)
+        filter.tags.firstOrNull()?.key?.substringAfter("cate:")?.toIntOrNull()?.let { sb.append("&t=").append(it) }
+        if (!filter.query.isNullOrBlank()) {
+            sb.append("&wd=").append(URLEncoder.encode(filter.query, "UTF-8"))
+        }
+        return sb.toString()
     }
 
     private fun buildListUrl(page: Int, filter: MangaListFilter): String {
@@ -223,6 +319,7 @@ internal class Niuniuzy(
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
+        val apiDetail = fetchDetailFromApi(manga)
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
         val metaDesc = doc.selectFirst("meta[name=description]")?.attrOrNull("content")
             ?: doc.selectFirst("meta[property=og:description]")?.attrOrNull("content")
@@ -235,27 +332,158 @@ internal class Niuniuzy(
                 ?: doc.selectFirst("img[src*=/upload/]")?.attrAsAbsoluteUrlOrNull("src")
         }
 
-        val chapter = MangaChapter(
-            id = generateUid("${manga.url}|video"),
-            url = manga.url,
-            title = "观看",
-            number = 1f,
-            uploadDate = 0L,
-            volume = 0,
-            branch = null,
-            scanlator = null,
-            source = source,
+        val chapters = apiDetail?.chapters?.takeIf { it.isNotEmpty() } ?: listOf(
+            MangaChapter(
+                id = generateUid("${manga.url}|video"),
+                url = manga.url,
+                title = "观看",
+                number = 1f,
+                uploadDate = 0L,
+                volume = 0,
+                branch = null,
+                scanlator = null,
+                source = source,
+            ),
         )
 
         return manga.copy(
-            title = metaTitle ?: manga.title,
-            description = metaDesc ?: manga.description,
-            largeCoverUrl = metaImage ?: manga.largeCoverUrl,
-            chapters = listOf(chapter),
+            title = apiDetail?.title ?: metaTitle ?: manga.title,
+            description = apiDetail?.description ?: metaDesc ?: manga.description,
+            largeCoverUrl = apiDetail?.cover ?: metaImage ?: manga.largeCoverUrl,
+            chapters = chapters,
         )
     }
 
+    private data class ApiDetail(
+        val title: String?,
+        val description: String?,
+        val cover: String?,
+        val chapters: List<MangaChapter>,
+    )
+
+    private suspend fun fetchDetailFromApi(manga: Manga): ApiDetail? {
+        val id = extractVodId(manga.url) ?: extractVodId(manga.publicUrl) ?: return null
+        val url = "https://$domain/api.php/provide/vod/?ac=detail&ids=$id"
+        val raw = webClient.httpGet(url, getRequestHeaders()).parseRaw()
+        val json = JSONObject(raw)
+        val data = when {
+            json.has("list") -> json.getJSONArray("list")
+            json.has("data") -> json.getJSONArray("data")
+            else -> return null
+        }
+        val obj = data.optJSONObject(0) ?: return null
+        val title = obj.optString("vod_name", obj.optString("name", null))
+        val cover = obj.optString("vod_pic", obj.optString("pic", null)).toAbsoluteUrlOrNull(domain)
+        val desc = obj.optString("vod_content", obj.optString("content", null))
+            ?.replace(Regex("<[^>]+>"), "")
+            ?.trim()
+            ?.ifBlank { null }
+        val playUrl = obj.optString("vod_play_url", "")
+        val chapters = parseChaptersFromPlayUrl(playUrl, id)
+        return ApiDetail(title, desc, cover, chapters)
+    }
+
+    private fun parseChaptersFromPlayUrl(playUrl: String, vodId: String): List<MangaChapter> {
+        if (playUrl.isBlank()) return emptyList()
+        val segments = playUrl.split("#").mapNotNull { it.takeIf { seg -> seg.isNotBlank() } }
+        val chapters = ArrayList<MangaChapter>(segments.size)
+        var index = 1
+        for (seg in segments) {
+            val parts = seg.split("$", limit = 2)
+            val title = parts.getOrNull(0)?.ifBlank { null } ?: "第${index}集"
+            val url = parts.getOrNull(1)?.trim().orEmpty()
+            if (url.isBlank()) {
+                index++
+                continue
+            }
+            val number = Regex("""(\d+(?:\.\d+)?)""").find(title)?.groupValues?.get(1)?.toFloatOrNull()
+                ?: index.toFloat()
+            chapters.add(
+                MangaChapter(
+                    id = generateUid("$vodId|$index|$url"),
+                    url = url,
+                    title = title,
+                    number = number,
+                    uploadDate = 0L,
+                    volume = 0,
+                    branch = null,
+                    scanlator = null,
+                    source = source,
+                ),
+            )
+            index++
+        }
+        return chapters
+    }
+
+    private suspend fun enrichListWithApi(list: List<Manga>): List<Manga> {
+        if (list.isEmpty()) return list
+        val idMap = HashMap<String, Manga>()
+        list.forEach { m ->
+            val id = extractVodId(m.url) ?: extractVodId(m.publicUrl) ?: return@forEach
+            idMap[id] = m
+        }
+        if (idMap.isEmpty()) return list
+        return try {
+            val detailUrl = "https://$domain/api.php/provide/vod/?ac=detail&ids=${idMap.keys.joinToString(",")}"
+            val detailJson = JSONObject(webClient.httpGet(detailUrl, getRequestHeaders()).parseRaw())
+            val detailArr: JSONArray = when {
+                detailJson.has("list") -> detailJson.getJSONArray("list")
+                detailJson.has("data") -> detailJson.getJSONArray("data")
+                else -> JSONArray()
+            }
+            val detailMap = HashMap<String, JSONObject>()
+            for (i in 0 until detailArr.length()) {
+                val obj = detailArr.optJSONObject(i) ?: continue
+                val id = obj.optString("vod_id", obj.optString("id", ""))
+                if (id.isNotBlank()) detailMap[id] = obj
+            }
+            list.map { m ->
+                val id = extractVodId(m.url) ?: extractVodId(m.publicUrl)
+                val detail = id?.let { detailMap[it] }
+                if (detail == null) {
+                    m
+                } else {
+                    val title = detail.optString("vod_name", "").takeIf { it.isNotBlank() }
+                    val cover = detail.optString("vod_pic", "").takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
+                    val remarks = detail.optString("vod_remarks", "").takeIf { it.isNotBlank() }
+                    val typeName = detail.optString("type_name", "")
+                    val tag = typeName.takeIf { it.isNotBlank() }?.let { MangaTag(it, it, source) }
+                    val desc = detail.optString("vod_content", "").replace(Regex("<[^>]+>"), "").trim().ifBlank { null }
+                    m.copy(
+                        title = title ?: m.title,
+                        altTitles = remarks?.let { setOf(it) } ?: m.altTitles,
+                        coverUrl = cover ?: m.coverUrl,
+                        largeCoverUrl = cover ?: m.largeCoverUrl,
+                        tags = tag?.let { setOf(it) } ?: m.tags,
+                        description = desc ?: m.description,
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            list
+        }
+    }
+
+    private fun extractVodId(url: String): String? {
+        Regex("/(?:detail|play)/id/(\\d+)").find(url)?.groupValues?.getOrNull(1)?.let { return it }
+        Regex("id=(\\d+)").find(url)?.groupValues?.getOrNull(1)?.let { return it }
+        return null
+    }
+
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+        if ((chapter.url.startsWith("http://") || chapter.url.startsWith("https://")) &&
+            (chapter.url.endsWith(".m3u8", true) || chapter.url.endsWith(".mp4", true))
+        ) {
+            return listOf(
+                MangaPage(
+                    id = generateUid("${chapter.id}|page1"),
+                    url = chapter.url,
+                    preview = null,
+                    source = source,
+                ),
+            )
+        }
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
         // 优先多策略提取，其次支持站点“复制播放地址”块（.link.q1）
         val directLinkBlock = doc.selectFirst("div.link.q1")?.text()?.trim()
