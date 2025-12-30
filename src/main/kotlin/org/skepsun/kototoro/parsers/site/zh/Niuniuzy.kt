@@ -88,6 +88,18 @@ internal class Niuniuzy(
         order: SortOrder,
         filter: MangaListFilter,
     ): List<Manga> {
+        // 搜索走站内 HTML，API 不支持搜索
+        if (!filter.query.isNullOrBlank()) {
+            val url = buildListUrl(page, filter)
+            val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+            val list = enrichListWithApi(parseListFromHtml(doc))
+            if (list.isEmpty()) {
+                // 提示用户先在浏览器完成验证码
+                throw IllegalStateException("搜索需要先在浏览器完成验证码：设置-在浏览器中打开，随便搜索后填写验证码，再回到应用重试。")
+            }
+            return list
+        }
+
         // 优先使用 API 列表，保证封面与标题准确；若 API 返回空并且有筛选，则回退 HTML 抓取
         fetchListFromApi(page, filter)?.let { list ->
             if (list.isNotEmpty()) return list
@@ -96,10 +108,13 @@ internal class Niuniuzy(
 
         val url = buildListUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+        return enrichListWithApi(parseListFromHtml(doc))
+    }
+
+    private fun parseListFromHtml(doc: org.jsoup.nodes.Document): List<Manga> {
         val out = ArrayList<Manga>(pageSize)
         val seen = LinkedHashSet<String>()
 
-        // 优先匹配常见 MacCMS 详情入口
         val anchors = doc.select(
             "a[href*=/index.php/vod/detail/], a[href*=/vod/detail/], a[href*=/index.php/vod/play/], a[href*=/vod/play/]",
         )
@@ -145,7 +160,6 @@ internal class Niuniuzy(
             if (out.size >= pageSize) break
         }
 
-        // 回退：更宽泛的卡片容器
         if (out.isEmpty()) {
             val cards = doc.select(
                 ".stui-vodlist__item, .module-item, .vodlist_item, .card, .thumb, .module-item-index",
@@ -186,7 +200,7 @@ internal class Niuniuzy(
             }
         }
 
-        return enrichListWithApi(out)
+        return out
     }
 
     private suspend fun fetchListFromApi(page: Int, filter: MangaListFilter): List<Manga>? {
