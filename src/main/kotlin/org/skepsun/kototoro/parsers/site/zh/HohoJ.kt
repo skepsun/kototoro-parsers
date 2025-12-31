@@ -220,7 +220,7 @@ internal class HohoJ(context: MangaLoaderContext) :
         if (!filter.query.isNullOrBlank()) {
             // 搜索
             base.append("/search?text=").append(filter.query)
-            if (page > 1) base.append("&page=").append(page)
+            if (page > 1) base.append("&p=").append(page)
         } else {
             // 分类浏览 - 使用 /search 端点
             base.append("/search")
