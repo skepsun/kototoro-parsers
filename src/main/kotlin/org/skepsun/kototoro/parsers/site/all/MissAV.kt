@@ -1,14 +1,14 @@
 package org.skepsun.kototoro.parsers.site.zh
 
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.Broken
 import org.skepsun.kototoro.parsers.MangaLoaderContext
 import org.skepsun.kototoro.parsers.MangaSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedMangaParser
 import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.network.CloudFlareHelper
+import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
@@ -80,17 +80,31 @@ internal class MissAV(context: MangaLoaderContext) :
         )
     }
 
+    // 使用浏览器 User-Agent 避免 CF 检测
+    override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
+
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(userAgentKey)
+    }
+
+    // 添加浏览器特征请求头
+    override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .add("Sec-CH-UA", "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+        .add("Sec-CH-UA-Mobile", "?0")
+        .add("Sec-CH-UA-Platform", "\"Windows\"")
+        .add("Sec-Fetch-Dest", "document")
+        .add("Sec-Fetch-Mode", "navigate")
+        .add("Sec-Fetch-Site", "none")
+        .add("Sec-Fetch-User", "?1")
+        .add("Upgrade-Insecure-Requests", "1")
+        .build()
+
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = buildListUrl(page, order, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
-        
-        // 检查 Cloudflare 保护
-        val protection = CloudFlareHelper.checkResponseForProtection(response)
-        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-            // 需要用户在浏览器中解决 Cloudflare Challenge
-            context.requestBrowserAction(this, url)
-        }
-        
         val doc = response.parseHtml()
         val items = ArrayList<Manga>(pageSize)
         val seen = LinkedHashSet<String>()
@@ -148,13 +162,6 @@ internal class MissAV(context: MangaLoaderContext) :
 
     override suspend fun getDetails(manga: Manga): Manga {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
-        
-        // 检查 Cloudflare 保护
-        val protection = CloudFlareHelper.checkResponseForProtection(response)
-        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-            context.requestBrowserAction(this, manga.publicUrl)
-        }
-        
         val doc = response.parseHtml()
         
         // 提取标题
@@ -251,12 +258,6 @@ internal class MissAV(context: MangaLoaderContext) :
         // 否则需要重新获取详情页
         val fullUrl = chapter.url.toAbsoluteUrl(domain)
         val response = webClient.httpGet(fullUrl, getRequestHeaders())
-        
-        val protection = CloudFlareHelper.checkResponseForProtection(response)
-        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-            context.requestBrowserAction(this, fullUrl)
-        }
-        
         val doc = response.parseHtml()
         val videoUrl = extractVideoUrl(doc, chapter.url) ?: return emptyList()
         

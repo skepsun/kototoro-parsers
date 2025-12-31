@@ -1,13 +1,13 @@
 package org.skepsun.kototoro.parsers.site.en
 
+import okhttp3.Headers
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.Broken
 import org.skepsun.kototoro.parsers.MangaLoaderContext
 import org.skepsun.kototoro.parsers.MangaSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedMangaParser
 import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.network.CloudFlareHelper
+import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
@@ -45,6 +45,28 @@ internal class Jable(context: MangaLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("jable.tv")
 
+    // 使用浏览器 User-Agent 避免 CF 检测
+    override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
+
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(userAgentKey)
+    }
+
+    // 添加浏览器特征请求头
+    override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .add("Sec-CH-UA", "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+        .add("Sec-CH-UA-Mobile", "?0")
+        .add("Sec-CH-UA-Platform", "\"Windows\"")
+        .add("Sec-Fetch-Dest", "document")
+        .add("Sec-Fetch-Mode", "navigate")
+        .add("Sec-Fetch-Site", "none")
+        .add("Sec-Fetch-User", "?1")
+        .add("Upgrade-Insecure-Requests", "1")
+        .build()
+
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
         SortOrder.POPULARITY,
@@ -65,12 +87,6 @@ internal class Jable(context: MangaLoaderContext) :
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = buildListUrl(page, order, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
-        
-        val protection = CloudFlareHelper.checkResponseForProtection(response)
-        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-            context.requestBrowserAction(this, url)
-        }
-        
         val doc = response.parseHtml()
         val items = ArrayList<Manga>(pageSize)
         val seen = LinkedHashSet<String>()
@@ -90,7 +106,12 @@ internal class Jable(context: MangaLoaderContext) :
             val img = item.selectFirst("img")
             val coverUrl = img?.attr("data-src") ?: img?.attr("src") ?: ""
             
-            val title = img?.attr("alt") ?: link.attr("title") ?: videoId.uppercase()
+            // 多策略提取标题
+            val title = item.selectFirst("h6, h5, h4, .title, .video-title, .card-title")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                ?: item.selectFirst("a[href*=/videos/]")?.text()?.trim()?.takeIf { it.isNotBlank() }
+                ?: img?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
+                ?: link.attr("title")?.trim()?.takeIf { it.isNotBlank() }
+                ?: videoId.uppercase()
             
             val duration = item.selectFirst("span[class*=duration], div[class*=duration]")?.text()?.trim() ?: ""
             
@@ -114,18 +135,13 @@ internal class Jable(context: MangaLoaderContext) :
                 )
             )
         }
-        
+        // 直接返回结果，不再自动触发 CF 验证
+        // 用户可通过刷新重试，或手动在设置中打开浏览器验证
         return items
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
-        
-        val protection = CloudFlareHelper.checkResponseForProtection(response)
-        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-            context.requestBrowserAction(this, manga.publicUrl)
-        }
-        
         val doc = response.parseHtml()
         
         // 提取标题
@@ -192,12 +208,6 @@ internal class Jable(context: MangaLoaderContext) :
         
         val fullUrl = chapter.url.toAbsoluteUrl(domain)
         val response = webClient.httpGet(fullUrl, getRequestHeaders())
-        
-        val protection = CloudFlareHelper.checkResponseForProtection(response)
-        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
-            context.requestBrowserAction(this, fullUrl)
-        }
-        
         val doc = response.parseHtml()
         val videoUrl = extractVideoUrl(doc) ?: return emptyList()
         
@@ -217,9 +227,9 @@ internal class Jable(context: MangaLoaderContext) :
         val base = StringBuilder("https://").append(domain)
         
         if (!filter.query.isNullOrBlank()) {
-            // 搜索
+            // 搜索 - 使用路径格式分页: /search/{query}/{page}/
             base.append("/search/").append(filter.query).append("/")
-            if (page > 1) base.append("?page=").append(page)
+            if (page > 1) base.append(page).append("/")
         } else {
             // 默认使用最近更新页面
             base.append("/latest-updates/")
