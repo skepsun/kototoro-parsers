@@ -53,8 +53,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         get() = "www.zaimanhua.com"
 
     override fun onCreateConfig(keys: MutableCollection<org.skepsun.kototoro.parsers.config.ConfigKey<*>>) {
-        super.onCreateConfig(keys)
-        keys.add(configKeyDomain)
+        super.onCreateConfig(keys) // Abstract 已添加域名配置，这里只补充额外开关
         keys.add(signTaskKey)
     }
 
