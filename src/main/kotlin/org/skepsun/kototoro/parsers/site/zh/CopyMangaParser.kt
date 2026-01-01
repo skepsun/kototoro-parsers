@@ -69,6 +69,17 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
     @OptIn(InternalParsersApi::class)
     override val configKeyDomain = ConfigKey.Domain(
         "api.copy2000.online",
+        "api.mangacopy.com",
+        "mapi.copy20.com",
+        "mapi.copy2000.site",
+        "api.2025copy.com",
+        "mapi.hotmangasd.com",
+        "api.manga2025.com",
+        "mapi.hotmangasf.com",
+        "mapi.hotmangasg.com",
+        "mapi.elfgjfghkk.club",
+        "mapi.fgjfghkk.club",
+        "mapi.fgjfghkkcenter.club",
     )
     @OptIn(InternalParsersApi::class)
     override val userAgentKey = ConfigKey.UserAgent("COPY/3.0.6")
