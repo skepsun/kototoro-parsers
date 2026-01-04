@@ -162,25 +162,21 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val fullUrl = chapter.url.toAbsoluteUrl(domain)
-		val doc = webClient.httpGet(fullUrl).parseHtml()
-		val mainContent = doc.selectFirstOrThrow("div#main_contents")
+		// Use /story/ URL instead of /image/ to get the AMP page with all images
+		val storyUrl = chapter.url.replace("/image/", "/story/").toAbsoluteUrl(domain)
+		val doc = webClient.httpGet(storyUrl).parseHtml()
 		
-		// 查找所有图片链接
-		val imageLinks = mainContent.select("a[href*=/upload/]")
+		// Select amp-img elements with upload path, excluding related thumbnails
+		val images = doc.select("amp-img[src*=upload]:not(.related-thumbnail)")
 		
-		return imageLinks.mapIndexedNotNull { index, a ->
-			val imageUrl = a.attr("href")
+		return images.mapIndexedNotNull { index, element ->
+			val imageUrl = element.attr("src")
 			if (imageUrl.isBlank()) return@mapIndexedNotNull null
-			
-			// 提取预览图
-			val img = a.selectFirst("img")
-			val preview = img?.attr("src")
 			
 			MangaPage(
 				id = generateUid(imageUrl),
-				url = imageUrl,
-				preview = preview,
+				url = imageUrl.replace("http://", "https://"),
+				preview = null,
 				source = source,
 			)
 		}
@@ -235,45 +231,81 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 		val doc = webClient.httpGet(url).parseHtml()
 		val items = ArrayList<Manga>(pageSize)
 		
-		doc.select("div.image-list-item").forEach { div ->
-			val a = div.selectFirst("a") ?: return@forEach
-			val href = a.attr("href")
-			if (href.isBlank() || href == "#") return@forEach
-			
-			val img = a.selectFirst("img")
-			val coverUrl = img?.attr("src") ?: ""
-			val alt = img?.attr("alt") ?: ""
-			
-			// 提取标题
-			val title = if (alt.isNotEmpty()) {
-				alt
-			} else {
-				// 从URL提取并格式化
-				href.substringAfterLast("/image/")
-					.substringBefore("/")
-					.replace("-", " ")
-					.toTitleCase()
+		// Try desktop layout first
+		val desktopItems = doc.select("div.image-list-item:has(a[href*=/image/])")
+		
+		if (desktopItems.isNotEmpty()) {
+			// Desktop layout
+			desktopItems.forEach { div ->
+				val a = div.selectFirst("a") ?: return@forEach
+				val href = a.attr("href")
+				if (href.isBlank() || href == "#") return@forEach
+				
+				val img = div.selectFirst("img")
+				val coverUrl = img?.attr("src")?.replace("http://", "https://") ?: ""
+				
+				// Get title from dedicated element or fallback to alt/URL
+				val title = div.selectFirst(".image-list-item-title")?.text()?.trim()
+					?: img?.attr("alt")?.trim()
+					?: href.substringAfterLast("/image/")
+						.substringBefore("/")
+						.replace("-", " ")
+						.toTitleCase()
+				
+				items.add(
+					Manga(
+						id = generateUid(href),
+						url = href,
+						publicUrl = href.toAbsoluteUrl(domain),
+						coverUrl = coverUrl.toAbsoluteUrl(domain),
+						title = title,
+						altTitles = emptySet(),
+						rating = RATING_UNKNOWN,
+						contentRating = ContentRating.ADULT,
+						tags = emptySet(),
+						state = null,
+						authors = emptySet(),
+						largeCoverUrl = null,
+						description = null,
+						chapters = null,
+						source = source,
+					),
+				)
 			}
-			
-			items.add(
-				Manga(
-					id = generateUid(href),
-					url = href,
-					publicUrl = href.toAbsoluteUrl(domain),
-					coverUrl = coverUrl.toAbsoluteUrl(domain),
-					title = title,
-					altTitles = emptySet(),
-					rating = RATING_UNKNOWN,
-					contentRating = ContentRating.ADULT,
-					tags = emptySet(),
-					state = null,
-					authors = emptySet(),
-					largeCoverUrl = null,
-					description = null,
-					chapters = null,
-					source = source,
-				),
-			)
+		} else {
+			// Mobile layout fallback
+			doc.select("#entry_list > li > a[href*=/image/]").forEach { a ->
+				val href = a.attr("href")
+				if (href.isBlank() || href == "#") return@forEach
+				
+				val img = a.selectFirst("img")
+				val coverUrl = img?.attr("src")?.replace("http://", "https://") ?: ""
+				val title = a.selectFirst("span:not(.posted)")?.text()?.trim()
+					?: href.substringAfterLast("/image/")
+						.substringBefore("/")
+						.replace("-", " ")
+						.toTitleCase()
+				
+				items.add(
+					Manga(
+						id = generateUid(href),
+						url = href,
+						publicUrl = href.toAbsoluteUrl(domain),
+						coverUrl = coverUrl.toAbsoluteUrl(domain),
+						title = title,
+						altTitles = emptySet(),
+						rating = RATING_UNKNOWN,
+						contentRating = ContentRating.ADULT,
+						tags = emptySet(),
+						state = null,
+						authors = emptySet(),
+						largeCoverUrl = null,
+						description = null,
+						chapters = null,
+						source = source,
+					),
+				)
+			}
 		}
 		
 		return items
