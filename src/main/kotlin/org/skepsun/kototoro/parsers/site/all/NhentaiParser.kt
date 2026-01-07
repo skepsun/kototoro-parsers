@@ -821,29 +821,24 @@ internal class NhentaiParser(context: MangaLoaderContext) :
 		val langTag = filter.tags.firstOrNull { it.key.startsWith("language:") }
 		val tagFilter = filter.tags.firstOrNull { it.key.startsWith("tag:") }
 
-		val sortPath = when (order) {
-			SortOrder.POPULARITY_TODAY -> "/popular-today"
-			SortOrder.POPULARITY_WEEK -> "/popular-week"
-			SortOrder.POPULARITY_MONTH -> "/popular-month"
-			SortOrder.POPULARITY -> "/popular"
-			else -> ""
+		val sortParam = when (order) {
+			SortOrder.POPULARITY_TODAY -> "popular-today"
+			SortOrder.POPULARITY_WEEK -> "popular-week"
+			SortOrder.POPULARITY_MONTH -> "popular-month"
+			SortOrder.POPULARITY -> "popular"
+			else -> null
 		}
-		val searchSortParam = when (order) {
-			SortOrder.POPULARITY_TODAY -> "&sort=popular-today"
-			SortOrder.POPULARITY_WEEK -> "&sort=popular-week"
-			SortOrder.POPULARITY_MONTH -> "&sort=popular-month"
-			SortOrder.POPULARITY -> "&sort=popular"
-			else -> ""
-		}
+		val searchSortParam = if (sortParam != null) "&sort=$sortParam" else ""
 
 		val url = when {
 			query.isNotEmpty() -> "https://${domain}/search/?q=${query.urlEncoded()}&page=$page$searchSortParam"
-			langTag != null -> "https://${domain}/language/${langTag.key.substringAfter("language:")}$sortPath?page=$page"
+			langTag != null -> "https://${domain}/language/${langTag.key.substringAfter("language:")}/${if (sortParam != null) "$sortParam/" else ""}?page=$page"
 			tagFilter != null -> {
 				val slug = tagFilter.title.lowercase().replace(' ', '-')
-				"https://${domain}/tag/$slug$sortPath?page=$page"
+				"https://${domain}/tag/$slug/${if (sortParam != null) "$sortParam/" else ""}?page=$page"
 			}
-			else -> "https://${domain}$sortPath/?page=$page"
+			sortParam != null -> "https://${domain}/search/?q=%22%22&page=$page$searchSortParam"
+			else -> "https://${domain}/?page=$page"
 		}
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
@@ -852,23 +847,32 @@ internal class NhentaiParser(context: MangaLoaderContext) :
     }
 
     private fun parseGalleryList(doc: Document): List<Manga> {
-        return doc.select("div.gallery").mapNotNull { el ->
-            val a = el.selectFirst("a") ?: return@mapNotNull null
+        return doc.select(".gallery").mapNotNull { el ->
+            val a = if (el.tagName() == "a") el else el.selectFirst("a")
+            if (a == null) return@mapNotNull null
             val href = a.attr("href")
             val id = normalizeId(href.replace(Regex("\\D"), ""))
-            val title = el.selectFirst(".caption")?.text()?.trim().orEmpty()
-            val cover = el.selectFirst("a > img")?.attr("data-src")
-                ?: el.selectFirst("a > img")?.attr("src")
-			val lang = el.attr("data-tags").split(" ").firstOrNull {
-				it == "12227" || it == "6346" || it == "29963"
-			}?.let {
-				when (it) {
-					"12227" -> "English"
-					"6346" -> "日本語"
-					"29963" -> "中文"
-					else -> ""
-				}
-			}.orEmpty()
+            val title = el.selectFirst(".caption")?.text()?.trim()
+                ?: el.selectFirst("a > div")?.text()?.trim()
+                ?: el.select("div").lastOrNull()?.text()?.trim()
+                ?: ""
+            val img = el.selectFirst("img") ?: el.selectFirst("a > img")
+            val cover = img?.attr("data-src")
+                ?: img?.attr("src")
+                ?: img?.attr("data-cfsrc")
+			val langAttribute = el.attr("data-tags")
+			val lang = if (langAttribute.isNotEmpty()) {
+				langAttribute.split(" ").firstOrNull {
+					it == "12227" || it == "6346" || it == "29963"
+				}?.let {
+					when (it) {
+						"12227" -> "English"
+						"6346" -> "日本語"
+						"29963" -> "中文"
+						else -> ""
+					}
+				}.orEmpty()
+			} else ""
             if (id.isEmpty() || title.isEmpty()) return@mapNotNull null
             val coverUrl = cover
                 ?.let { if (it.startsWith("//")) "https:$it" else it }
