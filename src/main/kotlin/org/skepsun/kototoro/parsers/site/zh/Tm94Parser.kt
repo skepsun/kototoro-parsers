@@ -58,7 +58,7 @@ internal class Tm94Parser(
 
     override val filterCapabilities: MangaListFilterCapabilities =
         MangaListFilterCapabilities(
-            isSearchSupported = false,
+            isSearchSupported = true,
             isMultipleTagsSupported = true,
         )
 
@@ -74,8 +74,13 @@ internal class Tm94Parser(
     }
 
     private fun listUrl(page: Int, filter: MangaListFilter): String {
-        val catId = filter.tags.firstOrNull { it.key.startsWith("cat:") }?.key?.substringAfter("cat:") ?: "1"
+        val query = filter.query?.trim()
         val p = if (page < 1) 1 else page
+        if (!query.isNullOrBlank()) {
+            val q = java.net.URLEncoder.encode(query, "UTF-8")
+            return "http://$domain/index.php/vod/search/page/$p/wd/$q.html"
+        }
+        val catId = filter.tags.firstOrNull { it.key.startsWith("cat:") }?.key?.substringAfter("cat:") ?: "1"
         return "http://$domain/index.php/vod/type/id/$catId/page/$p.html"
     }
 
