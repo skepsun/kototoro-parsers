@@ -1,5 +1,6 @@
 package org.skepsun.kototoro.parsers.site.en
 
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.Broken
@@ -82,6 +83,13 @@ internal class Cosxplay(context: MangaLoaderContext) :
             isMultipleTagsSupported = false,
         )
 
+    override fun getRequestHeaders(): Headers {
+        return super.getRequestHeaders().newBuilder()
+            .set("User-Agent", context.getDefaultUserAgent())
+            .set("Referer", "https://$domain/")
+            .build()
+    }
+
     override suspend fun getFilterOptions(): MangaListFilterOptions {
         val tags = setOf(
             MangaTag(title = "2B", key = "7841-nier-automata", source = source),
@@ -159,13 +167,14 @@ internal class Cosxplay(context: MangaLoaderContext) :
         val videoBlocks = doc.select(".video-block")
         for (block in videoBlocks) {
             val postId = block.attr("data-post-id").takeIf { it.isNotBlank() } ?: continue
-            val link = block.selectFirst("a.thumb.ppopp") ?: continue
+            val link = block.selectFirst("a.thumb") ?: continue
             val href = runCatching { link.attrAsRelativeUrl("href") }.getOrNull() ?: continue
             
             if (!seen.add(href)) continue
             
             val title = block.selectFirst(".title")?.text()?.trim() ?: "Untitled"
-            val thumbnail = block.selectFirst("img.video-img")?.attr("data-src")
+            val img = block.selectFirst("img.video-img")
+            val thumbnail = img?.attr("data-src")?.takeIf { it.isNotBlank() } ?: img?.attr("src")
             val views = block.selectFirst(".views-number")?.text()?.trim()
             val rating = block.selectFirst(".rating")?.text()?.trim()
             val duration = block.selectFirst(".duration")?.text()?.trim()
@@ -209,11 +218,12 @@ internal class Cosxplay(context: MangaLoaderContext) :
         // 提取视频元数据
         val metaTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
         val metaDesc = doc.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: doc.selectFirst("meta[name=description]")?.attr("content")
+            ?: doc.selectFirst(".p-desc")?.text()
         val metaImage = doc.selectFirst("meta[property=og:image]")?.attr("content")
         
-        // html中的标签示例<a href="https://cosxplay.com/70946-genshin-impact/" class="label-cat ppopp" title="Genshin">Genshin</a>
         // 提取标签
-        val tags = doc.select(".tags a").mapNotNull { tag ->
+        val tags = doc.select(".tags-list a").mapNotNull { tag ->
             val tagText = tag.text().trim()
             if (tagText.isNotBlank()) {
                 MangaTag(
@@ -225,11 +235,9 @@ internal class Cosxplay(context: MangaLoaderContext) :
         }.toSet()
         
         // 创建单个章节（视频）
-        // 注意：chapter.url 使用详情页 URL，而不是视频 URL
-        // 这样在 getPages 中可以总是获取最新的视频 URL，避免 URL 过期问题
         val chapter = MangaChapter(
             id = generateUid("${manga.url}|video"),
-            url = manga.url,  // 使用详情页 URL
+            url = manga.url,
             title = "Watch",
             number = 1f,
             uploadDate = 0L,
@@ -249,10 +257,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        // 总是从详情页获取最新的视频 URL
-        // 这样可以避免视频 URL 过期的问题（URL 包含 verify 参数）
         val response = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders())
-        
         val protection = CloudFlareHelper.checkResponseForProtection(response)
         if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
             context.requestBrowserAction(this, chapter.url.toAbsoluteUrl(domain))
@@ -271,6 +276,8 @@ internal class Cosxplay(context: MangaLoaderContext) :
             ),
         )
     }
+    
+
     
     private fun buildListUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
         val base = StringBuilder("https://").append(domain)
@@ -327,7 +334,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         )
         return if (parts.isNotEmpty()) parts.joinToString(" | ") else null
     }
-    
+
     private fun extractVideoUrl(doc: Document): String? {
         // 策略 1: 从 <video> 标签的 <source> 提取
         val highQuality = doc.selectFirst("video source[title=high]")?.attr("src")
@@ -340,7 +347,17 @@ internal class Cosxplay(context: MangaLoaderContext) :
         val videoSrc = doc.selectFirst("video")?.attr("src")
         if (!videoSrc.isNullOrBlank()) return videoSrc
         
-        // 策略 3: 从页面 HTML 中用正则提取 .mp4 URL
+        // 策略 3: 从 JS 变量提取 (var videoHigh = "...")
+        val script = doc.select("script").html()
+        val regexHigh = """var\s+videoHigh\s*=\s*["']([^"']+)["']""".toRegex()
+        val regexLow = """var\s+videoLow\s*=\s*["']([^"']+)["']""".toRegex()
+        
+        val jsVideoUrl = regexHigh.find(script)?.groupValues?.get(1)
+            ?: regexLow.find(script)?.groupValues?.get(1)
+            
+        if (!jsVideoUrl.isNullOrBlank()) return jsVideoUrl
+
+        // 策略 4: 从页面 HTML 中用正则提取 .mp4 URL (最后手段)
         val html = doc.outerHtml()
         val mp4Pattern = Regex("""https?://[^"'\s>]+\.mp4[^"'\s>]*""", RegexOption.IGNORE_CASE)
         val match = mp4Pattern.find(html)
