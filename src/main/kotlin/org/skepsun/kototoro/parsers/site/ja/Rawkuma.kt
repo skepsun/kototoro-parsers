@@ -6,6 +6,8 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.skepsun.kototoro.parsers.InternalParsersApi
 import org.skepsun.kototoro.parsers.MangaLoaderContext
@@ -42,7 +44,14 @@ internal class Rawkuma(context: MangaLoaderContext) :
         isTagsExclusionSupported = false,
     )
 
-    // 完整的 genre 列表（从网站 HTML 提取）
+    private val searchTitleOnlyKey = ConfigKey.Toggle("search_title_only", "仅搜索标题", true)
+
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(searchTitleOnlyKey)
+    }
+
+    // 完整的 genre 列表
     private val defaultGenres = setOf(
         MangaTag("Action", "action", source),
         MangaTag("Adaptions", "adaptions", source),
@@ -92,6 +101,56 @@ internal class Rawkuma(context: MangaLoaderContext) :
         MangaTag("Yuri", "yuri", source),
     )
 
+    private val genreSlugToId = mapOf(
+        "action" to 2,
+        "adaptions" to 5114,
+        "adult" to 67,
+        "adventure" to 3,
+        "animals" to 14890,
+        "comedy" to 4,
+        "crime" to 13850,
+        "demons" to 5113,
+        "drama" to 5,
+        "ecchi" to 31,
+        "fantasy" to 6,
+        "game" to 1866,
+        "gender-bender" to 100,
+        "girls-love" to 14375,
+        "harem" to 48,
+        "hentai" to 5561,
+        "historical" to 105,
+        "horror" to 54,
+        "isekai" to 5110,
+        "josei" to 357,
+        "lolicon" to 603,
+        "magic" to 5111,
+        "martial-arts" to 106,
+        "mature" to 23,
+        "mecha" to 35,
+        "mystery" to 24,
+        "philosophical" to 15090,
+        "police" to 13851,
+        "psychological" to 25,
+        "romance" to 42,
+        "school-life" to 15,
+        "sci-fi" to 16,
+        "seinen" to 32,
+        "shotacon" to 706,
+        "shoujo" to 113,
+        "shoujo-ai" to 328,
+        "shounen" to 7,
+        "shounen-ai" to 175,
+        "slice-of-life" to 43,
+        "smut" to 1402,
+        "sports" to 143,
+        "supernatural" to 12,
+        "thriller" to 13821,
+        "thriller-2" to 13822,
+        "tragedy" to 26,
+        "yaoi" to 207,
+        "yuri" to 626
+    )
+
     override suspend fun getFilterOptions() = MangaListFilterOptions(
         availableTags = defaultGenres,
     )
@@ -106,12 +165,19 @@ internal class Rawkuma(context: MangaLoaderContext) :
         .build()
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-        // 优先使用站点的 advanced_search Ajax 接口，失败再退回静态页
-        fetchListViaAjax(page, order, filter)?.let { list ->
-            logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' tag=${filter.tags.firstOrNull()?.key} size=${list.size} url=admin-ajax (advanced_search)")
+        // 优先使用 WordPress REST API
+        fetchListViaApi(page, order, filter)?.let { list ->
+            logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' api_size=${list.size}")
             return list
         }
 
+        // 备选方案：原来的 Ajax 接口
+        fetchListViaAjax(page, order, filter)?.let { list ->
+            logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' ajax_size=${list.size}")
+            return list
+        }
+
+        // 最后的追溯方案：解析 HTML
         val candidates = listOf(
             buildLibraryUrl(page, order, filter) to "https://$domain/library/",
             buildMangaPageUrl(page, order, filter) to "https://$domain/manga/",
@@ -130,6 +196,152 @@ internal class Rawkuma(context: MangaLoaderContext) :
         }
         return emptyList()
     }
+
+    private suspend fun fetchListViaApi(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga>? {
+        val apiUrl = buildApiUrl(page, order, filter)
+        val response = runCatching {
+            webClient.httpGet(apiUrl.toHttpUrl(), getRequestHeaders())
+        }.getOrElse { return null }
+
+        if (response.code != 200) return null
+
+        val jsonArray = runCatching { response.parseJsonArray() }.getOrElse { return null }
+        val mangaList = mutableListOf<Manga>()
+
+        for (i in 0 until jsonArray.length()) {
+            val item = jsonArray.getJSONObject(i)
+            mangaList.add(parseMangaJson(item))
+        }
+
+        return mangaList
+    }
+
+    private fun parseMangaJson(item: JSONObject): Manga {
+        val publicUrl = item.getString("link")
+        val relativeUrl = publicUrl.toRelativeUrl(domain)
+        val title = item.getJSONObject("title").getString("rendered").unescapeHtml()
+        
+        // 封面路径探测：1. Embedded, 2. Nested Meta, 3. Top-level Meta
+        val coverUrl = item.optJSONObject("_embedded")
+            ?.optJSONArray("wp:featuredmedia")
+            ?.optJSONObject(0)
+            ?.optString("source_url")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.optJSONObject("meta")
+                ?.optJSONObject("meta")
+                ?.optString("thumbnail")
+                ?.takeIf { !it.isNullOrBlank() }
+            ?: item.optJSONObject("meta")
+                ?.optString("thumbnail")
+                ?.takeIf { !it.isNullOrBlank() }
+            ?: item.optString("featured_image_url")
+                ?.takeIf { it.isNotBlank() }
+            ?: ""
+
+        val terms = parseTerms(item)
+        val statusText = item.optString("status")
+        val state = when {
+            statusText.contains("publish") -> MangaState.ONGOING
+            else -> null
+        }
+
+        return Manga(
+            id = generateUid(relativeUrl),
+            url = relativeUrl,
+            publicUrl = publicUrl,
+            coverUrl = coverUrl,
+            title = title,
+            altTitles = emptySet(),
+            rating = RATING_UNKNOWN,
+            tags = terms.tags,
+            authors = terms.authors,
+            state = state,
+            source = source,
+            contentRating = ContentRating.SAFE,
+        )
+    }
+
+    private data class ParsedTerms(val tags: Set<MangaTag>, val authors: Set<String>)
+
+    private fun parseTerms(item: JSONObject): ParsedTerms {
+        val tags = mutableSetOf<MangaTag>()
+        val authors = mutableSetOf<String>()
+
+        // 1. 从 _embedded 获取 (最全)
+        val embedded = item.optJSONObject("_embedded")
+        val wpTerms = embedded?.optJSONArray("wp:term")
+        if (wpTerms != null) {
+            for (i in 0 until wpTerms.length()) {
+                val termArray = wpTerms.optJSONArray(i) ?: continue
+                for (j in 0 until termArray.length()) {
+                    val term = termArray.getJSONObject(j)
+                    val taxonomy = term.optString("taxonomy")
+                    val name = term.getString("name").unescapeHtml()
+                    val slug = term.getString("slug")
+                    
+                    when (taxonomy) {
+                        "genre" -> tags.add(MangaTag(name, slug, source))
+                        "series-author", "artist" -> authors.add(name)
+                    }
+                }
+            }
+        }
+
+        // 2. 备选方案：从 meta.meta.tax 获取
+        if (tags.isEmpty() && authors.isEmpty()) {
+            val taxArray = item.optJSONObject("meta")?.optJSONObject("meta")?.optJSONArray("tax")
+            if (taxArray != null) {
+                for (i in 0 until taxArray.length()) {
+                    val term = taxArray.getJSONObject(i)
+                    val taxonomy = term.optString("taxonomy")
+                    val name = term.optString("name").unescapeHtml()
+                    val slug = term.optString("slug")
+                    if (name.isBlank()) continue
+                    
+                    when (taxonomy) {
+                        "genre" -> tags.add(MangaTag(name, slug, source))
+                        "series-author", "artist" -> authors.add(name)
+                    }
+                }
+            }
+        }
+
+        return ParsedTerms(tags, authors)
+    }
+
+    private fun buildApiUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+        append("https://$domain/wp-json/wp/v2/manga?")
+        append("page=$page")
+        append("&per_page=$pageSize")
+        
+        if (!filter.query.isNullOrBlank()) {
+            append("&search=${filter.query!!.urlEncoded()}")
+            if (config[searchTitleOnlyKey]) {
+                append("&search_columns=post_title") // 限制仅搜索标题
+            }
+        }
+        
+        filter.tags.firstOrNull()?.let { tag ->
+            val genreId = genreSlugToId[tag.key]
+            if (genreId != null) {
+                append("&genre=$genreId")
+            }
+        }
+        
+        val (orderParam, orderBy) = mapOrder(order)
+        // API params: orderby (date, id, title), order (asc, desc)
+        val apiOrderBy = when (orderBy) {
+            "popular" -> "date" // API 不直接支持 Popularity，回退到 Date
+            "alphabet" -> "title"
+            "newest" -> "id"
+            else -> "date"
+        }
+        append("&orderby=$apiOrderBy")
+        append("&order=$orderParam")
+        append("&_embed") // 包含更多信息
+    }
+
+    private fun String.unescapeHtml(): String = Jsoup.parse(this).text()
 
     private suspend fun fetchListViaAjax(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga>? {
         val (orderParam, orderBy) = mapOrder(order)
@@ -294,10 +506,62 @@ internal class Rawkuma(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
+        val slug = manga.url.removeSuffix("/").substringAfterLast("/")
+        val apiUrl = "https://$domain/wp-json/wp/v2/manga?slug=$slug&_embed"
+        
+        val apiManga = runCatching {
+            val response = webClient.httpGet(apiUrl.toHttpUrl(), getRequestHeaders())
+            if (response.code == 200) {
+                val array = response.parseJsonArray()
+                if (array.length() > 0) array.getJSONObject(0) else null
+            } else null
+        }.getOrNull()
+
+        if (apiManga != null) {
+            return getDetailsFromApi(manga, apiManga)
+        }
+
+        return getDetailsFromHtml(manga)
+    }
+
+    private suspend fun getDetailsFromApi(manga: Manga, item: JSONObject): Manga {
+        val title = item.getJSONObject("title").getString("rendered").unescapeHtml()
+        val description = item.getJSONObject("content").getString("rendered")
+            .let { Jsoup.parse(it).text().trim() }
+        
+        val cover = item.optJSONObject("_embedded")
+            ?.optJSONArray("wp:featuredmedia")
+            ?.optJSONObject(0)
+            ?.optString("source_url")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.optJSONObject("meta")
+                ?.optJSONObject("meta")
+                ?.optString("thumbnail")
+                ?.takeIf { !it.isNullOrBlank() }
+            ?: manga.coverUrl
+
+        val altTitle = item.optJSONObject("meta")?.optJSONObject("meta")?.optString("alternative_title")
+        val altTitles = if (!altTitle.isNullOrEmpty()) setOf(altTitle) else manga.altTitles
+
+        val terms = parseTerms(item)
+        val mangaId = item.getInt("id").toString()
+        val chapters = fetchChaptersViaAjax(mangaId)
+
+        return manga.copy(
+            title = title,
+            altTitles = altTitles,
+            description = description,
+            coverUrl = cover,
+            tags = terms.tags,
+            authors = terms.authors,
+            chapters = chapters,
+        )
+    }
+
+    private suspend fun getDetailsFromHtml(manga: Manga): Manga {
         val url = manga.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val doc = webClient.httpGet(url.toHttpUrl(), getRequestHeaders()).parseHtml()
         
-        // 标题：优先 meta，再取非 “Last Updates” 的 h1，避免列表页标题污染
         val title = doc.selectFirst("meta[property=og:title]")?.attrOrNull("content")
             ?.substringBefore(" - ", missingDelimiterValue = "")
             ?.takeIf { it.isNotBlank() }
@@ -306,31 +570,25 @@ internal class Rawkuma(context: MangaLoaderContext) :
                 ?.text()?.trim()
             ?: manga.title
         
-        // 别名
         val altTitle = doc.selectFirst("h1 + div, h1 + span, .alternative, .other-name")?.text()?.trim()
         val altTitles = if (!altTitle.isNullOrEmpty()) setOf(altTitle) else manga.altTitles
         
-        // 描述
         val description = doc.selectFirst(".synopsis, .description, div[itemprop=description], .entry-content p")?.text()?.trim()
         
-        // 封面
         val cover = doc.selectFirst("img.attachment-post-thumbnail, .thumb img, img[itemprop=image]")?.let {
             it.attrOrNull("data-src") ?: it.attrOrNull("data-lazy-src") ?: it.attr("src")
         } ?: manga.coverUrl
         
-        // 作者
         val authors = doc.select("a[href*='/author/'], span:contains(Author) + a, .author a").mapNotNull { 
             it.text().trim().takeIf { t -> t.isNotEmpty() }
         }.toSet()
         
-        // 标签
         val tags = doc.select("a[href*='/genre/']").mapNotNull { 
             val name = it.text().trim()
             val key = it.attr("href").substringAfter("/genre/").removeSuffix("/")
             if (name.isNotEmpty() && key.isNotEmpty()) MangaTag(name, key, source) else null
         }.toSet()
         
-        // 状态
         val statusText = doc.selectFirst("span:contains(Status) + span, .status, .imptdt:contains(Status)")?.text()?.lowercase()
         val state = when {
             statusText?.contains("ongoing") == true -> MangaState.ONGOING
@@ -338,13 +596,11 @@ internal class Rawkuma(context: MangaLoaderContext) :
             else -> manga.state
         }
         
-        // 获取 manga_id 用于 AJAX 请求
         val mangaId = doc.selectFirst("input#manga_id, input[name=manga_id]")?.attr("value")
             ?: doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
             ?: extractMangaIdFromHx(doc)
             ?: extractMangaIdFromScript(doc)
         
-        // 章节 - 优先使用 AJAX 端点
         val chapters = if (!mangaId.isNullOrEmpty()) {
             fetchChaptersViaAjax(mangaId)
         } else {
