@@ -146,7 +146,7 @@ internal class Pinse91(
 
     private fun buildUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
         if (!filter.query.isNullOrBlank()) {
-            return "https://$domain/search?q=${java.net.URLEncoder.encode(filter.query!!, "UTF-8")}&page=$page"
+            return "https://$domain/v/search?keyword=${java.net.URLEncoder.encode(filter.query!!, "UTF-8")}&page=$page"
         }
 
         val pathTag = filter.tags.find { it.key.startsWith("path:") }?.key?.substringAfter(":")

@@ -78,22 +78,31 @@ internal class Tm94Parser(
         val p = if (page < 1) 1 else page
         if (!query.isNullOrBlank()) {
             val q = java.net.URLEncoder.encode(query, "UTF-8")
-            return "http://$domain/index.php/vod/search/page/$p/wd/$q.html"
+            return "https://$domain/index.php/vod/search/page/$p/wd/$q.html"
         }
         val catId = filter.tags.firstOrNull { it.key.startsWith("cat:") }?.key?.substringAfter("cat:") ?: "1"
-        return "http://$domain/index.php/vod/type/id/$catId/page/$p.html"
+        return "https://$domain/index.php/vod/type/id/$catId/page/$p.html"
     }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val url = listUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+        println("Tm94Parser fetching: $url")
         val items = ArrayList<Manga>(pageSize)
         val seen = HashSet<String>()
 
-        // 卡片：a.item-link[href*=play/id]
-        doc.select("a.item-link[href*=/vod/play/id/]").forEach { a ->
+        val elements = doc.select("a.item-link[href*=/id/]")
+        println("Tm94Parser found ${elements.size} potential items")
+
+        // 卡片：a.item-link[href*=/id/] (兼容 /vod/play/id/ 和 /vod/detail/id/)
+        elements.forEach { a ->
             val href = a.attrOrNull("href") ?: return@forEach
-            val id = VIDEO_ID_REGEX.find(href)?.groupValues?.getOrNull(1) ?: return@forEach
+            val id = VIDEO_ID_REGEX.find(href)?.groupValues?.getOrNull(1) 
+            
+            if (id == null) {
+                println("Tm94Parser failed to match ID in: $href")
+                return@forEach
+            }
             if (!seen.add(id)) return@forEach
 
             val container = a.parent()
@@ -107,6 +116,8 @@ internal class Tm94Parser(
             items.add(
                 Manga(
                     id = generateUid(id),
+                    // 统一归一化为详情页地址，有些站点部分页面只有 play 链接，部分只有 detail，统一用 detail 安全
+                    // 如果原本就是 play 链接，也可以 parse 出 id 构造 detail
                     url = "/index.php/vod/detail/id/$id.html",
                     publicUrl = "/index.php/vod/detail/id/$id.html".toAbsoluteUrl(domain),
                     title = title,
@@ -258,14 +269,13 @@ internal class Tm94Parser(
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", userAgentKey.defaultValue)
-        .add("Referer", "http://$domain/")
+        .add("Referer", "https://$domain/")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .build()
 
     private companion object {
-        private val VIDEO_ID_REGEX = Regex("/id/(\\d+)/")
+        private val VIDEO_ID_REGEX = Regex("""/id/(\d+)""")
         // ICU 正则需转义花括号，使用 DOT_MATCHES_ALL 支持跨行
         private val PLAYER_JSON_REGEX = Regex("""player_aaaa\s*=\s*(\{.*?\})""", RegexOption.DOT_MATCHES_ALL)
         private val PLAYER_JSON_ALT_REGEX = Regex("""player_data\s*=\s*(\{.*?\})""", RegexOption.DOT_MATCHES_ALL)

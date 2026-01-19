@@ -113,10 +113,13 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         val selectedCategory = filter.tags.firstOrNull { it.key.startsWith("category:") }?.key?.removePrefix("category:")
         
         val url = when {
-            !filter.query.isNullOrEmpty() -> "https://$domain/page/$page/?s=${filter.query}"
+            !filter.query.isNullOrEmpty() -> {
+                if (page == 1) "https://$domain/search/${filter.query}"
+                else "https://$domain/search/${filter.query}/$page"
+            }
             selectedCategory != null -> {
                 if (page == 1) "https://$domain/category/$selectedCategory/"
-                else "https://$domain/category/$selectedCategory/page/$page/"
+                else "https://$domain/category/$selectedCategory/$page/"
             }
             else -> "https://$domain/page/$page/"
         }
