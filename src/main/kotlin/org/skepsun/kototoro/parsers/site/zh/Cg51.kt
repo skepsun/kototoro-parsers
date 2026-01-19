@@ -112,6 +112,8 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         // Handle category selection
         val selectedCategory = filter.tags.firstOrNull { it.key.startsWith("category:") }?.key?.removePrefix("category:")
         
+        println("Cg51 Parsing: page=$page, filters=${filter.tags.map { it.key }}, selectedCategory=$selectedCategory")
+
         val url = when {
             !filter.query.isNullOrEmpty() -> {
                 if (page == 1) "https://$domain/search/${filter.query}"
@@ -123,6 +125,8 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
             }
             else -> "https://$domain/page/$page/"
         }
+        
+        println("Cg51 Generated URL: $url")
 
         val doc = webClient.httpGet(url, headers).parseHtml()
         // Selectors based on common WordPress/CMS themes often used by these sites
@@ -196,31 +200,32 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         val content = doc.selectFirst(".entry-content, .post-content, article, .content")
         val desc = content?.text()?.take(500)
         
-        // Extract high-res cover from details page
-        val scriptImgRegex = Regex("""(loadBannerDirect|loadImage)\s*\(\s*["']([^"']+)["']""")
-        val scriptCover = content?.let { 
-             scriptImgRegex.find(it.outerHtml())?.groupValues?.get(2)
-        }?.toAbsoluteUrl()?.replace(Regex("(?<!:)//+"), "/")
-
         // Priority 1: List cover (manga.coverUrl)
-        // Priority 2: Script cover
-        // Priority 3: OG Meta
-        // Priority 4: First image
+        // If we already have a cover from the list (especially if it was decrypted), keep it.
+        // User reports details page often has no cover or worse cover.
+        var cover = manga.coverUrl
         
-        var cover = manga.coverUrl?.takeIf { it.isNotBlank() }
-            ?: scriptCover
-            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotBlank() }?.toAbsoluteUrl()?.replace(Regex("(?<!:)//+"), "/")
-            ?: content?.selectFirst("img")?.let { 
-                val srcAttr = it.attr("src")
-                if (srcAttr.startsWith("data:")) return@let srcAttr
+        if (cover.isNullOrBlank()) {
+             // Extract high-res cover from details page only if missing
+            val scriptImgRegex = Regex("""(loadBannerDirect|loadImage)\s*\(\s*["']([^"']+)["']""")
+            val scriptCover = content?.let { 
+                 scriptImgRegex.find(it.outerHtml())?.groupValues?.get(2)
+            }?.toAbsoluteUrl()?.replace(Regex("(?<!:)//+"), "/")
+
+            cover = scriptCover
+                ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotBlank() }?.toAbsoluteUrl()?.replace(Regex("(?<!:)//+"), "/")
+                ?: content?.selectFirst("img")?.let { 
+                    val srcAttr = it.attr("src")
+                    if (srcAttr.startsWith("data:")) return@let srcAttr
+                    
+                    val src = it.attr("data-src").ifEmpty { it.attr("data-original") }.ifEmpty { srcAttr }
+                    src.toAbsoluteUrl()
+                }
                 
-                val src = it.attr("data-src").ifEmpty { it.attr("data-original") }.ifEmpty { srcAttr }
-                src.toAbsoluteUrl()
+            // Decrypt details cover if newly extracted
+            if (!cover.isNullOrEmpty() && !cover.startsWith("data:") && !cover.startsWith("file:")) {
+                 cover = decryptImage(cover) ?: cover
             }
-            
-        // Decrypt details cover
-        if (!cover.isNullOrEmpty() && !cover.startsWith("data:")) {
-             cover = decryptImage(cover) ?: cover
         }
         
         val tags = doc.select("a[rel=tag], .tags a, .tag-cloud a").mapNotNull { 
@@ -402,6 +407,8 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         // If already data URI, return as is
         if (url.startsWith("data:")) return url
         
+        println("Cg51: decryptImage called for $url")
+        
         return withContext(Dispatchers.IO) {
             try {
                 // If it's not the encrypted domain, return original URL (let ImageLoader handle it)
@@ -418,8 +425,15 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
                 cipher.init(Cipher.DECRYPT_MODE, key, iv)
                 
                 val decrypted = cipher.doFinal(bytes)
-                val base64 = Base64.getEncoder().encodeToString(decrypted)
-                "data:image/jpeg;base64,$base64"
+                
+                // Save to temp file to avoid TransactionTooLargeException with large Base64 strings
+                // Using kotlin.io.writeBytes
+                val tempFile = java.io.File.createTempFile("cg51_", ".jpg")
+                tempFile.writeBytes(decrypted)
+                
+                println("Cg51: Decrypted to file: ${tempFile.absolutePath}")
+                
+                "file://${tempFile.absolutePath}"
             } catch (e: Exception) {
                 e.printStackTrace()
                 // Fallback to original URL if decryption fails
