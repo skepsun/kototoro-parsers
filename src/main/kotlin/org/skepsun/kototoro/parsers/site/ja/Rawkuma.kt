@@ -321,11 +321,9 @@ internal class Rawkuma(context: MangaLoaderContext) :
             }
         }
         
-        filter.tags.firstOrNull()?.let { tag ->
-            val genreId = genreSlugToId[tag.key]
-            if (genreId != null) {
-                append("&genre=$genreId")
-            }
+        val genreIds = filter.tags.mapNotNull { genreSlugToId[it.key] }.joinToString(",")
+        if (genreIds.isNotEmpty()) {
+            append("&genre=$genreIds")
         }
         
         val (orderParam, orderBy) = mapOrder(order)
@@ -352,7 +350,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
             "page" to page.toString(),
             "paged" to page.toString(),
             "the_page" to page.toString(),
-            "the_genre" to filter.tags.firstOrNull()?.key.orEmpty(),
+            "the_genre" to filter.tags.joinToString(",") { it.key },
             "the_author" to "",
             "the_artist" to "",
             "the_exclude" to "",
@@ -409,7 +407,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
     private fun buildLibraryUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
         append("https://$domain/library/?")
         append("the_page=$page")
-        append("&the_genre=${filter.tags.firstOrNull()?.key.orEmpty()}")
+        append("&the_genre=${filter.tags.joinToString(",") { it.key }}")
         append("&the_author=&the_artist=&the_exclude=&the_type=&the_status=")
         append("&search_term=${filter.query.orEmpty().urlEncoded()}")
         val (orderParam, orderBy) = mapOrder(order)
