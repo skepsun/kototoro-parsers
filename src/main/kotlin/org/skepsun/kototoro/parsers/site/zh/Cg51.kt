@@ -155,7 +155,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
                     }
                     
                     // Extract cover from script (loadBannerDirect) or fallback to img
-                    var cover = Regex("""loadBannerDirect\s*\(\s*'([^']+)'""").find(node.outerHtml())?.groupValues?.get(1)
+                    var cover = Regex("""loadBannerDirect\s*\(\s*['"]([^'"]+)['"]""").find(node.outerHtml())?.groupValues?.get(1)
                         ?.toAbsoluteUrl()?.replace(Regex("(?<!:)//+"), "/")
                         ?: node.selectFirst("img")?.let { 
                             val srcAttr = it.attr("src")
@@ -395,10 +395,13 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
             "https:$this"
         } else if (startsWith("/")) {
             "https://$domain$this"
-        } else if (!startsWith("http")) {
-            "https://$domain/$this"
-        } else {
+        } else if (startsWith("http")) {
             this
+        } else if (length > 100 && contains(Regex("[+/=]"))) {
+             // Likely a base64 string, return as is
+             this
+        } else {
+            "https://$domain/$this"
         }
     }
 
@@ -411,12 +414,22 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         
         return withContext(Dispatchers.IO) {
             try {
-                // If it's not the encrypted domain, return original URL (let ImageLoader handle it)
-                if (!url.contains("gbwgclh.cn")) return@withContext url
+                val isEncryptedDomain = url.contains("gbwgclh.cn") || url.contains("pic.mamwtdp.cn")
+                val isBase64 = !url.startsWith("http") && url.length > 32
                 
-                // Fetch the encrypted binary
-                val response = webClient.httpGet(url, headers)
-                val bytes = response.body?.bytes() ?: return@withContext null
+                if (!isEncryptedDomain && !isBase64) return@withContext url
+                
+                // Fetch or parse the encrypted binary
+                val bytes = if (isBase64) {
+                    try {
+                        Base64.getDecoder().decode(url)
+                    } catch (e: Exception) {
+                        return@withContext url
+                    }
+                } else {
+                    val response = webClient.httpGet(url, headers)
+                    response.body?.bytes() ?: return@withContext null
+                }
                 
                 // Decrypt
                 val key = SecretKeySpec("f5d965df75336270".toByteArray(), "AES")
@@ -427,7 +440,6 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
                 val decrypted = cipher.doFinal(bytes)
                 
                 // Save to temp file to avoid TransactionTooLargeException with large Base64 strings
-                // Using kotlin.io.writeBytes
                 val tempFile = java.io.File.createTempFile("cg51_", ".jpg")
                 tempFile.writeBytes(decrypted)
                 
