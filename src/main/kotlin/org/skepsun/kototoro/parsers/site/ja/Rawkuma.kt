@@ -198,6 +198,11 @@ internal class Rawkuma(context: MangaLoaderContext) :
     }
 
     private suspend fun fetchListViaApi(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga>? {
+        // API 方式需要分类 ID。如果存在无法映射为 ID 的 slug，回退到 Ajax/Web 方式以保证过滤生效。
+        if (filter.tags.isNotEmpty() && filter.tags.any { !genreSlugToId.containsKey(it.key.lowercase()) }) {
+            return null
+        }
+
         val apiUrl = buildApiUrl(page, order, filter)
         val response = runCatching {
             webClient.httpGet(apiUrl.toHttpUrl(), getRequestHeaders())
@@ -277,7 +282,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
                     val term = termArray.getJSONObject(j)
                     val taxonomy = term.optString("taxonomy")
                     val name = term.getString("name").unescapeHtml()
-                    val slug = term.getString("slug")
+                    val slug = term.getString("slug").lowercase()
                     
                     when (taxonomy) {
                         "genre" -> tags.add(MangaTag(name, slug, source))
@@ -321,7 +326,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
             }
         }
         
-        val genreIds = filter.tags.mapNotNull { genreSlugToId[it.key] }.joinToString(",")
+        val genreIds = filter.tags.mapNotNull { genreSlugToId[it.key.lowercase()] }.joinToString(",")
         if (genreIds.isNotEmpty()) {
             append("&genre=$genreIds")
         }
@@ -583,7 +588,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         
         val tags = doc.select("a[href*='/genre/']").mapNotNull { 
             val name = it.text().trim()
-            val key = it.attr("href").substringAfter("/genre/").removeSuffix("/")
+            val key = it.attr("href").substringAfter("/genre/").removeSuffix("/").lowercase()
             if (name.isNotEmpty() && key.isNotEmpty()) MangaTag(name, key, source) else null
         }.toSet()
         
