@@ -5,6 +5,9 @@ public object UserAgents {
 	public const val CHROME_MOBILE: String =
 		"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.203 Mobile Safari/537.36"
 
+	public const val JM_WEBVIEW: String =
+		"Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.0.0 Mobile Safari/537.36"
+
 	public const val FIREFOX_MOBILE: String =
 		"Mozilla/5.0 (Android 14; Mobile; LG-M255; rv:123.0) Gecko/123.0 Firefox/123.0"
 

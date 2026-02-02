@@ -37,8 +37,15 @@ import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.urlEncoded
 import org.skepsun.kototoro.parsers.util.getCookies
+import org.skepsun.kototoro.parsers.util.insertCookies
+import org.skepsun.kototoro.parsers.util.await
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.skepsun.kototoro.parsers.bitmap.Rect
+import java.util.zip.GZIPInputStream
+import okhttp3.FormBody
+import okhttp3.Request
+import org.skepsun.kototoro.parsers.model.MangaSource
+import org.skepsun.kototoro.parsers.network.GZipOptions
 
 /**
  * JM (禁漫天堂) API-based parser.
@@ -90,20 +97,21 @@ internal class JmParser(
 
     private val apiKey = "18comicAPPContent"
     private val dataSecret = "185Hcomic3PAPP7R"
-    private val jmVersion = "2.0.11"
+    private val jmVersion = "2.0.16"
     private val packageName = "com.example.app"
 
     // API 域名，允许后续通过设置刷新
     private var apiDomains: List<String> = listOf(
-        "www.cdnzack.cc",
+        "www.cdntwice.org",
         "www.cdnsha.org",
-        "www.cdnbea.cc",
-        "www.cdnbea.net",
+        "www.cdnaspa.cc",
+        "www.cdnntr.cc",
     )
     private var activeDomain: String = apiDomains.first()
     private var imageHost: String = "https://cdn-msp.jmapinodeudzn.net"
     private var domainsInitialized = false
     private var imageHostInitialized = false
+    private var lastLoginEmail: String? = null
 
     override val faviconDomain: String
         get() = "18comic.vip"
@@ -111,7 +119,7 @@ internal class JmParser(
         apiDomains.first(),
         *apiDomains.drop(1).toTypedArray(),
     )
-    override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_MOBILE)
+    override val userAgentKey = ConfigKey.UserAgent(UserAgents.JM_WEBVIEW)
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
@@ -499,6 +507,12 @@ internal class JmParser(
             .build()
     }
 
+    private fun apiHeadersNoGzip(time: String): Headers {
+        return apiHeaders(time).newBuilder()
+            .add("Content-Encoding", "identity")
+            .build()
+    }
+
     private fun convertData(input: String, secret: String): String {
         val key = hexEncode(md5Bytes(secret)).toByteArray(Charsets.UTF_8)
         val cipher = Cipher.getInstance("AES/ECB/PKCS5Padding")
@@ -578,12 +592,12 @@ internal class JmParser(
                         if (!s.isNullOrBlank()) list.add(s)
                     }
                     if (list.isNotEmpty()) {
-                        apiDomains = list
-                        activeDomain = list.first()
+                        apiDomains = mergeDomains(list)
                     }
                 }
             }
         }
+        applyConfiguredDomain()
         if (!imageHostInitialized) {
             imageHostInitialized = true
             runCatching { refreshImageHost() }
@@ -591,7 +605,7 @@ internal class JmParser(
     }
 
     private suspend fun refreshImageHost() {
-        val res = apiGet("$baseUrl/setting?app_img_shunt=1?express=")
+        val res = apiGet("$baseUrl/setting?app_img_shunt=1&express=")
         runCatching {
             val json = JSONObject(res)
             val host = json.optString("img_host")
@@ -601,36 +615,193 @@ internal class JmParser(
         }
     }
 
-    override val authUrl: String = "https://jmcomic.me/login"
+    override val authUrl: String
+        get() = "$baseUrl/login"
 
     override suspend fun isAuthorized(): Boolean {
-        // Checking for cookies on the active domain
-        return context.cookieJar.getCookies(activeDomain).any { it.name == "app_token" }
+        // Check cookies on all known domains, not just active domain
+        val candidates = domainCandidates()
+        for (domain in candidates) {
+            if (context.cookieJar.getCookies(domain).any { it.name == "app_token" }) {
+                activeDomain = domain
+                return true
+            }
+        }
+        return false
     }
 
     override suspend fun getUsername(): String {
         if (!isAuthorized()) throw AuthRequiredException(source)
+        if (!lastLoginEmail.isNullOrBlank()) {
+            return lastLoginEmail!!
+        }
+        val candidates = domainCandidates()
+        for (domain in candidates) {
+            val cookieEmail = context.cookieJar.getCookies(domain)
+                .firstOrNull { it.name == "jm_email" }
+                ?.value
+            if (!cookieEmail.isNullOrBlank()) {
+                lastLoginEmail = cookieEmail
+                return cookieEmail
+            }
+        }
         return "User"
     }
 
     override suspend fun login(username: String, password: String): Boolean {
-        val url = "$baseUrl/app/v1/login"
+        ensureDomains()
         val body = mapOf(
             "username" to username,
             "password" to password,
         )
-        
-        val response = try {
-            val time = (System.currentTimeMillis() / 1000).toString()
-            webClient.httpPost(url.toHttpUrl(), body, apiHeaders(time))
-        } catch (e: Exception) {
-            return false
+
+        val loginPaths = listOf("/login")
+        val candidates = domainCandidates()
+        val maxAttempts = minOf(candidates.size, 4)
+        repeat(maxAttempts) { attempt ->
+            for (domain in candidates) {
+                activeDomain = domain
+                for (path in loginPaths) {
+                    val url = "$baseUrl$path"
+                    val result = runCatching {
+                        val time = (System.currentTimeMillis() / 1000).toString()
+                        val raw = requestLogin(url, body)
+                        val loginInfo = extractLoginInfo(raw, time)
+                        val token = loginInfo.token
+                        lastLoginEmail = loginInfo.email
+                        if (!token.isNullOrBlank()) {
+                            context.cookieJar.insertCookies(
+                                domain,
+                                "app_token=$token; Domain=$domain; Path=/",
+                            )
+                        }
+                        val email = loginInfo.email
+                        if (!email.isNullOrBlank()) {
+                            val allDomains = domainCandidates()
+                            for (emailDomain in allDomains) {
+                                context.cookieJar.insertCookies(
+                                    emailDomain,
+                                    "jm_email=$email; Domain=$emailDomain; Path=/",
+                                )
+                            }
+                        }
+                        isAuthorized()
+                    }.getOrDefault(false)
+                    if (result) {
+                        return true
+                    }
+                }
+            }
+            if (attempt == 0) {
+                runCatching { refreshImageHost() }
+            }
+            if (attempt == 1) {
+                runCatching {
+                    domainsInitialized = false
+                    ensureDomains()
+                }
+            }
         }
-        
-        // JM post likely returns the same encrypted response
-        // But for login, we mainly care about cookies.
-        // Actually, looking at jm.js, it doesn't even parse the response.
-        return isAuthorized()
+        return false
+    }
+
+    private data class LoginInfo(
+        val token: String?,
+        val email: String?,
+    )
+
+    private fun extractLoginInfo(raw: String, time: String): LoginInfo {
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return LoginInfo(null, null)
+        val code = root.optInt("code", root.optInt("status", -1))
+        if (code != 200) {
+            return LoginInfo(null, null)
+        }
+        val dataEnc = root.optString("data")
+        if (dataEnc.isNullOrBlank()) {
+            return LoginInfo(null, null)
+        }
+        val decrypted = runCatching { convertData(dataEnc, "$time$dataSecret") }.getOrNull() ?: return LoginInfo(null, null)
+        val dataObj = runCatching { JSONObject(decrypted) }.getOrNull() ?: return LoginInfo(null, null)
+        val directToken = dataObj.optString("app_token")
+            .ifBlank { dataObj.optString("appToken") }
+            .ifBlank { dataObj.optString("token") }
+            .ifBlank { dataObj.optString("s") }
+        val directEmail = dataObj.optString("email").ifBlank { null }
+        if (directToken.isNotBlank()) {
+            return LoginInfo(directToken, directEmail)
+        }
+        val nested = dataObj.optJSONObject("data")
+        val nestedToken = nested?.optString("app_token")
+            ?.ifBlank { nested.optString("appToken") }
+            ?.ifBlank { nested.optString("token") }
+            ?.ifBlank { nested.optString("s") }
+            ?.takeIf { it.isNotBlank() }
+        val nestedEmail = nested?.optString("email")?.ifBlank { null }
+        return LoginInfo(nestedToken, directEmail ?: nestedEmail)
+    }
+
+    private suspend fun requestLogin(
+        url: String,
+        body: Map<String, String>,
+    ): String {
+        val headers = loginHeaders()
+        val formBody = FormBody.Builder().apply {
+            body.forEach { (key, value) ->
+                addEncoded(key, value)
+            }
+        }.build()
+        val request = Request.Builder()
+            .url(url.toHttpUrl())
+            .post(formBody)
+            .headers(headers)
+            .tag(MangaSource::class.java, source)
+            .tag(GZipOptions::class.java, GZipOptions(skip = true))
+            .build()
+        val response = context.httpClient.newCall(request).await()
+        return response.use { resp ->
+            val encoding = resp.header("Content-Encoding").orEmpty()
+            if (encoding.contains("gzip", ignoreCase = true)) {
+                val stream = resp.body?.byteStream() ?: return@use ""
+                return@use GZIPInputStream(stream).use { String(it.readBytes(), Charsets.UTF_8) }
+            }
+            resp.parseRaw()
+        }
+    }
+
+    private fun loginHeaders(): Headers = headersBase.newBuilder()
+        .add("Accept-Encoding", "gzip, deflate, br, zstd")
+        .build()
+
+    private fun domainCandidates(): List<String> {
+        val configured = config[configKeyDomain].trim()
+        val result = LinkedHashSet<String>()
+        if (configured.isNotBlank()) {
+            result.add(configured)
+        }
+        result.addAll(apiDomains)
+        return result.toList()
+    }
+
+    private fun mergeDomains(newDomains: List<String>): List<String> {
+        val configured = config[configKeyDomain].trim()
+        val result = LinkedHashSet<String>()
+        if (configured.isNotBlank()) {
+            result.add(configured)
+        }
+        result.addAll(newDomains)
+        return result.toList()
+    }
+
+    private fun applyConfiguredDomain() {
+        val configured = config[configKeyDomain].trim()
+        if (configured.isNotBlank()) {
+            if (!apiDomains.contains(configured)) {
+                apiDomains = mergeDomains(apiDomains)
+            }
+            activeDomain = configured
+        } else if (activeDomain !in apiDomains && apiDomains.isNotEmpty()) {
+            activeDomain = apiDomains.first()
+        }
     }
 
     override suspend fun fetchFavorites(): List<Manga> {
@@ -659,7 +830,7 @@ internal class JmParser(
         if (!isAuthorized()) throw AuthRequiredException(source)
         val aid = manga.url.substringAfter("id=").substringBefore("&").ifBlank { manga.url }
         val time = (System.currentTimeMillis() / 1000).toString()
-        val headers = apiHeaders(time)
+        val headers = apiHeadersNoGzip(time)
         val resp = webClient.httpPost("$baseUrl/favorite".toHttpUrl(), mapOf("aid" to aid), headers)
         if (resp.code == 401) throw AuthRequiredException(source)
         return resp.isSuccessful
