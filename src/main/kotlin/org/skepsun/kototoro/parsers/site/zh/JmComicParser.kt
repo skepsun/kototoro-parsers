@@ -46,6 +46,7 @@ import okhttp3.FormBody
 import okhttp3.Request
 import org.skepsun.kototoro.parsers.model.MangaSource
 import org.skepsun.kototoro.parsers.network.GZipOptions
+import java.io.ByteArrayInputStream
 
 /**
  * JM (禁漫天堂) API-based parser.
@@ -665,10 +666,17 @@ internal class JmParser(
                     val url = "$baseUrl$path"
                     val result = runCatching {
                         val time = (System.currentTimeMillis() / 1000).toString()
-                        val raw = requestLogin(url, body)
-                        val loginInfo = extractLoginInfo(raw, time)
-                        val token = loginInfo.token
+                        var raw = requestLogin(url, body, useTokenHeaders = false, time = time)
+                        var loginInfo = extractLoginInfo(raw, time)
+                        var token = loginInfo.token
                         lastLoginEmail = loginInfo.email
+                        if (token.isNullOrBlank() && isNotLegalRequest(raw)) {
+                            raw = requestLogin(url, body, useTokenHeaders = true, time = time)
+                            loginInfo = extractLoginInfo(raw, time)
+                            token = loginInfo.token
+                            lastLoginEmail = loginInfo.email ?: lastLoginEmail
+                        }
+                        println("JmParser: login result domain=$domain tokenLen=${token?.length ?: 0} emailPresent=${!loginInfo.email.isNullOrBlank()}")
                         if (!token.isNullOrBlank()) {
                             context.cookieJar.insertCookies(
                                 domain,
@@ -743,8 +751,10 @@ internal class JmParser(
     private suspend fun requestLogin(
         url: String,
         body: Map<String, String>,
+        useTokenHeaders: Boolean,
+        time: String,
     ): String {
-        val headers = loginHeaders()
+        val headers = if (useTokenHeaders) loginTokenHeaders(time) else loginHeaders()
         val formBody = FormBody.Builder().apply {
             body.forEach { (key, value) ->
                 addEncoded(key, value)
@@ -759,17 +769,36 @@ internal class JmParser(
             .build()
         val response = context.httpClient.newCall(request).await()
         return response.use { resp ->
+            val bytes = resp.body?.bytes() ?: return@use ""
             val encoding = resp.header("Content-Encoding").orEmpty()
-            if (encoding.contains("gzip", ignoreCase = true)) {
-                val stream = resp.body?.byteStream() ?: return@use ""
-                return@use GZIPInputStream(stream).use { String(it.readBytes(), Charsets.UTF_8) }
-            }
-            resp.parseRaw()
+            val decoded = decodeLoginResponse(bytes, encoding)
+            val preview = decoded.take(120)
+            println("JmParser: login raw len=${decoded.length} enc=$encoding preview=$preview")
+            decoded
         }
     }
 
+    private fun decodeLoginResponse(bytes: ByteArray, encoding: String): String {
+        val isGzipHeader = bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()
+        if (encoding.contains("gzip", ignoreCase = true) || isGzipHeader) {
+            return GZIPInputStream(ByteArrayInputStream(bytes)).use { String(it.readBytes(), Charsets.UTF_8) }
+        }
+        return String(bytes, Charsets.UTF_8)
+    }
+
+    private fun isNotLegalRequest(raw: String): Boolean {
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return false
+        val code = root.optInt("code", root.optInt("status", -1))
+        val error = root.optString("errorMsg")
+        return code == 401 || error.contains("Not legal", ignoreCase = true)
+    }
+
     private fun loginHeaders(): Headers = headersBase.newBuilder()
-        .add("Accept-Encoding", "gzip, deflate, br, zstd")
+        .add("Accept-Encoding", "gzip")
+        .build()
+
+    private fun loginTokenHeaders(time: String): Headers = apiHeaders(time).newBuilder()
+        .add("Accept-Encoding", "gzip")
         .build()
 
     private fun domainCandidates(): List<String> {
