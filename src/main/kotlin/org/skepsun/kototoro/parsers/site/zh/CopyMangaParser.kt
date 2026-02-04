@@ -296,6 +296,14 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         }
 
         logAuth("CopyMangaDebug login: response code=${response.code}")
+        val handshake = response.handshake
+        if (handshake != null) {
+            logAuth(
+                "CopyMangaDebug login: protocol=${response.protocol}, tls=${handshake.tlsVersion}, cipher=${handshake.cipherSuite}"
+            )
+        } else {
+            logAuth("CopyMangaDebug login: protocol=${response.protocol}, tls=unknown")
+        }
         val responsePreview = kotlin.runCatching {
             response.peekBody(1024).string()
         }.getOrNull()
