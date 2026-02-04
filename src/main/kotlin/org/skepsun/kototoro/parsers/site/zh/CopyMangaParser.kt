@@ -2,12 +2,14 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import okhttp3.ConnectionSpec
 import okhttp3.Interceptor
 import okhttp3.Response
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.TlsVersion
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.MangaLoaderContext
@@ -280,8 +282,12 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         val response = try {
             logAuth("CopyMangaDebug login: sending raw request via httpClient (forcing HTTP/1.1)")
             // 强制使用 HTTP/1.1，因为终端 curl 默认行为更有可能被放行
+            val tls12Spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                .tlsVersions(TlsVersion.TLS_1_2)
+                .build()
             val h1Client = context.httpClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .connectionSpecs(listOf(tls12Spec))
                 .build()
             h1Client.newCall(request).await()
         } catch (e: Exception) {
