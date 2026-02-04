@@ -414,10 +414,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         
         return withContext(Dispatchers.IO) {
             try {
-                val isEncryptedDomain = url.contains("gbwgclh.cn") || url.contains("pic.mamwtdp.cn")
                 val isBase64 = !url.startsWith("http") && url.length > 32
-                
-                if (!isEncryptedDomain && !isBase64) return@withContext url
                 
                 // Fetch or parse the encrypted binary
                 val bytes = if (isBase64) {
