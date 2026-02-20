@@ -25,6 +25,8 @@ import org.skepsun.kototoro.parsers.util.attrOrNull
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.EnumSet
 
 @MangaSourceParser(name = "PINSE91", title = "91Pinse", locale = "zh", type = ContentType.HENTAI_VIDEO)
@@ -91,30 +93,35 @@ internal class Pinse91(
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         
         val mangaMap = LinkedHashMap<String, Manga>()
-        val elements = doc.select("a[href*='/v/']")
+        val elements = doc.select(".video-grid a[href*='/v/']").takeIf { it.isNotEmpty() }
+            ?: doc.select("a[href*='/v/']")
         val durationRegex = Regex("""\d+:\d+""")
 
         for (el in elements) {
             val href = el.attrAsRelativeUrl("href")
-            if (href == "/v/" || href == "/v" || href.contains("/author/") || href.length < 5) continue
+            // Strict check: video path must start with /v/ followed by a numeric ID
+            val idPath = href.substringAfter("/v/", "").substringBefore("/").substringBefore("?").trim()
+            if (idPath.isEmpty() || !idPath.all { it.isDigit() } || href.length < 5) continue
+            if (href.contains("/author/") || href.contains("/search")) continue
             
             val text = el.text().trim()
-            if (text.isEmpty() || text.length < 2 || text == "更多" || text.contains("热门") || text.contains("榜单") || text.contains("最新")) continue
+            if (text == "更多" || text.contains("热门") || text.contains("榜单") || text.contains("最新")) continue
 
             val isDuration = durationRegex.matches(text)
             val container = el.parent() ?: el
             
             val existing = mangaMap[href]
-            if (existing != null && (isDuration || existing.title.length > text.length)) {
+            if (existing != null && (isDuration || (text.isNotBlank() && !isDuration && existing.title.length > text.length))) {
                 continue
             }
 
-            val title = if (!isDuration) text else {
+            val title = if (!isDuration && text.isNotBlank()) text else {
                 el.attr("title").takeIf { it.isNotBlank() }
-                    ?: container.selectFirst(".title, h3, h4, .video-title")?.text()
+                    ?: container.selectFirst(".title, h3, h4, .video-title, .link")?.text()
                     ?: text
             }
             
+            if (title.isBlank() && existing == null) continue
             if (title == text && isDuration && existing != null) continue
 
             val img = el.selectFirst("img") ?: container.selectFirst("img") ?: container.parent()?.selectFirst("img")
@@ -130,7 +137,7 @@ internal class Pinse91(
                 title = title.trim(),
                 altTitles = emptySet(),
                 coverUrl = coverUrl,
-                largeCoverUrl = null,
+                largeCoverUrl = coverUrl,
                 authors = emptySet(),
                 tags = emptySet(),
                 state = null,
@@ -233,41 +240,81 @@ internal class Pinse91(
         return true
     }
 
+    override fun getRequestHeaders(): Headers = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .add("Sec-Fetch-Dest", "document")
+        .add("Sec-Fetch-Mode", "navigate")
+        .add("Sec-Fetch-Site", "none")
+        .add("Sec-Fetch-User", "?1")
+        .add("Upgrade-Insecure-Requests", "1")
+        .build()
+
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val baseUrl = chapter.url.toAbsoluteUrl(domain)
         val sources = ArrayList<String>()
         val seenUrls = HashSet<String>()
 
         fun addSource(url: String?) {
-            val u = url?.takeIf { it.isNotBlank() } ?: return
+            val u = normalizeMediaUrl(url) ?: return
             if (seenUrls.add(u)) sources.add(u)
         }
 
-        val doc = webClient.httpGet(baseUrl, getRequestHeaders()).parseHtml()
-        
-        // 1. Iframes (often used for external players)
-        doc.select("iframe[src]").forEach {
-            val iframeUrl = it.attrAsAbsoluteUrlOrNull("src") ?: return@forEach
-            // Only follow iframes that look like players or internal redirectors
-            if (iframeUrl.contains("player") || iframeUrl.contains("video") || iframeUrl.contains(domain)) {
-                runCatching {
-                    val iframeHeaders = getRequestHeaders().newBuilder()
-                        .set("Referer", baseUrl)
-                        .build()
-                    val iframeDoc = webClient.httpGet(iframeUrl, iframeHeaders).parseHtml()
-                    // Use regex inside iframe
-                    findUrlsByRegex(iframeDoc.outerHtml()).forEach { u -> addSource(u) }
+        // Try standard page and HD page
+        val pagesToTry = mutableListOf(baseUrl)
+        if (baseUrl.contains("/v/")) {
+            pagesToTry.add(baseUrl.replace("/v/", "/vhd/"))
+        }
+
+        pagesToTry.forEach { url ->
+            runCatching {
+                val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+                
+                // 1. Iframes
+                doc.select("iframe[src]").forEach {
+                    val iframeUrl = it.attrAsAbsoluteUrlOrNull("src") ?: return@forEach
+                    if (iframeUrl.contains("player") || iframeUrl.contains("video") || iframeUrl.contains(domain)) {
+                        runCatching {
+                            val iframeHeaders = getRequestHeaders().newBuilder()
+                                .set("Referer", url)
+                                .build()
+                            val iframeDoc = webClient.httpGet(iframeUrl, iframeHeaders).parseHtml()
+                            findUrlsByRegex(iframeDoc.outerHtml()).forEach { addSource(it) }
+                        }
+                    }
                 }
+
+                // 2. Regex in page
+                findUrlsByRegex(doc.outerHtml()).forEach { addSource(it) }
             }
         }
 
-        // 2. Regex in main page
-        findUrlsByRegex(doc.outerHtml()).forEach { addSource(it) }
-
         return sources.map { url ->
             val headersMap = mutableMapOf<String, String>()
-            headersMap["Referer"] = baseUrl
-            headersMap["User-Agent"] = getRequestHeaders()["User-Agent"] ?: ""
+            // 严格匹配最新浏览器日志中的播放请求头
+            headersMap["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+            headersMap["Referer"] = "https://$domain/"
+            headersMap["Origin"] = "https://$domain"
+            headersMap["Accept"] = "*/*"
+            headersMap["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.8"
+            headersMap["Sec-Fetch-Dest"] = "empty"
+            headersMap["Sec-Fetch-Mode"] = "cors"
+            headersMap["Sec-Fetch-Site"] = "cross-site"
+            // 增加 Client Hints (Cloudflare 强校验项)
+            headersMap["sec-ch-ua"] = "\"Not:A-Brand\";v=\"99\", \"Microsoft Edge\";v=\"145\", \"Chromium\";v=\"145\""
+            headersMap["sec-ch-ua-mobile"] = "?0"
+            headersMap["sec-ch-ua-platform"] = "\"Windows\""
+            
+            // 尝试透传 Cookie (如果存在)
+            runCatching {
+                url.toHttpUrlOrNull()?.let { httpUrl ->
+                    val cookies = context.cookieJar.loadForRequest(httpUrl)
+                    if (cookies.isNotEmpty()) {
+                        headersMap["Cookie"] = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+                    }
+                }
+            }
             
             MangaPage(
                 id = generateUid(url),
@@ -275,28 +322,89 @@ internal class Pinse91(
                 preview = null,
                 headers = headersMap,
                 source = source,
-            )
+            ).also {
+                println("Pinse91: Extracted Video URL: $url")
+            }
         }
     }
 
     private fun findUrlsByRegex(html: String): List<String> {
         val found = ArrayList<String>()
-        // m3u8 patterns
-        Regex("""https?://[^"'\s>]+\.m3u8[?#][^"'\s>]*""", RegexOption.IGNORE_CASE).findAll(html).forEach { found.add(it.value) }
-        Regex("""https?://[^"'\s>]+\.m3u8""", RegexOption.IGNORE_CASE).findAll(html).forEach { found.add(it.value) }
-        // mp4 patterns
-        Regex("""https?://[^"'\s>]+\.mp4[?#][^"'\s>]*""", RegexOption.IGNORE_CASE).findAll(html).forEach { found.add(it.value) }
-        Regex("""https?://[^"'\s>]+\.mp4""", RegexOption.IGNORE_CASE).findAll(html).forEach { found.add(it.value) }
         
-        // Detect possible Base64 encoded URLs in scripts
-        Regex("""(?i)base64,([A-Za-z0-9+/=]+)""").findAll(html).forEach { m ->
+        // 1. Direct URLs
+        extractMediaUrls(html).forEach { found.add(it) }
+        
+        // 增加对 HTML 实体转义符的处理 (&#61; -> =)
+        val cleanHtml = html
+            .replace("\\u003d", "=", ignoreCase = true)
+            .replace("&#61;", "=", ignoreCase = true)
+        
+        // 2. Base64 encoded URLs in scripts/attributes
+        // Lower threshold to 40 catch shorter URLs
+        Regex("""["']([A-Za-z0-9+/=]{40,})["']""").findAll(cleanHtml).forEach { m ->
             runCatching {
                 val decoded = java.util.Base64.getDecoder().decode(m.groupValues[1]).toString(Charsets.UTF_8)
-                if (decoded.contains("http")) found.add(decoded)
+                if (decoded.contains("http")) {
+                    extractMediaUrls(decoded).forEach { found.add(it) }
+                }
+            }
+        }
+
+        // 3. Marked Base64
+        Regex("""(?i)base64,([A-Za-z0-9+/=]+)""").findAll(cleanHtml).forEach { m ->
+            runCatching {
+                val decoded = java.util.Base64.getDecoder().decode(m.groupValues[1]).toString(Charsets.UTF_8)
+                if (decoded.contains("http")) {
+                    extractMediaUrls(decoded).forEach { found.add(it) }
+                }
             }
         }
         
         return found
     }
-}
 
+    private fun extractMediaUrls(text: String): List<String> {
+        val raw = ArrayList<String>()
+        val patterns = listOf(
+            Regex("""https?://[^"'\s>]+\.m3u8[?#][^"'\s>]*""", RegexOption.IGNORE_CASE),
+            Regex("""https?://[^"'\s>]+\.m3u8""", RegexOption.IGNORE_CASE),
+            Regex("""https?://[^"'\s>]+\.mp4[?#][^"'\s>]*""", RegexOption.IGNORE_CASE),
+            Regex("""https?://[^"'\s>]+\.mp4""", RegexOption.IGNORE_CASE),
+            Regex("""https?:\\\/\\\/[^"'\s>]+(?:\.m3u8|\.mp4)[^"'\s>]*""", RegexOption.IGNORE_CASE),
+            // Look for pl.m3u8 specifically used by some 91pinse CDNs
+            Regex("""https?://[^"'\s>]+/pl\.m3u8[^"'\s>]*""", RegexOption.IGNORE_CASE),
+        )
+        patterns.forEach { regex ->
+            regex.findAll(text).forEach { m ->
+                raw.add(m.value)
+            }
+        }
+        return raw.mapNotNull { normalizeMediaUrl(it) }
+    }
+
+    private fun normalizeMediaUrl(url: String?): String? {
+        val raw = url?.trim()?.trim('"', '\'') ?: return null
+        if (raw.isBlank()) return null
+
+        // 只处理反斜杠转义，不进行 URLDecoder 解码，防止 + 号变成空格毁掉签名
+        val unescaped = raw.replace("\\/", "/")
+        
+        val candidate = unescaped
+            .substringBefore("\"")
+            .substringBefore("'")
+            .substringBefore("<")
+            .trim()
+            .trimEnd(',', ';', '\\', ')', ']', '}')
+
+        if (!(candidate.startsWith("http://") || candidate.startsWith("https://"))) return null
+        
+        val lower = candidate.lowercase()
+        if (
+            !lower.contains(".m3u8") &&
+            !lower.contains(".mp4") &&
+            !lower.contains("/pl.m3u8")
+        ) return null
+
+        return candidate
+    }
+}
