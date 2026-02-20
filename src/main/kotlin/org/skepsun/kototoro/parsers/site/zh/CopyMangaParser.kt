@@ -2,12 +2,14 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import okhttp3.ConnectionSpec
 import okhttp3.Interceptor
 import okhttp3.Response
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.TlsVersion
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.MangaLoaderContext
@@ -252,7 +254,7 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         // 1. 不对 username 和 encryptedPassword 进行 urlEncoded
         // 2. 在 password 后面紧跟字面量 \\n（两个字符，占 2 字节）
         // 3. 使用 charset=utf-8
-        val bodyText = "username=$username&password=$encryptedPassword\\n&salt=$salt&authorization=Token+"
+        val bodyText = "username=$username&password=$encryptedPassword\n&salt=$salt&authorization=Token+"
         logAuth("CopyMangaDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
 
         val requestHeaders = getRequestHeaders().newBuilder()
@@ -280,8 +282,12 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         val response = try {
             logAuth("CopyMangaDebug login: sending raw request via httpClient (forcing HTTP/1.1)")
             // 强制使用 HTTP/1.1，因为终端 curl 默认行为更有可能被放行
+            val tls12Spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                .tlsVersions(TlsVersion.TLS_1_2)
+                .build()
             val h1Client = context.httpClient.newBuilder()
                 .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .connectionSpecs(listOf(tls12Spec))
                 .build()
             h1Client.newCall(request).await()
         } catch (e: Exception) {
@@ -289,6 +295,21 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
             return false
         }
 
+        logAuth("CopyMangaDebug login: response code=${response.code}")
+        val handshake = response.handshake
+        if (handshake != null) {
+            logAuth(
+                "CopyMangaDebug login: protocol=${response.protocol}, tls=${handshake.tlsVersion}, cipher=${handshake.cipherSuite}"
+            )
+        } else {
+            logAuth("CopyMangaDebug login: protocol=${response.protocol}, tls=unknown")
+        }
+        val responsePreview = kotlin.runCatching {
+            response.peekBody(1024).string()
+        }.getOrNull()
+        if (!responsePreview.isNullOrBlank()) {
+            logAuth("CopyMangaDebug login: response preview=${responsePreview.take(200)}")
+        }
         val json = try {
             logAuth("CopyMangaDebug login: parsing response JSON")
             // 必须手动调用 unzip()，因为直接使用 context.httpClient 会绕过拦截器逻辑
@@ -299,6 +320,14 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         }
         
         logAuth("CopyMangaDebug login: response JSON=$json")
+
+        val code = json.optInt("code")
+        if (code == 210) {
+            val msg = json.optString("message").ifBlank {
+                json.optJSONObject("results")?.optString("detail").orEmpty()
+            }
+            throw ParseException("登录受限：$msg", url)
+        }
 
         val token = json.optJSONObject("results")?.optString("token")
         val nickname = json.optJSONObject("results")?.optString("nickname").orEmpty()
@@ -507,8 +536,21 @@ override fun getRequestHeaders(): Headers {
             discoveryAttempted = true
             val discoveryUrl = "https://api.copy-manga.com/api/v3/system/network2?platform=3"
             try {
-                // 此时尚未设置 baseUrlOverride，getRequestHeaders 会回退使用 config 域
-                val resp = webClient.httpGet(discoveryUrl, getRequestHeaders())
+                // 此时尚未设置 baseUrlOverride，需避免 Host 与 URL 不一致
+                val headers = Headers.Builder().apply {
+                    val baseHeaders = getRequestHeaders()
+                    for (i in 0 until baseHeaders.size) {
+                        val name = baseHeaders.name(i)
+                        if (name.equals("Host", ignoreCase = true) ||
+                            name.equals("Connection", ignoreCase = true) ||
+                            name.equals("Accept-Encoding", ignoreCase = true)
+                        ) {
+                            continue
+                        }
+                        add(name, baseHeaders.value(i))
+                    }
+                }.build()
+                val resp = webClient.httpGet(discoveryUrl, headers)
                 val json = resp.parseJson()
                 val api = json.optJSONObject("results")?.optJSONArray("api")?.optJSONArray(0)?.optString(0)
                 if (!api.isNullOrBlank()) {
