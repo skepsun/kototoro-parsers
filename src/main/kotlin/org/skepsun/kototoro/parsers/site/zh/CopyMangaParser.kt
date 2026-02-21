@@ -109,6 +109,9 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
     
     private var discoveryAttempted = false
     
+    private var cachedRequestId: String? = null
+    private var lastRequestIdFetchTime: Long = 0L
+    
     override val faviconDomain: String
         get() = "www.mangacopy.com"
     // 测试/运行期开关：仅走 API 分支，跳过站点 HTML 请求
@@ -434,7 +437,8 @@ override fun getRequestHeaders(): Headers {
 
     private suspend fun resolveComicUuid(pathWord: String, headers: Headers): String? {
         val api = apiBase()
-        val url = "https://$api/api/v3/comic2/$pathWord?in_mainland=true&request_id=&platform=3"
+        val rid = getRequestId()
+        val url = "https://$api/api/v3/comic2/$pathWord?in_mainland=true&request_id=$rid&platform=3"
         val resp = webClient.httpGet(url.toHttpUrl(), headers)
         if (!resp.isSuccessful) return null
         return resp.parseJson().optJSONObject("results")?.optJSONObject("comic")?.optString("uuid")
@@ -595,7 +599,28 @@ override fun getRequestHeaders(): Headers {
         }
     }
 
-    // 移除登录与桥接方法
+    private suspend fun getRequestId(): String {
+        val region = config[preferredLineKey] ?: DEFAULT_REGION
+        if (region == "0") return ""
+        
+        val now = System.currentTimeMillis()
+        if (cachedRequestId != null && now - lastRequestIdFetchTime < 3600_000L) { // Cache for 1 hour
+            return cachedRequestId!!
+        }
+
+        val url = "https://marketing.aiacgn.com/api/v2/adopr/query3/?format=json&ident=200100001"
+        return try {
+            val resp = webClient.httpGet(url.toHttpUrl(), getRequestHeaders())
+            if (resp.isSuccessful) {
+                val rid = resp.parseJson().optJSONObject("results")?.optString("request_id").orEmpty()
+                cachedRequestId = rid
+                lastRequestIdFetchTime = now
+                rid
+            } else ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
 
     // 统一的 210 抗刷重试 GET（返回 JSON）；用于详情与章节列表
     @OptIn(InternalParsersApi::class)
@@ -893,12 +918,13 @@ override fun getRequestHeaders(): Headers {
 
     private suspend fun fetchDetailsWithFallbackParams(base: String, mangaUrl: String, headers: Headers): JSONObject? {
         val detailBase = "https://$base/api/v3/comic2/$mangaUrl"
+        val rid = getRequestId()
         val detailParamCombos = listOf(
-            "?in_mainland=true&request_id=&platform=3",
+            "?in_mainland=true&request_id=$rid&platform=3",
             "?platform=3&_update=true",
-            "?platform=3&_update=true&in_mainland=true&request_id=",
-            "?in_mainland=true&_update=true&request_id=",
-            "?platform=3&_update=true&request_id=",
+            "?platform=3&_update=true&in_mainland=true&request_id=$rid",
+            "?in_mainland=true&_update=true&request_id=$rid",
+            "?platform=3&_update=true&request_id=$rid",
             "?platform=3",
         )
         for (suffix in detailParamCombos) {
@@ -911,9 +937,10 @@ override fun getRequestHeaders(): Headers {
 
     private suspend fun fetchChaptersWithFallbackParams(base: String, mangaUrl: String, groupPath: String, offset: Int, headers: Headers): JSONArray? {
         val baseQuery = "https://$base/api/v3/comic/$mangaUrl/group/$groupPath/chapters?limit=100&offset=$offset"
+        val rid = getRequestId()
         val paramCombos = listOf(
-            "&in_mainland=true&request_id=",
-            "&platform=3&_update=true&in_mainland=true&request_id=",
+            "&in_mainland=true&request_id=$rid",
+            "&platform=3&_update=true&in_mainland=true&request_id=$rid",
             "&platform=3&_update=true",
             "&_update=true",
             "&platform=3",
@@ -951,14 +978,15 @@ override fun getRequestHeaders(): Headers {
 
     private suspend fun fetchPagesFromBase(base: String, chapter: MangaChapter, headers: Headers): List<MangaPage> {
         val epBase = "https://$base/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
+        val rid = getRequestId()
         val paramCombos = listOf(
-            "?in_mainland=true&request_id=",
+            "?in_mainland=true&request_id=$rid",
             "?platform=3&_update=true&line=1",
             "?platform=3&_update=true&line=0",
             "?line=1&_update=true",
             "?line=0&_update=true",
-            "?platform=3&_update=true&line=1&in_mainland=true&request_id=",
-            "?platform=3&_update=true&line=0&in_mainland=true&request_id=",
+            "?platform=3&_update=true&line=1&in_mainland=true&request_id=$rid",
+            "?platform=3&_update=true&line=0&in_mainland=true&request_id=$rid",
             "?platform=3&line=1",
             "?platform=3&line=0",
         )
@@ -1028,9 +1056,14 @@ override fun getRequestHeaders(): Headers {
                 "https://$base/api/v3/cartoon/${chapter.branch}/chapter/${chapter.url}",
                 "https://$base/api/v3/comic/${chapter.branch}/chapter/${chapter.url}",
             )
+            val rid = getRequestId()
             for (altBase in altBases) {
                 for (suffix in paramCombos) {
-                    val altUrl = altBase + suffix
+                    val altSuffix = if (suffix.contains("request_id=")) {
+                        suffix.substringBefore("request_id=") + "request_id=$rid" + suffix.substringAfter("request_id=").substringAfter("&", "")
+                    } else suffix
+                    
+                    val altUrl = altBase + altSuffix
                     val altData = httpGetJsonWithAntiAbuse(altUrl, headers)
                     val altRes = altData.optJSONObject("results") ?: JSONObject()
                     val altChapter = altRes.optJSONObject("chapter") ?: JSONObject()
