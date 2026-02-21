@@ -1,15 +1,20 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import org.skepsun.kototoro.parsers.MangaLoaderContext
+import org.skepsun.kototoro.parsers.MangaParserAuthProvider
 import org.skepsun.kototoro.parsers.MangaSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.*
 
 /**
  * 微图坊 (v2ph.com)  gallery parser
+ *
+ * Login is required to view full albums (non-logged-in users are limited to ~10 images).
+ * Uses browser-based login via WebView since the site has Cloudflare protection.
  */
 @MangaSourceParser(name = "V2PH", title = "微图坊", locale = "zh", type = ContentType.IMAGE_SET)
 internal class V2ph(
@@ -18,8 +23,53 @@ internal class V2ph(
     context = context,
     source = MangaParserSource.V2PH,
     pageSize = 20,
-) {
+), MangaParserAuthProvider {
+
     override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("www.v2ph.com")
+
+    private val defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+    override fun getRequestHeaders(): okhttp3.Headers {
+        return super.getRequestHeaders().newBuilder()
+            .set("User-Agent", defaultUserAgent)
+            .set("Referer", "https://$domain/")
+            .set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .build()
+    }
+
+    override val authUrl: String
+        get() = "https://$domain/login"
+
+    override suspend fun isAuthorized(): Boolean {
+        return try {
+            val response = webClient.httpGet("https://$domain", getRequestHeaders())
+            val doc = response.parseHtml()
+            // Logged in users see a dropdown with their name or a logout link
+            // Search for logout link or user profile link
+            val isLoggedOut = doc.selectFirst("a[href*='/login'], a[href*='/register']") != null
+            val isLoggedIn = doc.selectFirst("a[href*='/logout'], a[href*='/user/'], .nav-link .fa-user") != null
+            isLoggedIn || !isLoggedOut
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override suspend fun getUsername(): String {
+        try {
+            val doc = webClient.httpGet("https://$domain", getRequestHeaders()).parseHtml()
+            // V2ph typically shows the username in a dropdown toggle in the top right
+            val username = doc.selectFirst(".navbar .dropdown-toggle")?.text()?.trim()
+                ?: doc.selectFirst("a[href*='/user/profile']")?.text()?.trim()
+                ?: doc.selectFirst(".user-info .name")?.text()?.trim()
+            
+            if (!username.isNullOrBlank() && username != "登录") {
+                return username
+            }
+        } catch (e: Exception) {
+            // Ignore for now
+        }
+        throw AuthRequiredException(source)
+    }
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
@@ -221,7 +271,16 @@ internal class V2ph(
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val firstPageUrl = chapter.url.toAbsoluteUrl(domain)
-        val doc = webClient.httpGet(firstPageUrl, getRequestHeaders()).parseHtml()
+        
+        val doc = try {
+            val response = webClient.httpGet(firstPageUrl, getRequestHeaders())
+            response.parseHtml()
+        } catch (e: Exception) {
+            // If we get an error, it might be Cloudflare. Trigger a browser check.
+            context.requestBrowserAction(this, firstPageUrl)
+            val response = webClient.httpGet(firstPageUrl, getRequestHeaders())
+            response.parseHtml()
+        }
         
         val allImages = mutableListOf<String>()
         
@@ -236,7 +295,7 @@ internal class V2ph(
             val t = link.text().trim()
             if (t.toIntOrNull() != null) {
                 lastPageNum = maxOf(lastPageNum, t.toInt())
-            } else if (t == "末页") {
+            } else if (t == "末页" || t == "»") {
                 val href = link.attr("href")
                 val num = Regex("""page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
                 if (num != null) lastPageNum = maxOf(lastPageNum, num)
@@ -245,13 +304,18 @@ internal class V2ph(
         
         // 3. Fetch subsequent pages
         if (lastPageNum > 1) {
-            // Limited to avoid excessive requests in one go, but usually galleries are < 20 pages
-            val limit = minOf(lastPageNum, 50) 
+            // Limited to avoid excessive requests, but usually galleries are < 100 pages
+            val limit = minOf(lastPageNum, 100) 
             for (p in 2..limit) {
                 val pageUrl = if (firstPageUrl.contains("?")) "$firstPageUrl&page=$p" else "$firstPageUrl?page=$p"
-                runCatching {
+                try {
                     val pageDoc = webClient.httpGet(pageUrl, getRequestHeaders()).parseHtml()
-                    allImages.addAll(extractImagesFromDoc(pageDoc))
+                    val images = extractImagesFromDoc(pageDoc)
+                    if (images.isEmpty()) break // No more images, maybe blocked?
+                    allImages.addAll(images)
+                } catch (e: Exception) {
+                    // Stop on first error to prevent hanging or many popups
+                    break
                 }
             }
         }

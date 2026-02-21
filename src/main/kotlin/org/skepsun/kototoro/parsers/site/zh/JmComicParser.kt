@@ -10,7 +10,10 @@ import kotlinx.coroutines.delay
 import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
+import org.skepsun.kototoro.parsers.CategorizedFavoritesProvider
+import org.skepsun.kototoro.parsers.MangaFavoriteFolder
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
 import org.skepsun.kototoro.parsers.MangaLoaderContext
@@ -60,10 +63,9 @@ import java.io.ByteArrayInputStream
 internal class JmParser(
 	context: MangaLoaderContext,
 ) : PagedMangaParser(context, MangaParserSource.JMCOMIC, pageSize = 80), 
-    Interceptor, 
-    MangaParserAuthProvider, 
+    MangaParserAuthProvider,
     MangaParserCredentialsAuthProvider,
-    FavoritesProvider,
+    CategorizedFavoritesProvider,
     FavoritesSyncProvider {
 
     private val categoryTags = listOf(
@@ -101,12 +103,12 @@ internal class JmParser(
     private val jmVersion = "2.0.16"
     private val packageName = "com.example.app"
 
-    // API 域名，允许后续通过设置刷新
+    // API 域名，基于 fallbackServers 同步
     private var apiDomains: List<String> = listOf(
-        "www.cdntwice.org",
         "www.cdnsha.org",
         "www.cdnaspa.cc",
         "www.cdnntr.cc",
+        "www.cdntwice.org",
     )
     private var activeDomain: String = apiDomains.first()
     private var imageHost: String = "https://cdn-msp.jmapinodeudzn.net"
@@ -126,6 +128,12 @@ internal class JmParser(
         super.onCreateConfig(keys)
         keys.add(userAgentKey)
     }
+
+    private val webDomains = listOf(
+        "18comic.vip", "18comic.org", "jm-comic.me", "jm-comic.group",
+        "jmcomic.me", "jmcomic.rocks", "jmcomic1.rocks", "jmcomic2.rocks",
+        "jm-comic1.rocks", "jm-comic2.rocks"
+    )
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.NEWEST,
@@ -194,13 +202,47 @@ internal class JmParser(
         val searchTags = filter.tags.filterNot { it.key.startsWith("c:") }
 
         // jm.js 里分类标签走 categories/filter，不与搜索组合
-        if (categoryTag != null) {
-            val param = categoryTag.key.removePrefix("c:")
-            return categoryList(sort, page, param)
-        }
-
         val keyword = buildKeyword(filter.query, searchTags)
-        return if (!keyword.isNullOrBlank()) search(keyword, page, sort) else categoryList(sort, page, "0")
+        return when {
+            !keyword.isNullOrBlank() -> search(keyword, page, sort)
+            categoryTag != null -> categoryList(sort, page, categoryTag.key.removePrefix("c:"))
+            else -> promote(sort, page)
+        }
+    }
+
+    private suspend fun promote(sort: String, page: Int): List<Manga> {
+        // jm.js row 348
+        val path = "/promote?page=${page - 1}&o=$sort"
+        val jsonText = apiGet(path)
+        val result = ArrayList<Manga>()
+        try {
+            val trimmed = jsonText.trim()
+            if (trimmed.startsWith("[")) {
+                val arr = JSONArray(trimmed)
+                for (i in 0 until arr.length()) {
+                    val entry = arr.optJSONObject(i) ?: continue
+                    val content = entry.optJSONArray("content")
+                    if (content != null) {
+                        for (j in 0 until content.length()) {
+                            val obj = content.optJSONObject(j) ?: continue
+                            parseComic(obj)?.let { result.add(it) }
+                        }
+                    }
+                }
+            } else if (trimmed.startsWith("{")) {
+                val json = JSONObject(trimmed)
+                val content = json.optJSONArray("content")
+                if (content != null) {
+                    for (i in 0 until content.length()) {
+                        val obj = content.optJSONObject(i) ?: continue
+                        parseComic(obj)?.let { result.add(it) }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            println("JmParser: promote parse failed: ${e.message}")
+        }
+        return result
     }
 
     private fun buildKeyword(query: String?, searchTags: List<MangaTag>): String? {
@@ -222,14 +264,13 @@ internal class JmParser(
 
     private suspend fun search(keyword: String, page: Int, sort: String): List<Manga> {
         val kw = keyword.trim().urlEncoded().replace("%20", "+")
-        val url = buildString {
-            append(baseUrl)
+        val path = buildString {
             append("/search?search_query=")
             append(kw)
             append("&o=$sort")
             if (page > 1) append("&page=$page")
         }
-        val jsonText = apiGet(url)
+        val jsonText = apiGet(path)
         val json = JSONObject(jsonText)
         val content = json.optJSONArray("content") ?: return emptyList()
         val result = ArrayList<Manga>(content.length())
@@ -242,8 +283,8 @@ internal class JmParser(
 
     private suspend fun categoryList(sort: String, page: Int, category: String?): List<Manga> {
         val c = (category ?: "0").trim().urlEncoded()
-        val url = "$baseUrl/categories/filter?o=$sort&c=$c&page=$page"
-        val json = JSONObject(apiGet(url))
+        val jsonText = apiGet("/categories/filter?o=$sort&c=$c&page=$page")
+        val json = JSONObject(jsonText)
         val content = json.optJSONArray("content") ?: return emptyList()
         val result = ArrayList<Manga>(content.length())
         for (i in 0 until content.length()) {
@@ -289,8 +330,8 @@ internal class JmParser(
                 manga.id.toString()
             }
         }
-        val url = "$baseUrl/album?id=$id"
-        val json = JSONObject(apiGet(url))
+        val jsonText = apiGet("/album?id=$id")
+        val json = JSONObject(jsonText)
         val author = json.optJSONArray("author")?.optString(0).orEmpty()
         val desc = json.optString("description")
         val tags: Set<MangaTag> = json.optJSONArray("tags")?.let { arr ->
@@ -355,8 +396,8 @@ internal class JmParser(
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         ensureDomains()
         val cid = chapter.url.substringAfter("id=").substringBefore("&")
-        val url = "$baseUrl/chapter?id=$cid"
-        val json = JSONObject(apiGet(url))
+        val jsonText = apiGet("/chapter?id=$cid")
+        val json = JSONObject(jsonText)
         val images = json.optJSONArray("images") ?: return emptyList()
         val pages = mutableListOf<MangaPage>()
         for (idx in 0 until images.length()) {
@@ -452,59 +493,69 @@ internal class JmParser(
         return res
     }
 
-    private suspend fun apiGet(url: String, retries: Int = 3): String {
+    private suspend fun apiGet(path: String, retries: Int = 3): String {
         ensureDomains()
         var attempt = 0
         var delayMs = 800L + Random.nextLong(0, 400)
         var last: Exception? = null
         while (attempt < retries) {
+            val currentDomain = activeDomain
+            val url = if (path.startsWith("http")) path else "https://$currentDomain$path"
             try {
+                // Ensure cookies are synced to CURRENT domain (handles rotation + session restore)
+                runCatching { isAuthorized() }
+                
                 val now = (System.currentTimeMillis() / 1000).toString()
                 val reqHeaders = apiHeaders(now)
                 val resp = webClient.httpGet(url, reqHeaders)
-                val headers = resp.headers
-                val contentEncoding = headers["Content-Encoding"].orEmpty()
-                val contentType = headers["Content-Type"].orEmpty()
+                
+                if (resp.code == 404) {
+                    throw RuntimeException("404 Not Found on $currentDomain")
+                }
+
                 val rawBytes = resp.body.bytes()
                 val body = rawBytes.toString(Charsets.UTF_8)
-                val preview = body.take(500)
                 val obj = runCatching { JSONObject(body) }.getOrElse { e ->
-                    val hex = rawBytes.toHexPreview()
-                    throw RuntimeException(
-                        "JM JSON parse failed, enc=$contentEncoding, ctype=$contentType, hex=$hex, preview=${preview.toVisibleAscii()}",
-                        e,
-                    )
+                    throw RuntimeException("JM JSON parse failed on $currentDomain, path=$path", e)
                 }
+                
                 val status = obj.optInt("status", obj.optInt("code", 0))
-                if (status != 200) throw RuntimeException("Invalid status: $status, preview=${preview.toVisibleAscii()}")
+                if (status == 401) throw AuthRequiredException(source)
+                if (status != 200) throw RuntimeException("Invalid status: $status on $currentDomain")
+                
                 val dataEnc = obj.optString("data")
-                if (dataEnc.isNullOrEmpty()) throw RuntimeException("Empty data, preview=${preview.toVisibleAscii()}")
+                if (dataEnc.isNullOrEmpty()) throw RuntimeException("Empty data on $currentDomain")
                 return convertData(dataEnc, "$now$dataSecret")
             } catch (e: Exception) {
                 last = e
-                // rotate domain on failure
+                println("JmParser: apiGet attempt $attempt failed on $currentDomain: ${e.message}")
+                
+                // If 404 or Auth error, try next domain immediately
                 if (apiDomains.size > 1) {
-                    val nextIdx = (apiDomains.indexOf(activeDomain) + 1) % apiDomains.size
+                    val nextIdx = (apiDomains.indexOf(currentDomain) + 1) % apiDomains.size
                     activeDomain = apiDomains[nextIdx]
+                    // If we found a dead domain, we might want to prioritize others
                 }
+                
                 delay(delayMs)
                 delayMs = min(delayMs * 2, 5000)
                 attempt++
             }
         }
-        throw last ?: RuntimeException("apiGet failed for $url")
+        throw last ?: RuntimeException("apiGet failed for $path")
     }
 
     private fun apiHeaders(time: String): Headers {
-        // JM expects the md5 hex string to be hex-encoded again (same as debug_jm_api.py)
-        val tokenMd5Hex = md5Hex(time + apiKey)
-        val token = hexEncode(tokenMd5Hex.toByteArray(Charsets.UTF_8))
+        // jm.js row 74: MD5(time + apiKey)
+        val token = md5Hex(time + apiKey)
         return headersBase.newBuilder()
             .add("Authorization", "Bearer")
             .add("Sec-Fetch-Storage-Access", "active")
             .add("token", token)
             .add("tokenparam", "$time,$jmVersion")
-            .add("User-Agent", userAgentKey.defaultValue)
+            .set("User-Agent", userAgentKey.defaultValue)
+            .set("Referer", "https://localhost/")
+            .set("Origin", "https://localhost")
             .build()
     }
 
@@ -521,14 +572,18 @@ internal class JmParser(
         val cleaned = cleanBase64(input)
         val decoded = context.decodeBase64(cleaned)
         val decrypted = cipher.doFinal(decoded)
-        val text = decrypted.toString(Charsets.UTF_8)
-        var i = text.length - 1
-        while (i >= 0) {
-            val c = text[i]
-            if (c == '}' || c == ']') break
-            i--
+        val res = decrypted.toString(Charsets.UTF_8)
+        
+        // jm.js row 234: Trim padding/garbage from both sides
+        var start = 0
+        while (start < res.length && res[start] != '{' && res[start] != '[') {
+            start++
         }
-        return text.substring(0, min(i + 1, text.length))
+        var end = res.length - 1
+        while (end > start && res[end] != '}' && res[end] != ']') {
+            end--
+        }
+        return if (start <= end) res.substring(start, end + 1) else res
     }
 
     private fun md5Bytes(data: String): ByteArray {
@@ -594,8 +649,11 @@ internal class JmParser(
                     }
                     if (list.isNotEmpty()) {
                         apiDomains = mergeDomains(list)
+                        println("JmParser: updated domains from cloud: $apiDomains")
                     }
                 }
+            }.onFailure { e ->
+                println("JmParser: ensureDomains failed: ${e.message}")
             }
         }
         applyConfiguredDomain()
@@ -606,7 +664,7 @@ internal class JmParser(
     }
 
     private suspend fun refreshImageHost() {
-        val res = apiGet("$baseUrl/setting?app_img_shunt=1&express=")
+        val res = apiGet("/setting?app_img_shunt=1?express=")
         runCatching {
             val json = JSONObject(res)
             val host = json.optString("img_host")
@@ -620,13 +678,40 @@ internal class JmParser(
         get() = "$baseUrl/login"
 
     override suspend fun isAuthorized(): Boolean {
-        // Check cookies on all known domains, not just active domain
-        val candidates = domainCandidates()
-        for (domain in candidates) {
-            if (context.cookieJar.getCookies(domain).any { it.name == "app_token" }) {
-                activeDomain = domain
-                return true
+        // Ensure we have current domains
+        if (!domainsInitialized) {
+            runCatching { ensureDomains() }
+        }
+        
+        val allSearchDomains = domainCandidates() + webDomains
+        val cookiesToSync = mutableMapOf<String, String>()
+        val syncNames = setOf("app_token", "jm_email", "jm_id", "jm_session", "jm_token")
+        
+        // Find credentials on any domain
+        for (domain in allSearchDomains) {
+            val cookies = context.cookieJar.getCookies(domain)
+            for (cookie in cookies) {
+                if (cookie.name in syncNames && !cookiesToSync.containsKey(cookie.name)) {
+                    cookiesToSync[cookie.name] = cookie.value
+                }
             }
+        }
+        
+        if (cookiesToSync.containsKey("app_token") || cookiesToSync.containsKey("jm_email")) {
+            // Sync to all API domains so they work during rotation
+            val apiDoms = domainCandidates()
+            for (dom in apiDoms) {
+                // Also sync to root domain if it's a www subdomain
+                val parentDom = if (dom.startsWith("www.")) dom.removePrefix("www.") else null
+                
+                for ((name, value) in cookiesToSync) {
+                    context.cookieJar.insertCookies(dom, "$name=$value; Domain=$dom; Path=/")
+                    if (parentDom != null) {
+                        context.cookieJar.insertCookies(parentDom, "$name=$value; Domain=$parentDom; Path=/")
+                    }
+                }
+            }
+            return true
         }
         return false
     }
@@ -833,25 +918,67 @@ internal class JmParser(
         }
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavoriteFolders(): List<MangaFavoriteFolder> {
+        if (!isAuthorized()) throw AuthRequiredException(source)
+        val result = mutableListOf<MangaFavoriteFolder>()
+        // Always add "All" folder
+        result.add(MangaFavoriteFolder("0", "全部收藏"))
+        
+        runCatching {
+            val jsonText = apiGet("/favorite")
+            val json = JSONObject(jsonText)
+            // jm.js uses folder_list (line 664)
+            val list = json.optJSONArray("folder_list") ?: json.optJSONArray("list") ?: json.optJSONArray("content")
+            if (list != null) {
+                for (i in 0 until list.length()) {
+                    val obj = list.optJSONObject(i) ?: continue
+                    // jm.js uses FID (line 665)
+                    val id = obj.optString("FID").ifBlank { obj.optString("id") }
+                    val title = obj.optString("name").ifBlank { obj.optString("title") }
+                    if (!id.isNullOrBlank() && !title.isNullOrBlank() && id != "0") {
+                        result.add(MangaFavoriteFolder(id, title))
+                    }
+                }
+            } else {
+                println("JmParser: fetchFavoriteFolders no folder_list/list/content key in $jsonText")
+            }
+        }.onFailure { e ->
+            if (e is AuthRequiredException) throw e
+            println("JmParser: fetchFavoriteFolders failed: ${e.message}")
+        }
+        return result
+    }
+
+    override suspend fun fetchFavorites(folderId: String): List<Manga> {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val result = mutableListOf<Manga>()
-        val order = "mr" // 默认按更新排序
+        val order = "mr"
         var page = 1
         val pageSize = 20
         while (true) {
-            val url = "$baseUrl/favorite?folder_id=0&page=$page&o=$order"
-            val json = JSONObject(apiGet(url))
-            val list = json.optJSONArray("list") ?: break
-            if (list.length() == 0) break
+            val path = if (folderId == "0") {
+                "/favorite?page=$page&o=$order"
+            } else {
+                "/favorite?folder_id=$folderId&page=$page&o=$order"
+            }
+            val jsonText = apiGet(path)
+            val json = JSONObject(jsonText)
+            val list = json.optJSONArray("list") ?: json.optJSONArray("content")
+            if (list == null || list.length() == 0) {
+                if (list == null) println("JmParser: fetchFavorites no list/content key in $jsonText")
+                break
+            }
             for (i in 0 until list.length()) {
                 val obj = list.optJSONObject(i) ?: continue
                 parseComic(obj)?.let { result.add(it) }
             }
-            val total = json.optInt("total", result.size)
-            if (page * pageSize >= total) break
+            val total = json.optInt("total", -1)
+            if (total != -1 && result.size >= total) break
+            if (list.length() < pageSize) break
             page++
+            if (page > 100) break // Safety break
         }
+        println("JmParser: fetchFavorites done, total=${result.size}")
         return result
     }
 

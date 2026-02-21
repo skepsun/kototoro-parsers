@@ -10,6 +10,8 @@ import org.skepsun.kototoro.parsers.MangaParserAuthProvider
 import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
+import org.skepsun.kototoro.parsers.CategorizedFavoritesProvider
+import org.skepsun.kototoro.parsers.MangaFavoriteFolder
 import org.skepsun.kototoro.parsers.MangaSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedMangaParser
@@ -46,8 +48,8 @@ import org.jsoup.HttpStatusException
 @MangaSourceParser("WNACG", "紳士漫畫", "zh", type = ContentType.HENTAI_MANGA)
 internal class WnacgParser(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.WNACG, 30),
-    FavoritesProvider,
     FavoritesSyncProvider,
+    CategorizedFavoritesProvider,
     MangaParserAuthProvider,
     MangaParserCredentialsAuthProvider {
 
@@ -721,31 +723,42 @@ internal class WnacgParser(context: MangaLoaderContext) :
         return if (end == -1) sub.filter { it.isDigit() } else sub.substring(0, end).filter { it.isDigit() }
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavoriteFolders(): List<MangaFavoriteFolder> {
         val headers = authorizedHeaders()
         val folders = loadFavoriteFolders(headers)
-        // 没有文件夹时，也尝试默认文件夹 0
-        val folderEntries = if (folders.isEmpty()) listOf(null to "0") else folders.map { it.value to it.key }
+        return if (folders.isEmpty()) {
+            listOf(MangaFavoriteFolder("0", "My Favorites"))
+        } else {
+            folders.map { (id, name) -> MangaFavoriteFolder(id, name) }
+        }
+    }
+
+    override suspend fun fetchFavorites(folderId: String): List<Manga> {
+        val headers = authorizedHeaders()
+        val folders = loadFavoriteFolders(headers)
+        val folderName = if (folderId == "0") "My Favorites" else folders[folderId]
         val result = mutableListOf<Manga>()
-        for ((folderName, folderId) in folderEntries) {
-            var page = 1
-            var maxPage = Int.MAX_VALUE
-            while (page <= maxPage) {
-                val url = "https://$domain/users-users_fav-page-$page-c-$folderId.html.html"
-                val resp = webClient.httpGet(url, headers)
-                if (resp.code == 401 || resp.code == 403) throw AuthRequiredException(source)
-                if (!resp.isSuccessful) break
-                val doc = resp.parseHtml()
-                if (isLoginPage(doc)) throw AuthRequiredException(source)
-                val items = parseFavoritePage(doc, folderName, folderId)
-                if (items.isEmpty()) break
-                result.addAll(items)
-                val next = doc.select("div.f_left.paginator > a").lastOrNull()?.text()?.toIntOrNull()
-                maxPage = next ?: page
-                page++
-            }
+        var page = 1
+        var maxPage = Int.MAX_VALUE
+        while (page <= maxPage) {
+            val url = "https://$domain/users-users_fav-page-$page-c-$folderId.html"
+            val resp = webClient.httpGet(url, headers)
+            if (resp.code == 401 || resp.code == 403) throw AuthRequiredException(source)
+            if (!resp.isSuccessful) break
+            val doc = resp.parseHtml()
+            if (isLoginPage(doc)) throw AuthRequiredException(source)
+            val items = parseFavoritePage(doc, folderName, folderId)
+            if (items.isEmpty()) break
+            result.addAll(items)
+            val next = doc.select("div.f_left.paginator > a").lastOrNull()?.text()?.toIntOrNull()
+            maxPage = next ?: page
+            page++
         }
         return result
+    }
+
+    override suspend fun fetchFavorites(): List<Manga> {
+        return fetchFavorites("0")
     }
 
     override suspend fun addFavorite(manga: Manga): Boolean {
@@ -866,7 +879,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
             var page = 1
             var maxPage = Int.MAX_VALUE
             while (page <= maxPage) {
-                val url = "https://$domain/users-users_fav-page-$page-c-$folderId.html.html"
+                val url = "https://$domain/users-users_fav-page-$page-c-$folderId.html"
                 val resp = webClient.httpGet(url, headers)
                 if (!resp.isSuccessful) break
                 val doc = resp.parseHtml()
