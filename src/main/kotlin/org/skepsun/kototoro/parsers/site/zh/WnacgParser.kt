@@ -42,6 +42,7 @@ import java.util.EnumSet
 import java.util.Locale
 import kotlinx.coroutines.delay
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlin.random.Random
 import org.jsoup.HttpStatusException
 
@@ -56,7 +57,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
     override val authUrl: String
         get() = "https://$domain/"
 
-    override val configKeyDomain = ConfigKey.Domain("www.wnacg.com")
+    override val configKeyDomain = ConfigKey.Domain("www.wnacg.com", "wnacg.com")
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
@@ -71,6 +72,49 @@ internal class WnacgParser(context: MangaLoaderContext) :
         .add("Cache-Control", "max-age=0")
         .add("Upgrade-Insecure-Requests", "1")
         .build()
+
+    @Volatile
+    private var discoveredDomainsCache: List<String>? = null
+    @Volatile
+    private var lastSuccessfulDomain: String? = null
+    private val chapterPagesCache = object : LinkedHashMap<String, List<MangaPage>>(48, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MangaPage>>): Boolean {
+            return size > 48
+        }
+    }
+
+    private suspend fun discoverMirrorDomains(): List<String> {
+        discoveredDomainsCache?.let { return it }
+        val discovered = runCatching {
+            val doc = webClient.httpGet("https://wn01.link/").parseHtml()
+            doc.select("a[href]")
+                .mapNotNull { it.attr("href").toHttpUrlOrNull()?.host?.lowercase() }
+                .filter { host ->
+                    host.contains(".") &&
+                        !host.contains("wn01.link") &&
+                        !host.contains("google.") &&
+                        !host.contains("cdn-cgi")
+                }
+                .distinct()
+        }.getOrDefault(emptyList())
+        discoveredDomainsCache = discovered
+        return discovered
+    }
+
+    private suspend fun candidateDomains(preferred: String? = null): List<String> {
+        val static = listOf("www.wnacg.com", "wnacg.com")
+        val preferredHost = preferred
+            ?.toHttpUrlOrNull()
+            ?.host
+            ?.lowercase()
+        return buildList {
+            if (!lastSuccessfulDomain.isNullOrBlank()) add(lastSuccessfulDomain!!.lowercase())
+            add(domain.lowercase())
+            if (!preferredHost.isNullOrBlank()) add(preferredHost)
+            addAll(static)
+            addAll(discoverMirrorDomains().take(5))
+        }.filter { it.isNotBlank() }.distinct()
+    }
 
     // Backoff helpers: exponential backoff with jitter and extra cooldown for 429/503
     private suspend fun httpGetHtmlWithBackoff(url: String, maxRetries: Int = 6): Document {
@@ -437,223 +481,41 @@ internal class WnacgParser(context: MangaLoaderContext) :
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+        synchronized(chapterPagesCache) {
+            chapterPagesCache[chapter.url]?.let { return it }
+        }
         val original = chapter.url.toAbsoluteUrl(domain)
-        
-        // Helpers: normalize URL, prefer data-* attrs, and filter placeholders
-        fun normalizeUrl(s: String?): String? {
-            if (s.isNullOrBlank()) return null
-            // 忽略 base64 内联图片（data:），这通常是加载动画或占位图
-            if (s.startsWith("data:", ignoreCase = true)) return null
-            return when {
-                s.startsWith("//") -> "https:$s"
-                s.startsWith("/") -> s.toAbsoluteUrl(domain)
-                s.startsWith("https://") -> s
-                s.startsWith("http://") -> s.replaceFirst("http://", "https://")
-                else -> "https://$domain/$s"
-            }
-        }
-        
-        fun rawImgAttr(img: org.jsoup.nodes.Element?): String? {
-            if (img == null) return null
-            val srcset = img.attr("srcset").trim()
-            val srcsetFirst = if (srcset.isNotBlank()) srcset.split(',').firstOrNull()?.trim()?.substringBefore(' ') else null
-            val candidates = listOf(
-                img.attr("data-actual"),
-                img.attr("data-original"),
-                img.attr("data-original-src"),
-                img.attr("data-real-src"),
-                img.attr("data-realsrc"),
-                img.attr("data-src"),
-                img.attr("data-url"),
-                img.attr("data-lazy-src"),
-                img.attr("data-lazyload"),
-                img.attr("data-cfsrc"),
-                img.attr("data-echo"),
-                srcsetFirst,
-                img.attr("src"),
-            )
-            return candidates.firstOrNull { !it.isNullOrBlank() }
-        }
-        
-        fun isLikelyPlaceholder(u: String): Boolean {
-            val l = u.lowercase()
-            val name = l.substringAfterLast('/')
-            val isGif = name.endsWith(".gif")
-            val hasLoadingWord = name.contains("loading") || name.contains("spinner") || name.contains("lazy") || name.contains("placeholder") || name.contains("spacer") || name.contains("blank") || name.contains("ajax-loader")
-            val inStatic = l.contains("/static/") || l.contains("/assets/") || l.contains("/images/")
-            val isAd = name.contains("ad") || name.contains("banner") || name.contains("logo") || l.contains("/ads/")
-            val isThumb = l.contains("/data/t/") || name.contains("thumb")
-            return (isGif && (hasLoadingWord || inStatic)) || hasLoadingWord || isAd || isThumb
-        }
-        
-        // 提取 aid，支持 index/slide/slist 三种形式
-        val id = Regex("/photos-(?:index-page-\\d+-|slide-|slist-)aid-(\\d+)")
-            .find(original)?.groupValues?.getOrNull(1)
-        val slistUrl = id?.let { "/photos-slist-aid-$it.html".toAbsoluteUrl(domain) } ?: original
-        val raw = httpGetRawWithBackoff(slistUrl)
-        val unescapedRaw = raw
-            .replace("\\u002F", "/")
-            .replace("\\u003A", ":")
-            .replace("\\u003F", "?")
-            .replace("\\x2F", "/")
-            .replace("\\x3A", ":")
-            .replace("\\x3F", "?")
-            .replace("&#x2F;", "/")
-            .replace("&#x3A", ":")
-            .replace("&#x3F;", "?")
-        // 先尝试从 slist 页脚本中提取图片（覆盖更多脚本写法：普通、协议相对、以及 http(s) + 反斜杠转义形式）
-        val escapedProtocolRegex = Regex(
-            """https?:\\\\/\\\\/[^'\"\\\\\\s]+?\\\\\\.(?:jpg|jpeg|png|gif|webp)(?:\\\\\\?[^'\"\\\\\\s]*)?""",
-            RegexOption.IGNORE_CASE,
-        )
-        val protocolRelativeRegex = Regex(
-            """\\/\\/[^'\"\s]+?\\.(?:jpg|jpeg|png|gif|webp)(?:\\?[^'\"\s]*)?""",
-            RegexOption.IGNORE_CASE,
-        )
-        val normalRegex = Regex(
-            """https?://[^'\"\\\s]+\\.(?:jpg|jpeg|png|gif|webp)(?:\\?[^'\"\\\s]*)?""",
-            RegexOption.IGNORE_CASE,
-        )
-        val imagesFromEscapedProtocol = escapedProtocolRegex.findAll(unescapedRaw).map { it.value.replace("\\/", "/").replace("\\?", "?") }
-        val imagesFromProtocolRelative = protocolRelativeRegex.findAll(unescapedRaw).map { "https:" + it.value.replace("\\/", "/").replace("\\?", "?") }
-        val imagesFromNormal = normalRegex.findAll(unescapedRaw).map { it.value }
-        val quotedUrlRegex = Regex("""["'](https?:[^"'\\s]+?\\.(?:jpg|jpeg|png|gif|webp)[^"'\\s]*)["']""", RegexOption.IGNORE_CASE)
-        val imagesFromQuoted = quotedUrlRegex.findAll(unescapedRaw).map { it.groupValues[1] }
-        val escapedRelativeRegex = Regex("""\\/(?:[^'\"\\\\\s]+?)\\.(?:jpg|jpeg|png|gif|webp)(?:\\\\\\?[^'\"\\\\\s]*)?""", RegexOption.IGNORE_CASE)
-        val relativeRegex = Regex("""/(?:[^'\"\s]+?)\.(?:jpg|jpeg|png|gif|webp)(?:\?[^'\"\s]*)?""", RegexOption.IGNORE_CASE)
-        val imagesFromEscapedRelative = escapedRelativeRegex.findAll(unescapedRaw).map { it.value.replace("\\/", "/").replace("\\?", "?") }
-        val imagesFromRelative = relativeRegex.findAll(unescapedRaw).map { it.value }
-        val imagesFromScript = (imagesFromEscapedProtocol + imagesFromProtocolRelative + imagesFromNormal + imagesFromQuoted + imagesFromEscapedRelative + imagesFromRelative).toList().distinct()
-            .mapNotNull { normalizeUrl(it) }
-            .filterNot { isLikelyPlaceholder(it) }
-        // 不再因脚本命中而直接返回，先收集后续尝试合并
-        val collected = LinkedHashSet<String>()
-        collected.addAll(imagesFromScript)
-        // 脚本命中不再直接返回，继续解析其他来源以合并结果
-        // 回退：若存在 aid，访问 index 页并解析 view 列表，再逐页提取 img src
-        val indexUrl = id?.let { "/photos-index-page-1-aid-$it.html".toAbsoluteUrl(domain) }
-        val doc = httpGetHtmlWithBackoff(indexUrl ?: slistUrl)
-        val viewLinks = doc.select("#pic_list a[href*=/photos-view-id-]")
-            .ifEmpty { doc.select("a[href*=/photos-view-id-]") }
-            .mapNotNull { it.attr("href").takeIf { h -> h.isNotBlank() } }
-            .map { it.toAbsoluteUrl(domain) }
-        // 移动 UA：尝试“开始阅读”按钮跳转的连续阅读页
-        if (viewLinks.isEmpty()) {
-            val readLinkEl = doc.selectFirst("a#btn_read, a.readbtn, a.btn[href], button#btn_read, button.readbtn, button.btn")
-            var readLink = readLinkEl?.attr("href")?.toAbsoluteUrl(domain)
-            if (readLink.isNullOrBlank()) {
-                val onclick = readLinkEl?.attr("onclick").orEmpty()
-                val m = Regex("""(?:window\.location(?:\.href)?|location\.href)\s*=\s*['"]([^'"]+)['"]""").find(onclick)
-                readLink = m?.groupValues?.get(1)?.toAbsoluteUrl(domain)
-            }
-            val isReadText = readLinkEl?.text()?.contains(Regex("(?i)开始阅读|開始閱讀|start\\s*reading")) == true
-            val targetReadUrl = readLink ?: id?.let { "/photos-slide-aid-$it.html".toAbsoluteUrl(domain) }
-            if (!targetReadUrl.isNullOrBlank() || isReadText) {
-                val rdoc = httpGetHtmlWithBackoff(targetReadUrl ?: slistUrl)
-                val mobilImgs = rdoc.select("#photo_view img, #picarea img, img#photo_img, img#image, img, div#list img, div#reading img")
-                val urls = mobilImgs.mapNotNull { normalizeUrl(rawImgAttr(it)) }.distinct().filterNot { isLikelyPlaceholder(it) }
-                if (urls.isNotEmpty()) {
-                    return urls.mapIndexed { i, u ->
-                        MangaPage(id = i.toLong(), url = u, preview = null, source = source)
-                    }
-                }
-            }
-        }
-        // 如果列表页没有 view 链接，尝试直接提取页面中的图片节点（优先 data-*）
-        val inlineImgs = if (viewLinks.isEmpty()) doc.select("#photo_view img, #picarea img, img#photo_img, img#image, img") else emptyList()
-        if (inlineImgs.isNotEmpty()) {
-            return inlineImgs.mapIndexed { i, img ->
-                val u = normalizeUrl(rawImgAttr(img))
-                MangaPage(id = i.toLong(), url = u ?: "", preview = null, source = source)
-            }.filter { it.url.isNotBlank() && !isLikelyPlaceholder(it.url) }
-        }
-        val pages = ArrayList<MangaPage>(viewLinks.size)
-        var index = 0L
-        for (viewUrl in viewLinks) {
-            val vdoc = httpGetHtmlWithBackoff(viewUrl)
-            val img = vdoc.selectFirst("#photo_view img, #picarea img, img#photo_img, img#image, img")
-            val src = normalizeUrl(rawImgAttr(img))
-            if (!src.isNullOrBlank() && !isLikelyPlaceholder(src)) {
-                pages.add(
-                    MangaPage(
-                        id = index++,
-                        url = src,
-                        preview = null,
-                        source = source,
-                    )
-                )
-            }
-        }
-        if (pages.isNotEmpty()) return pages
-        // 进一步回退：尝试 gallery 页面（与 venera 配置一致）
-        val galleryUrl = id?.let { "/photos-gallery-aid-$it.html".toAbsoluteUrl(domain) }
-        if (galleryUrl != null) {
-            val galleryRaw = httpGetRawWithBackoff(galleryUrl)
-            val galleryImagesFromEscaped = escapedProtocolRegex.findAll(galleryRaw).map { it.value.replace("\\/", "/").replace("\\?", "?") }
-            val galleryImagesFromProtocolRelative = protocolRelativeRegex.findAll(galleryRaw).map { "https:" + it.value }
-            val galleryImagesFromNormal = normalRegex.findAll(galleryRaw).map { it.value }
-            val escapedRelativeRegex = Regex("""\\/(?:[^'\"\\\\\s]+?)\\.(?:jpg|jpeg|png|gif|webp)(?:\\\\\?[^'\"\\\\\s]*)?""", RegexOption.IGNORE_CASE)
-            val relativeRegex = Regex("""/(?:[^'\"\s]+?)\.(?:jpg|jpeg|png|gif|webp)(?:\?[^'\"\s]*)?""", RegexOption.IGNORE_CASE)
-            val galleryImagesFromEscapedRelative = escapedRelativeRegex.findAll(galleryRaw).map { it.value.replace("\\/", "/").replace("\\?", "?") }
-            val galleryImagesFromRelative = relativeRegex.findAll(galleryRaw).map { it.value }
-            val uniqGallery = (galleryImagesFromEscaped + galleryImagesFromProtocolRelative + galleryImagesFromNormal + galleryImagesFromEscapedRelative + galleryImagesFromRelative).toList().distinct()
-                .mapNotNull { normalizeUrl(it.trimEnd('"', '\'', '\\')) }
-                .filterNot { isLikelyPlaceholder(it) }
-            if (uniqGallery.isNotEmpty()) {
-                return uniqGallery.mapIndexed { i, u ->
-                    MangaPage(id = i.toLong(), url = u, preview = null, source = source)
-                }
-            }
-            val gdoc = httpGetHtmlWithBackoff(galleryUrl)
-            val gImgs = gdoc.select("#photo_view img, #picarea img, img#photo_img, img#image, img, div#list img")
-            val urls = gImgs.mapNotNull { normalizeUrl(rawImgAttr(it)) }.distinct().filterNot { isLikelyPlaceholder(it) }
+        val comicId = Regex("-aid-(\\d+)")
+            .find(original)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?: return emptyList()
+
+        for (host in candidateDomains(original)) {
+            val galleryUrl = "https://$host/photos-gallery-aid-$comicId.html"
+            val raw = runCatching {
+                httpGetRawWithBackoff(galleryUrl, maxRetries = 1)
+            }.getOrNull() ?: continue
+            val urls = Regex("""//[^"\s]+/[^"\s]+\.[^"\s]+""")
+                .findAll(raw)
+                .map { "https:${it.value}" }
+                .map { it.trimEnd('"', '\'', '\\') }
+                .distinct()
+                .toList()
             if (urls.isNotEmpty()) {
-                return urls.mapIndexed { i, u ->
-                    MangaPage(id = i.toLong(), url = u, preview = null, source = source)
-                }
-            }
-        }
-        // 进一步回退：尝试 slide 页面
-        val slideUrl = id?.let { "/photos-slide-aid-$it.html".toAbsoluteUrl(domain) }
-        if (slideUrl != null) {
-            val slideRaw = httpGetRawWithBackoff(slideUrl)
-            val slideImagesFromEscaped = escapedProtocolRegex.findAll(slideRaw).map { it.value.replace("\\/", "/").replace("\\?", "?") }
-            val slideImagesFromProtocolRelative = protocolRelativeRegex.findAll(slideRaw).map { "https:" + it.value }
-            val slideImagesFromNormal = normalRegex.findAll(slideRaw).map { it.value }
-            val escapedRelativeRegex = Regex("""\\/(?:[^'\"\\\\\s]+?)\\.(?:jpg|jpeg|png|gif|webp)(?:\\\\\?[^'\"\\\\\s]*)?""", RegexOption.IGNORE_CASE)
-            val relativeRegex = Regex("""/(?:[^'\"\s]+?)\.(?:jpg|jpeg|png|gif|webp)(?:\?[^'\"\s]*)?""", RegexOption.IGNORE_CASE)
-            val slideImagesFromEscapedRelative = escapedRelativeRegex.findAll(slideRaw).map { it.value.replace("\\/", "/").replace("\\?", "?") }
-            val slideImagesFromRelative = relativeRegex.findAll(slideRaw).map { it.value }
-            val uniqSlide = (slideImagesFromEscaped + slideImagesFromProtocolRelative + slideImagesFromNormal + slideImagesFromEscapedRelative + slideImagesFromRelative).toList().distinct()
-                .mapNotNull { normalizeUrl(it) }
-                .filterNot { isLikelyPlaceholder(it) }
-            if (uniqSlide.isNotEmpty()) {
-                return uniqSlide.mapIndexed { i, u ->
+                lastSuccessfulDomain = host
+                val pages = urls.mapIndexed { i, url ->
                     MangaPage(
                         id = i.toLong(),
-                        url = u,
+                        url = url,
                         preview = null,
                         source = source,
                     )
                 }
-            }
-            val slideDoc = httpGetHtmlWithBackoff(slideUrl)
-            val slideImgEls = slideDoc.select("#photo_view img, #picarea img, img#photo_img, img#image, img")
-            val urls = slideImgEls.mapNotNull { normalizeUrl(rawImgAttr(it)) }.distinct().filterNot { isLikelyPlaceholder(it) }
-            if (urls.isNotEmpty()) {
-                return urls.mapIndexed { i, u ->
-                    MangaPage(
-                        id = i.toLong(),
-                        url = u,
-                        preview = null,
-                        source = source,
-                    )
+                synchronized(chapterPagesCache) {
+                    chapterPagesCache[chapter.url] = pages
                 }
-            }
-        }
-        if (collected.isNotEmpty()) {
-            return collected.mapIndexed { i, u ->
-                MangaPage(id = i.toLong(), url = u, preview = null, source = source)
+                return pages
             }
         }
         return emptyList()
@@ -668,11 +530,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
         val builder = req.newBuilder()
             .header("User-Agent", config[userAgentKey])
             .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-            .header("Referer", "https://$domain/")
-            .header("Origin", "https://$domain")
-            .header("Sec-Fetch-Site", "same-origin")
-            .header("Sec-Fetch-Dest", if (isImage) "image" else "document")
-            .header("Sec-Fetch-Mode", if (isImage) "no-cors" else "navigate")
+            .header("Referer", "https://${req.url.host}/")
             .removeHeader("Authorization")
             .removeHeader("authorization")
         if (isImage) {

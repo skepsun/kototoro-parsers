@@ -95,7 +95,7 @@ internal class Pinse91(
         val mangaMap = LinkedHashMap<String, Manga>()
         val elements = doc.select(".video-grid a[href*='/v/']").takeIf { it.isNotEmpty() }
             ?: doc.select("a[href*='/v/']")
-        val durationRegex = Regex("""\d+:\d+""")
+        val durationRegex = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
 
         for (el in elements) {
             val href = el.attrAsRelativeUrl("href")
@@ -117,12 +117,13 @@ internal class Pinse91(
 
             val title = if (!isDuration && text.isNotBlank()) text else {
                 el.attr("title").takeIf { it.isNotBlank() }
-                    ?: container.selectFirst(".title, h3, h4, .video-title, .link")?.text()
-                    ?: text
+                    ?: container.selectFirst(".title, h3, h4, .video-title, .link")?.text()?.takeIf { it.isNotBlank() }
+                    ?: container.parent()?.selectFirst(".title, h3, h4, .video-title, .link")?.text()?.takeIf { it.isNotBlank() }
+                    ?: if (isDuration) null else text
             }
             
-            if (title.isBlank() && existing == null) continue
-            if (title == text && isDuration && existing != null) continue
+            val finalTitle = title?.trim()?.takeIf { !durationRegex.matches(it) } ?: existing?.title
+            if (finalTitle.isNullOrBlank()) continue
 
             val img = el.selectFirst("img") ?: container.selectFirst("img") ?: container.parent()?.selectFirst("img")
             val coverUrl = img?.attrAsAbsoluteUrlOrNull("data-src")
@@ -134,7 +135,7 @@ internal class Pinse91(
                 id = generateUid(href),
                 url = href,
                 publicUrl = href.toAbsoluteUrl(domain),
-                title = title.trim(),
+                title = finalTitle,
                 altTitles = emptySet(),
                 coverUrl = coverUrl,
                 largeCoverUrl = coverUrl,

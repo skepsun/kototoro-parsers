@@ -90,17 +90,61 @@ internal class Erome(context: MangaLoaderContext) :
             if (text.isNotEmpty() && key.isNotEmpty()) MangaTag(text, key, source) else null
         }.toSet()
 
-        val chapter = MangaChapter(
-            id = generateUid("${manga.url}|video"),
-            url = manga.url,
-            title = "Watch",
-            number = 1f,
-            uploadDate = 0L,
-            volume = 0,
-            branch = null,
-            scanlator = null,
-            source = source,
-        )
+        val mediaItems = extractMedia(doc)
+        val videoItems = mediaItems.filter { it.url.endsWith(".mp4", ignoreCase = true) || it.url.contains("video", ignoreCase = true) }
+        val imageItems = mediaItems.filterNot { it.url.endsWith(".mp4", ignoreCase = true) || it.url.contains("video", ignoreCase = true) || it.url == it.preview }
+
+        val chapters = mutableListOf<MangaChapter>()
+
+        if (videoItems.isNotEmpty()) {
+            videoItems.forEachIndexed { index, media ->
+                chapters.add(
+                    MangaChapter(
+                        id = generateUid("${manga.url}#video$index:${media.url}"),
+                        url = "media:${media.url}",
+                        title = "Video ${index + 1}",
+                        number = (index + 1).toFloat(),
+                        uploadDate = 0L,
+                        volume = 0,
+                        branch = null,
+                        scanlator = null,
+                        source = source,
+                    )
+                )
+            }
+        }
+        
+        if (imageItems.isNotEmpty()) {
+            chapters.add(
+                MangaChapter(
+                    id = generateUid("${manga.url}#images"),
+                    url = "images:${manga.url}",
+                    title = "Images (${imageItems.size})",
+                    number = (videoItems.size + 1).toFloat(),
+                    uploadDate = 0L,
+                    volume = 0,
+                    branch = null,
+                    scanlator = null,
+                    source = source,
+                )
+            )
+        }
+
+        if (chapters.isEmpty()) {
+            chapters.add(
+                MangaChapter(
+                    id = generateUid("${manga.url}|video"),
+                    url = manga.url,
+                    title = "Watch",
+                    number = 1f,
+                    uploadDate = 0L,
+                    volume = 0,
+                    branch = null,
+                    scanlator = null,
+                    source = source,
+                )
+            )
+        }
 
         return manga.copy(
             title = title,
@@ -109,11 +153,39 @@ internal class Erome(context: MangaLoaderContext) :
             largeCoverUrl = cover ?: manga.largeCoverUrl,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.ADULT,
-            chapters = listOf(chapter),
+            chapters = chapters,
         )
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+        if (chapter.url.startsWith("media:")) {
+            val mediaUrl = chapter.url.removePrefix("media:")
+            return listOf(
+                MangaPage(
+                    id = generateUid("page:${mediaUrl}"),
+                    url = mediaUrl,
+                    preview = null,
+                    source = source,
+                )
+            )
+        }
+        
+        if (chapter.url.startsWith("images:")) {
+            val chapterUrl = chapter.url.removePrefix("images:").toAbsoluteUrl(domain)
+            logDebug("Erome image pages url=$chapterUrl")
+            val response = webClient.httpGet(chapterUrl, getRequestHeaders())
+            val doc = response.parseHtml()
+            val media = extractMedia(doc).filterNot { it.url.endsWith(".mp4", ignoreCase = true) || it.url.contains("video", ignoreCase = true) || it.url == it.preview }
+            return media.mapIndexed { index, mediaItem ->
+                MangaPage(
+                    id = generateUid("${chapterUrl}#img${index}"),
+                    url = mediaItem.url,
+                    preview = mediaItem.preview,
+                    source = source,
+                )
+            }
+        }
+
         val chapterUrl = chapter.url.toAbsoluteUrl(domain)
         logDebug("Erome pages url=$chapterUrl")
         val response = webClient.httpGet(chapterUrl, getRequestHeaders())
