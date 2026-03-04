@@ -691,7 +691,7 @@ internal abstract class SimpcityBaseParser(
         val result = ArrayList<Manga>(rows.size)
         val seen = HashSet<String>(rows.size)
         for (row in rows) {
-            val link = row.selectFirst(".contentRow-main > a[href*='/threads/'], a[href*='/threads/']") ?: continue
+            val link = row.selectFirst(".contentRow-title a[href*='/threads/'], .contentRow-main > a[href*='/threads/'], .contentRow-main a[href*='/threads/']") ?: continue
             val path = normalizeThreadPath(link.attr("href")) ?: continue
             if (!seen.add(path)) continue
             val title = link.ownText().trim().ifBlank {
