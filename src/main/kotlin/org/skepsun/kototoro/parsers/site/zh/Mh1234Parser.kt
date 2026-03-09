@@ -33,8 +33,8 @@ import java.util.EnumSet
 internal class Mh1234Parser(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.MH1234, pageSize = 20) {
 
-    override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("b.amh1234.com")
-    private val imageCdnDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("gmh1234.wszwhg.net")
+    override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("m.wmh1234.com")
+    private val imageCdnDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("wmh1234.wszwhg.net")
     override val availableSortOrders: Set<SortOrder> =
         EnumSet.of(SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY)
 
@@ -74,39 +74,37 @@ internal class Mh1234Parser(context: MangaLoaderContext) :
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page, order)
         }
-        val sortParam = order.toSortParam()
-        val url = if (selection.category.endsWith(".html")) {
-            val path = selection.category.trimStart('/')
-            "https://${domain}/$path"
+        val path = if (page <= 1) {
+            if (selection.category.isNotEmpty()) "/category/${selection.category}/" else "/category/"
         } else {
-            val filterParam = "${selection.category}-${selection.type}-${selection.status}-${selection.region}"
-            "https://${domain}/list/?filter=${filterParam.urlEncoded()}&sort=$sortParam&page=$page"
+            if (selection.category.isNotEmpty()) "/category/${selection.category}/page/$page" else "/category/page/$page"
         }
+        val url = "https://${domain}$path"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
         return parseList(resp.parseHtml())
     }
 
     private suspend fun search(keyword: String, page: Int, order: SortOrder): List<Manga> {
-        val url = "https://${domain}/search/?keywords=${keyword.urlEncoded()}&sort=${order.toSortParam()}&page=$page"
+        val path = if (page <= 1) "/search" else "/search/page/$page"
+        val url = "https://${domain}$path?key=${keyword.urlEncoded()}"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
         return parseList(resp.parseHtml())
     }
 
     private fun parseList(doc: Document): List<Manga> {
-        val cards = doc.select("li.list-comic").ifEmpty { doc.select(".itemBox") }
-        return cards.mapNotNull { li ->
-            val anchor = li.select("a").getOrNull(1) ?: li.selectFirst("a") ?: return@mapNotNull null
-            val id = li.attr("data-key").ifEmpty { anchor.attr("href").substringAfterLast("/").substringBefore(".html") }
-            val title = li.selectFirst("a.txtA")?.text()?.trim()
-                ?: li.selectFirst(".title")?.text()?.trim().orEmpty()
-            val cover = li.selectFirst("img")?.attr("src")
+        val cards = doc.select("article.comic-card")
+        return cards.mapNotNull { card ->
+            val anchor = card.selectFirst("a.comic-card__link") ?: return@mapNotNull null
+            val id = anchor.attr("href").substringAfterLast("/").substringBefore(".html")
+            val title = card.selectFirst(".comic-card__title")?.text()?.trim().orEmpty()
+            val cover = card.selectFirst(".comic-card__image")?.let { it.attr("data-src").ifEmpty { it.attr("src") } }
             if (id.isEmpty() || title.isEmpty()) return@mapNotNull null
             Manga(
                 id = generateUid(id),
                 url = id,
-                publicUrl = "https://${domain}/comic/$id",
+                publicUrl = "https://${domain}/comic/$id.html",
                 coverUrl = cover,
                 title = title,
                 altTitles = emptySet(),
@@ -121,30 +119,19 @@ internal class Mh1234Parser(context: MangaLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val detailUrl = if (manga.url.endsWith(".html")) {
-            "https://${domain}/${manga.url.trimStart('/')}"
-        } else {
-            "https://${domain}/comic/${manga.url}.html"
-        }
+        val detailUrl = "https://${domain}/comic/${manga.url}.html"
         val resp = webClient.httpGet(detailUrl, getRequestHeaders())
         if (!resp.isSuccessful) return manga
         val doc = resp.parseHtml()
-        val title = doc.selectFirst(".BarTit")?.text()?.trim().orEmpty()
-            .ifEmpty { doc.selectFirst(".title > h1")?.text()?.trim().orEmpty() }
+        val title = doc.selectFirst(".comic-hero__title")?.text()?.trim().orEmpty()
             .ifEmpty { manga.title }
-        val cover = doc.selectFirst(".pic img")?.attr("src")
-            ?: doc.selectFirst(".cover img")?.attr("src")
+        val cover = doc.selectFirst(".comic-hero__image")?.let { it.attr("data-src").ifEmpty { it.attr("src") } }
             ?: manga.coverUrl
-        val desc = doc.selectFirst("#full-des")?.text()?.trim()
-            ?: doc.selectFirst(".intro")?.text()?.trim().orEmpty()
-        val tagsFromPage = doc.select(".sub_r a").mapNotNull { a ->
-            val t = a.text().trim()
-            if (t.isNotEmpty()) t else null
-        }.let { list ->
-            if (list.isNotEmpty()) list.dropLast(1) else list
-        }
-        val infoItems = doc.select(".txtItme")
-        val authors = infoItems.getOrNull(0)?.text()?.replace("\n", "")?.replace("\r", "")?.trim().orEmpty()
+        val desc = doc.selectFirst(".comic-desc")?.text()?.trim().orEmpty()
+        
+        val metaItems = doc.select(".comic-hero__meta .meta-item")
+        val authors = metaItems.select(":contains(作者)").text().substringAfter("作者：").trim()
+        val tagsFromPage = metaItems.select(":contains(题材)").text().substringAfter("题材：").split(" ").map { it.trim() }.filter { it.isNotEmpty() }
 
         val chapters = parseChapters(doc, manga)
         val tagSet = buildSet {
@@ -162,27 +149,14 @@ internal class Mh1234Parser(context: MangaLoaderContext) :
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val (mid, cid) = parseChapterIds(chapter.url)
-        val path = if (mid.isNotEmpty() && cid.isNotEmpty()) {
-            "/comic/$mid/$cid.html"
-        } else {
-            "/comic/${chapter.url}.html"
-        }
-        val url = "https://${domain}$path"
+        val url = "https://${domain}/comic/${chapter.url}.html"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
-        val body = resp.body?.string().orEmpty()
-        val images = CHAPTER_IMAGES_REGEX.find(body)?.groupValues?.getOrNull(1)
-            ?.split("\",\"")
-            ?.map { it.replace("\\", "").trim('"') }
-            ?: emptyList()
-        val chapterPath = CHAPTER_PATH_REGEX.find(body)?.groupValues?.getOrNull(1).orEmpty()
-        val base = "https://${config[imageCdnDomain].trimEnd('/')}"
-        return images.mapIndexedNotNull { index, raw ->
-            val sanitized = raw.trim().trim('"', '\'').replace("\\", "")
-            if (sanitized.isEmpty()) return@mapIndexedNotNull null
-            val prefix = if (chapterPath.isNotEmpty()) "${chapterPath.trimEnd('/')}/" else ""
-            val full = normalizeUrl(base, "$prefix$sanitized")
+        val doc = resp.parseHtml()
+        val images = doc.select("img.reader-image")
+        return images.mapIndexedNotNull { index, img ->
+            val full = img.attr("data-src").ifEmpty { img.attr("src") }
+            if (full.isEmpty()) return@mapIndexedNotNull null
             MangaPage(
                 id = generateUid("$full-$index"),
                 url = full,
@@ -195,22 +169,12 @@ internal class Mh1234Parser(context: MangaLoaderContext) :
     override suspend fun getPageUrl(page: MangaPage): String = page.url
 
     private fun parseChapters(doc: Document, manga: Manga): List<MangaChapter> {
-        val items: List<org.jsoup.nodes.Element> = doc.select(".chapter-warp li").let {
-            if (it.isNotEmpty()) it else doc.select("#play_0 a").mapNotNull { a -> a.parent() }
-        }
+        val items = doc.select(".chapter-list .chapter-item")
         if (items.isEmpty()) return emptyList()
-        val ordered = items
-        return ordered.mapIndexedNotNull { index, li ->
-            val anchor = li.selectFirst("a") ?: return@mapIndexedNotNull null
-            val href = anchor.attr("href")
-            val chapName = li.selectFirst("span")?.text()?.trim()
-                ?: anchor.text().trim()
-            val idPair = parseChapterIdsFromHref(href, manga.url)
-            val chapterUrl = if (idPair.first.isNotEmpty() && idPair.second.isNotEmpty()) {
-                "${idPair.first}@${idPair.second}"
-            } else {
-                href.substringAfterLast("/").substringBefore(".html")
-            }
+        return items.mapIndexed { index, a ->
+            val href = a.attr("href")
+            val chapName = a.selectFirst(".chapter-title")?.text()?.trim() ?: a.text().trim()
+            val chapterUrl = href.substringAfter("/comic/").substringBefore(".html")
             MangaChapter(
                 id = generateUid("$chapterUrl-${manga.id}"),
                 url = chapterUrl,
@@ -247,27 +211,6 @@ internal class Mh1234Parser(context: MangaLoaderContext) :
         else -> "update"
     }
 
-    private fun parseChapterIds(chapterUrl: String): Pair<String, String> {
-        val parts = chapterUrl.split("@")
-        return if (parts.size == 2) parts[0] to parts[1] else "" to ""
-    }
-
-    private fun parseChapterIdsFromHref(href: String, mangaId: String): Pair<String, String> {
-        val cleaned = href.substringAfter("/comic/").substringBefore(".html")
-        val parts = cleaned.split("/")
-        return if (parts.size == 2) {
-            val mid = parts[0].ifEmpty { mangaId }
-            val cid = parts[1]
-            mid to cid
-        } else {
-            mangaId to cleaned
-        }
-    }
-
-    private fun normalizeUrl(base: String, path: String): String {
-        val combined = "${base.trimEnd('/')}/${path.trimStart('/')}"
-        return combined.replace(Regex("(?<!:)//+"), "/")
-    }
 
     private data class FilterSelection(
         val category: String,
@@ -284,10 +227,6 @@ internal class Mh1234Parser(context: MangaLoaderContext) :
         private const val DEFAULT_TYPE = "-全部"
         private const val DEFAULT_STATUS = "-全部"
         private const val DEFAULT_REGION = "-全部"
-        private val CHAPTER_IMAGES_REGEX =
-            Regex("var\\s+chapterImages\\s*=\\s*\\[(.*?)]\\s*;", RegexOption.DOT_MATCHES_ALL)
-        private val CHAPTER_PATH_REGEX =
-            Regex("var\\s+chapterPath\\s*=\\s*\"([^\"]*)\"")
 
         val TYPE_OPTIONS = listOf(
             "-全部" to "-全部",
