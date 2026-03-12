@@ -140,30 +140,23 @@ internal class MhkamiParser(
         val pageUrls = traverseChapterPages(start)
         if (pageUrls.isEmpty()) return emptyList()
 
-        val pages = ArrayList<MangaPage>(pageUrls.size)
-        pageUrls.forEachIndexed { index, pageUrl ->
+        val imageUrls = LinkedHashSet<String>(pageUrls.size * 2)
+        pageUrls.forEach { pageUrl ->
             val doc = webClient.httpGet(pageUrl, imageHeaders()).parseHtml()
-            val imageUrl = doc.selectFirst(".acgn-reader-chapter__item-box .item img, .item img")
-                ?.attr("data-src")
-                ?.trim()
-                ?.ifEmpty { null }
-                ?: doc.selectFirst(".acgn-reader-chapter__item-box .item img, .item img")
-                    ?.attr("src")
-                    ?.trim()
-                    ?.ifEmpty { null }
-            if (!imageUrl.isNullOrEmpty()) {
-                val full = imageUrl.toAbsoluteUrl(domain)
-                pages.add(
-                    MangaPage(
-                        id = generateUid("$full#$index"),
-                        url = "$IMAGE_PROXY?url=${full.urlEncoded()}",
-                        preview = full,
-                        source = source,
-                    ),
-                )
-            }
+            imageUrls.addAll(extractChapterImages(doc))
         }
-        return pages
+        if (imageUrls.size <= 1) {
+            val fallbackDoc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), imageHeaders()).parseHtml()
+            imageUrls.addAll(extractChapterImages(fallbackDoc))
+        }
+        return imageUrls.mapIndexed { index, full ->
+            MangaPage(
+                id = generateUid("$full#$index"),
+                url = "$IMAGE_PROXY?url=${full.urlEncoded()}",
+                preview = full,
+                source = source,
+            )
+        }
     }
 
     override suspend fun getPageUrl(page: MangaPage): String = page.url
@@ -239,6 +232,17 @@ internal class MhkamiParser(
         }
         ordered.reverse()
         return ordered
+    }
+
+    private fun extractChapterImages(doc: Document): List<String> {
+        return doc.select(".acgn-reader-chapter__item-box .item img, .item img")
+            .mapNotNull { img ->
+                img.attr("data-src")
+                    .trim()
+                    .ifEmpty { img.attr("src").trim() }
+                    .ifEmpty { null }
+                    ?.toAbsoluteUrl(domain)
+            }
     }
 
     private fun toChapterIndexUrl(chapterUrl: String): String {

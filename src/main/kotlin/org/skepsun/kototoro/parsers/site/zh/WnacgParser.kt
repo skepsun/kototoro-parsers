@@ -157,7 +157,18 @@ internal class WnacgParser(context: MangaLoaderContext) :
         throw lastError ?: RuntimeException("Network backoff exhausted for $url")
     }
 
-    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+        SortOrder.UPDATED,
+        SortOrder.POPULARITY_TODAY,
+        SortOrder.POPULARITY_WEEK,
+        SortOrder.POPULARITY_MONTH,
+    )
+
+    private val rankingSortPeriods = mapOf(
+        SortOrder.POPULARITY_TODAY to "day",
+        SortOrder.POPULARITY_WEEK to "week",
+        SortOrder.POPULARITY_MONTH to "month",
+    )
 
     // 分類映射：cateId -> 名稱
     private val cateMap = mapOf(
@@ -249,6 +260,14 @@ internal class WnacgParser(context: MangaLoaderContext) :
                     append(filter.query!!.urlEncoded())
                     append("&syn=yes&s=create_time_DESC&p=")
                     append(page)
+                }
+            }
+            order in rankingSortPeriods.keys -> {
+                val period = checkNotNull(rankingSortPeriods[order])
+                if (page <= 1) {
+                    "https://$domain/albums-favorite_ranking-type-$period.html"
+                } else {
+                    "https://$domain/albums-favorite_ranking-page-$page-type-$period.html"
                 }
             }
             else -> {
