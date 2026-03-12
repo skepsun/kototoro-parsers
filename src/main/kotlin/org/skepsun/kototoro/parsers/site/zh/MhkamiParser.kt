@@ -29,7 +29,7 @@ import java.util.EnumSet
  * m.mhkami.com
  * 规则映射参考用户提供的 resolver（列表、搜索、详情、章节分页）
  */
-@MangaSourceParser(name = "MHKAMI", title = "MHKami", locale = "zh", type = ContentType.HENTAI_MANGA)
+@MangaSourceParser(name = "MHKAMI", title = "漫神", locale = "zh", type = ContentType.HENTAI_MANGA)
 internal class MhkamiParser(
     context: MangaLoaderContext,
 ) : PagedMangaParser(
@@ -40,29 +40,34 @@ internal class MhkamiParser(
 
     override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("m.mhkami.com")
 
-    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-        SortOrder.UPDATED,
-        SortOrder.NEWEST,
-    )
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.POPULARITY)
 
     override val filterCapabilities: MangaListFilterCapabilities =
         MangaListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
-            isMultipleTagsSupported = false,
+            isMultipleTagsSupported = true,
         )
 
     override suspend fun getFilterOptions(): MangaListFilterOptions {
-        val tags = LIST_TYPES.map { (title, id) -> MangaTag(title, "list:$id", source) }.toSet()
+        val plotTags = PLOT_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "tag:$value", source) }
+        val areaTags = AREA_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "area:$value", source) }
+        val fullTags = FULL_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "full:$value", source) }
+        val updateTags = UPDATE_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "update:$value", source) }
         return MangaListFilterOptions(
-            availableTags = tags,
-            tagGroups = listOf(MangaTagGroup("列表", tags)),
+            availableTags = (plotTags + areaTags + fullTags + updateTags).toSet(),
+            tagGroups = listOf(
+                MangaTagGroup("按剧情", plotTags),
+                MangaTagGroup("按地区", areaTags),
+                MangaTagGroup("按进度", fullTags),
+                MangaTagGroup("独立列表：按天更新", updateTags),
+            ),
             availableContentRating = EnumSet.of(ContentRating.ADULT),
         )
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", LIST_UA)
+        .add("User-Agent", MOBILE_UA)
         .add("Referer", "https://$domain/")
         .build()
 
@@ -77,11 +82,18 @@ internal class MhkamiParser(
             return parseList(doc, isSearch = true)
         }
 
-        val listType = filter.tags.firstOrNull { it.key.startsWith("list:") }
-            ?.key?.substringAfter("list:")
-            ?.takeIf { it.isNotBlank() }
-            ?: order.toDefaultListType()
-        val url = "${baseUrl()}/mangalists/9/全部/$listType/$page.html"
+        val tagMap = filter.tags.associate { it.key.substringBefore(":") to it.key.substringAfter(":") }
+        val updateDay = tagMap["update"]?.toIntOrNull() ?: 0
+        val url = if (updateDay in 1..7) {
+            // 按天更新是站点单独列表，不与常规筛选组合。
+            if (page > 1) return emptyList()
+            "${baseUrl()}/update/$updateDay.html"
+        } else {
+            val area = tagMap["area"]?.takeIf { it.isNotBlank() } ?: DEFAULT_AREA
+            val plot = tagMap["tag"]?.takeIf { it.isNotBlank() } ?: DEFAULT_PLOT_TAG
+            val full = tagMap["full"]?.takeIf { it.isNotBlank() } ?: DEFAULT_FULL
+            "${baseUrl()}/mangalists/$area/${plot.urlEncoded()}/$full/$page.html"
+        }
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         return parseList(doc, isSearch = false)
     }
@@ -165,7 +177,7 @@ internal class MhkamiParser(
         val items = if (isSearch) {
             doc.select("#js_comicSortList li, #J_comicSortList li")
         } else {
-            doc.select("#J_comicListBox ul li, #J_comicListBox li")
+            doc.select("#js_comicSortList li, #J_comicSortList li, .update-list li.item, .comic-sort li.item")
         }
 
         return items.mapNotNull { li ->
@@ -251,13 +263,8 @@ internal class MhkamiParser(
         return absolute.replace(".html", "_10.html")
     }
 
-    private fun SortOrder.toDefaultListType(): String = when (this) {
-        SortOrder.NEWEST -> "4"
-        else -> "3"
-    }
-
     private fun searchHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", SEARCH_UA)
+        .add("User-Agent", MOBILE_UA)
         .add("Referer", "https://$domain/")
         .build()
 
@@ -268,20 +275,82 @@ internal class MhkamiParser(
 
     private companion object {
         private const val IMAGE_PROXY = "https://image.44422444.xyz/"
-        private const val LIST_UA = "PostmanRuntime/7.37.3"
-        private const val SEARCH_UA =
+        private const val MOBILE_UA =
             "Mozilla/5.0 (Linux; Android 10; HarmonyOS; SCM-W09; HMSCore 6.6.0.332) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.93 HuaweiBrowser/11.1.2.332 Mobile Safari/537.36"
         private const val IMAGE_UA =
             "Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U Build/R16NW) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Mobile Safari/537.36"
 
+        private const val DEFAULT_AREA = "9"
+        private const val DEFAULT_PLOT_TAG = "全部"
+        private const val DEFAULT_FULL = "3"
         private const val MAX_PAGE_SCAN = 200
         private val INDEX_PAGE_REGEX = Regex("""_\d+\.html$""")
         private val COVER_STYLE_REGEX = Regex("""url\(['"]?([^'")]+)['"]?\)""")
 
-        private val LIST_TYPES = listOf(
-            "更新" to "3",
-            "连载" to "4",
-            "完结" to "1",
+        private val PLOT_TAGS = listOf(
+            "全部" to "全部",
+            "长条" to "长条",
+            "大女主" to "大女主",
+            "百合" to "百合",
+            "耽美" to "耽美",
+            "纯爱" to "纯爱",
+            "後宫" to "後宫",
+            "韩漫" to "韩漫",
+            "奇幻" to "奇幻",
+            "轻小说" to "轻小说",
+            "生活" to "生活",
+            "悬疑" to "悬疑",
+            "格斗" to "格斗",
+            "搞笑" to "搞笑",
+            "伪娘" to "伪娘",
+            "竞技" to "竞技",
+            "职场" to "职场",
+            "萌系" to "萌系",
+            "冒险" to "冒险",
+            "治愈" to "治愈",
+            "都市" to "都市",
+            "霸总" to "霸总",
+            "神鬼" to "神鬼",
+            "侦探" to "侦探",
+            "爱情" to "爱情",
+            "古风" to "古风",
+            "欢乐向" to "欢乐向",
+            "科幻" to "科幻",
+            "穿越" to "穿越",
+            "性转换" to "性转换",
+            "校园" to "校园",
+            "美食" to "美食",
+            "剧情" to "剧情",
+            "热血" to "热血",
+            "节操" to "节操",
+            "励志" to "励志",
+            "异世界" to "异世界",
+            "历史" to "历史",
+            "战争" to "战争",
+            "恐怖" to "恐怖",
+        )
+        private val AREA_TAGS = listOf(
+            "全部" to "9",
+            "日漫" to "1",
+            "港台" to "2",
+            "美漫" to "3",
+            "国漫" to "4",
+            "韩漫" to "5",
+            "未分类" to "6",
+        )
+        private val FULL_TAGS = listOf(
+            "全部" to "3",
+            "连载中" to "4",
+            "已完结" to "1",
+        )
+        private val UPDATE_TAGS = listOf(
+            "周一更新" to "1",
+            "周二更新" to "2",
+            "周三更新" to "3",
+            "周四更新" to "4",
+            "周五更新" to "5",
+            "周六更新" to "6",
+            "周日更新" to "7",
         )
     }
 }
