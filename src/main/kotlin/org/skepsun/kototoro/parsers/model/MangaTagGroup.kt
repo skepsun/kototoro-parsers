@@ -7,4 +7,5 @@ package org.skepsun.kototoro.parsers.model
 public data class MangaTagGroup(
     @JvmField val title: String,
     @JvmField val tags: Set<MangaTag>,
+    @JvmField val isExclusive: Boolean = false,
 )

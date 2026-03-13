@@ -57,10 +57,10 @@ internal class MhkamiParser(
         return MangaListFilterOptions(
             availableTags = (plotTags + areaTags + fullTags + updateTags).toSet(),
             tagGroups = listOf(
-                MangaTagGroup("按剧情", plotTags),
-                MangaTagGroup("按地区", areaTags),
-                MangaTagGroup("按进度", fullTags),
-                MangaTagGroup("独立列表：按天更新", updateTags),
+                MangaTagGroup("按剧情", plotTags, isExclusive = true),
+                MangaTagGroup("按地区", areaTags, isExclusive = true),
+                MangaTagGroup("按进度", fullTags, isExclusive = true),
+                MangaTagGroup("独立列表：按天更新", updateTags, isExclusive = true),
             ),
             availableContentRating = EnumSet.of(ContentRating.ADULT),
         )
@@ -100,30 +100,30 @@ internal class MhkamiParser(
 
     override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
-        val title = doc.selectFirst(".acgn-container .content .title, .content .title")
-            ?.text()
+        val title = doc.selectFirst(".book-name .name, .acgn-container .content .title, .content .title")
+            ?.ownText()
             ?.trim()
             ?.ifEmpty { null }
             ?: manga.title
 
         val cover = parseCover(doc) ?: manga.coverUrl
-        val description = doc.selectFirst(".acgn-container .content .desc, .content .desc")
+        val description = doc.selectFirst("#js_desc_content, .intro-text-wrapper, .acgn-container .content .desc, .content .desc")
             ?.text()
             ?.trim()
             ?.ifEmpty { null }
             ?: manga.description
 
-        val tags = doc.select(".acgn-container .content .tags a, .acgn-container .content .sort a")
+        val tags = doc.select(".comic-info-detail .types a.type, .types a.type, .acgn-container .content .tags a, .acgn-container .content .sort a")
             .mapNotNull { it.text().trim().ifEmpty { null } }
             .toSet()
             .map { MangaTag(it, it, source) }
             .toSet()
 
-        val chapters = doc.select("#j_chapter_list li a, #J_chapter_list li a")
+        val chapters = doc.select("#js_chapter_list li a, #js_chapters li a, #j_chapter_list li a, #J_chapter_list li a")
             .mapIndexedNotNull { index, a ->
                 val href = a.attr("href").trim()
                 val chapterUrl = href.takeIf { it.isNotEmpty() }?.toAbsoluteUrl(domain) ?: return@mapIndexedNotNull null
-                val chapterTitle = a.text().trim().ifEmpty { "第${index + 1}话" }
+                val chapterTitle = a.attr("title").trim().ifEmpty { a.text().trim() }.ifEmpty { "第${index + 1}话" }
                 MangaChapter(
                     id = generateUid("${manga.id}|$chapterUrl"),
                     url = chapterUrl,
@@ -209,7 +209,7 @@ internal class MhkamiParser(
     }
 
     private fun parseCover(doc: Document): String? {
-        val style = doc.selectFirst(".acgn-container .detail-cover img, .detail-cover img")
+        val style = doc.selectFirst(".comic-header, .acgn-container .detail-cover img, .detail-cover img")
             ?.attr("style")
             ?.trim()
             ?.ifEmpty { null }
@@ -218,7 +218,7 @@ internal class MhkamiParser(
             ?.toAbsoluteUrl(domain)
         if (!fromStyle.isNullOrEmpty()) return fromStyle
 
-        return doc.selectFirst(".acgn-container .detail-cover img, .detail-cover img")
+        return doc.selectFirst(".book-cover img, .acgn-container .detail-cover img, .detail-cover img")
             ?.attr("src")
             ?.trim()
             ?.ifEmpty { null }
