@@ -3,7 +3,7 @@ package org.skepsun.kototoro.parsers.site.zh
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.*
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -17,10 +17,10 @@ import org.skepsun.kototoro.parsers.util.json.mapJSONNotNull
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.util.generateUid
 
-@MangaSourceParser("HCOMIC", "H-Comic", "zh", type = ContentType.HENTAI_MANGA)
-internal class HComicParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.HCOMIC, pageSize = 20),
-    MangaParserAuthProvider,
+@ContentSourceParser("HCOMIC", "H-Comic", "zh", type = ContentType.HENTAI_MANGA)
+internal class HComicParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.HCOMIC, pageSize = 20),
+    ContentParserAuthProvider,
     FavoritesProvider,
     FavoritesSyncProvider {
 
@@ -37,8 +37,8 @@ internal class HComicParser(context: MangaLoaderContext) :
         SortOrder.UPDATED
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = false
@@ -53,21 +53,21 @@ internal class HComicParser(context: MangaLoaderContext) :
         .add("Accept", "application/json, text/plain, */*")
         .build()
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = listOf(
             "全部", "全彩", "無修正", "蘿莉", "制服", "巨乳", "黑絲 / 白襪", "NTR", "足交 / 腳交",
             "女學生", "眼鏡控", "口交", "正太控", "年上", "亂倫", "熟女 / 人妻", "同志 BL",
             "黑肉", "泳裝", "手淫", "肌肉", "姐姐 / 妹妹", "捆綁", "調教", "催眠", "露出",
             "群交", "肛交", "獸交"
-        ).map { MangaTag(it, it, source) }
+        ).map { ContentTag(it, it, source) }
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags.toSet(),
-            tagGroups = listOf(MangaTagGroup("熱門TAG", tags.toSet()))
+            tagGroups = listOf(ContentTagGroup("熱門TAG", tags.toSet()))
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val query = filter.query ?: ""
         val tag = filter.tags.firstOrNull()?.key
 
@@ -93,10 +93,10 @@ internal class HComicParser(context: MangaLoaderContext) :
         val html = webClient.httpGet(url, getRequestHeaders()).parseRaw()
         val data = extractDataFromHtml(html) ?: return emptyList()
         val comics = data.optJSONArray("comics") ?: JSONArray()
-        return comics.mapJSON { parseManga(it) }
+        return comics.mapJSON { parseContent(it) }
     }
 
-    private fun parseManga(jo: JSONObject): Manga {
+    private fun parseContent(jo: JSONObject): Content {
         val id = jo.optString("id")
         val titleObj = jo.optJSONObject("title")
         val title = titleObj?.optString("display") 
@@ -112,10 +112,10 @@ internal class HComicParser(context: MangaLoaderContext) :
 
         val tags = jo.optJSONArray("tags")?.mapJSONNotNull { t ->
             val tagName = t.optString("name_zh").ifEmpty { t.optString("name") }
-            if (tagName.isNotEmpty()) MangaTag(tagName, tagName, source) else null
+            if (tagName.isNotEmpty()) ContentTag(tagName, tagName, source) else null
         }?.toSet() ?: emptySet()
 
-        return Manga(
+        return Content(
             id = generateUid(id),
             title = title,
             altTitles = emptySet(),
@@ -132,7 +132,7 @@ internal class HComicParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val parts = manga.url.split("|")
         val id = parts[0]
         val titleParam = parts.getOrNull(1) ?: "view"
@@ -152,7 +152,7 @@ internal class HComicParser(context: MangaLoaderContext) :
         val numPages = comicJo.optInt("num_pages")
         
         val chapterId = "$comicSource|$mediaId|$numPages"
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid(chapterId),
             title = "全一話",
             number = 1f,
@@ -171,17 +171,17 @@ internal class HComicParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val parts = chapter.url.split("|")
         if (parts.size < 3) return emptyList()
         val sourceStr = parts[0]
         val mediaId = parts[1]
         val numPages = parts[2].toIntOrNull() ?: 0
 
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         for (i in 1..numPages) {
             val url = "$imageServerUrl/$sourceStr/$mediaId/pages/$i"
-            pages.add(MangaPage(
+            pages.add(ContentPage(
                 id = generateUid(url),
                 url = url,
                 preview = null,
@@ -236,7 +236,7 @@ internal class HComicParser(context: MangaLoaderContext) :
     // User will be directed to authUrl in a WebView to complete Auth0 login
 
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val url = "https://$domain/favourites"
         return try {
@@ -248,12 +248,12 @@ internal class HComicParser(context: MangaLoaderContext) :
             val favouritesJo = data.optJSONObject("favourites")
             val docs = favouritesJo?.optJSONArray("docs") ?: JSONArray()
             
-            val mangas = mutableListOf<Manga>()
+            val mangas = mutableListOf<Content>()
             for (i in 0 until docs.length()) {
                 val item = docs.optJSONObject(i)
                 val comicJo = item?.optJSONObject("comic")
                 if (comicJo != null) {
-                    mangas.add(parseManga(comicJo))
+                    mangas.add(parseContent(comicJo))
                 }
             }
             mangas
@@ -262,7 +262,7 @@ internal class HComicParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val id = manga.url.split("|")[0]
         val url = "$apiUrl/collections"
@@ -274,7 +274,7 @@ internal class HComicParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         // Provisional: H-Comic might use DELETE but WebClient only supports POST/GET
         // For now return false as it's not and we can't easily do it without httpDelete in interface

@@ -1,10 +1,10 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
@@ -16,9 +16,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
  * 动漫巴士视频解析器
  * 网站: https://dmbus.cc/
  */
-@MangaSourceParser("DMBUS", "动漫巴士", "zh", type = ContentType.VIDEO)
-internal class Dmbus(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.DMBUS, pageSize = 24) {
+@ContentSourceParser("DMBUS", "动漫巴士", "zh", type = ContentType.VIDEO)
+internal class Dmbus(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.DMBUS, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("dmbus.cc")
 
@@ -33,21 +33,21 @@ internal class Dmbus(context: MangaLoaderContext) :
         SortOrder.RATING        // 按评分
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
             isMultipleTagsSupported = true,  // 启用多选
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 类型 - 国漫、日漫、欧美、电影
         val categories = listOf(
-            MangaTag("国漫", "cat:1", source),
-            MangaTag("日漫", "cat:2", source),
-            MangaTag("欧美", "cat:3", source),
-            MangaTag("电影", "cat:4", source)
+            ContentTag("国漫", "cat:1", source),
+            ContentTag("日漫", "cat:2", source),
+            ContentTag("欧美", "cat:3", source),
+            ContentTag("电影", "cat:4", source)
         )
         
         // 类别 (Tags) - 题材标签
@@ -55,21 +55,21 @@ internal class Dmbus(context: MangaLoaderContext) :
             "全部", "奇幻", "战斗", "玄幻", "穿越", "科幻", "武侠", "热血", "耽美", "搞笑", 
             "动态漫画", "冒险", "恋爱", "校园", "后宫", "治愈", "百合", "机战", "悬疑", 
             "推理", "恐怖", "运动", "魔法", "神魔", "励志", "历史", "真人"
-        ).map { MangaTag(it, "genre:$it", source) }
+        ).map { ContentTag(it, "genre:$it", source) }
 
         // 时间 - 使用 tags
         val years = (2025 downTo 2015).map { it.toString() }.map { year ->
-            MangaTag(year, "year:$year", source)
+            ContentTag(year, "year:$year", source)
         }
 
         val allTags = (categories + genres + years).toSet()
         val tagGroups = listOf(
-            MangaTagGroup("地区", categories.toSet()),
-            MangaTagGroup("题材", genres.toSet()),
-            MangaTagGroup("年份", years.toSet()),
+            ContentTagGroup("地区", categories.toSet()),
+            ContentTagGroup("题材", genres.toSet()),
+            ContentTagGroup("年份", years.toSet()),
         )
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             tagGroups = tagGroups,
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
@@ -83,7 +83,7 @@ internal class Dmbus(context: MangaLoaderContext) :
         .add("Referer", "https://www.google.com/") // 模拟从Google跳转
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         return when {
             !filter.query.isNullOrEmpty() -> {
                 // 搜索功能
@@ -127,7 +127,7 @@ internal class Dmbus(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseSearchResults(doc: Document): List<Manga> {
+    private fun parseSearchResults(doc: Document): List<Content> {
         return doc.select(".video-item, .list-item, .item, .search-result-item, .stui-vodlist__thumb, .fed-list-item, .module-item").mapNotNull { item ->
             val link = item.selectFirst("a[href]") ?: return@mapNotNull null
             val href = link.attrAsRelativeUrl("href")
@@ -142,7 +142,7 @@ internal class Dmbus(context: MangaLoaderContext) :
                 ?: item.selectFirst("img[data-src]")?.attrAsAbsoluteUrlOrNull("data-src")
                 ?: item.selectFirst("img")?.attrAsAbsoluteUrlOrNull("src")
 
-            Manga(
+            Content(
                 id = generateUid(href),
                 url = href,
                 publicUrl = href.toAbsoluteUrl(domain),
@@ -161,7 +161,7 @@ internal class Dmbus(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseCategoryList(doc: Document): List<Manga> {
+    private fun parseCategoryList(doc: Document): List<Content> {
         return doc.select(".v_list .item, .video-list .item, .list-container .item, .videos .item, .video-item, .stui-vodlist__thumb, .fed-list-item, .module-item").mapNotNull { item ->
             val link = item.selectFirst("a[href]") ?: return@mapNotNull null
             val href = link.attrAsRelativeUrl("href")
@@ -177,7 +177,7 @@ internal class Dmbus(context: MangaLoaderContext) :
                 ?: item.selectFirst("img[data-src]")?.attrAsAbsoluteUrlOrNull("data-src")
                 ?: item.selectFirst("img")?.attrAsAbsoluteUrlOrNull("src")
 
-            Manga(
+            Content(
                 id = generateUid(href),
                 url = href,
                 publicUrl = href.toAbsoluteUrl(domain),
@@ -196,14 +196,14 @@ internal class Dmbus(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         
         val title = doc.selectFirst(".v_title")?.text() ?: manga.title
         val description = doc.select("#intro").text().replace("剧情：", "").trim()
         val cover = doc.selectFirst(".v_content .cover img")?.attr("src") ?: manga.coverUrl
         
-        val chapters = mutableListOf<MangaChapter>()
+        val chapters = mutableListOf<ContentChapter>()
         
         // Parse sources (tabs)
         val sources = doc.select(".tab_control.play_from li").map { it.text() }
@@ -223,7 +223,7 @@ internal class Dmbus(context: MangaLoaderContext) :
                     val numberMatcher = Regex("(\\d+)").find(name)
                     val number = numberMatcher?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
                     
-                    MangaChapter(
+                    ContentChapter(
                         id = generateUid(url),
                         title = name,
                         number = number,
@@ -248,7 +248,7 @@ internal class Dmbus(context: MangaLoaderContext) :
                 val numberMatcher = Regex("(\\d+)").find(name)
                 val number = numberMatcher?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
                 
-                chapters.add(MangaChapter(
+                chapters.add(ContentChapter(
                     id = generateUid(url),
                     title = name,
                     number = number,
@@ -301,7 +301,7 @@ internal class Dmbus(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val doc = webClient.httpGet(("https://$domain" + chapter.url).toHttpUrl()).parseHtml()
         
         // Find iframe
@@ -359,7 +359,7 @@ internal class Dmbus(context: MangaLoaderContext) :
         }
 
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = null,

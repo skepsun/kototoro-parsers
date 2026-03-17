@@ -1,6 +1,6 @@
 package org.skepsun.kototoro.parsers
 
-import org.skepsun.kototoro.parsers.model.Manga
+import org.skepsun.kototoro.parsers.model.Content
 
 /**
  * 可选能力：从站点拉取当前登录用户的收藏/书架列表。
@@ -9,5 +9,5 @@ import org.skepsun.kototoro.parsers.model.Manga
  */
 public interface FavoritesProvider {
 
-    public suspend fun fetchFavorites(): List<Manga>
+    public suspend fun fetchFavorites(): List<Content>
 }

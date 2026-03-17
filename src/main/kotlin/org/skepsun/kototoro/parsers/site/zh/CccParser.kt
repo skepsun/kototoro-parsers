@@ -6,22 +6,22 @@ import okhttp3.Headers
 import org.json.JSONObject
 import org.jsoup.HttpStatusException
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
@@ -40,11 +40,11 @@ import javax.crypto.spec.SecretKeySpec
  * CCC追漫台（api.creative-comic.tw）
  * 图片加密，解密后返回 data URL
  */
-@MangaSourceParser("CCC_", "CCC追漫台", "zh")
-internal class CccParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.CCC_, pageSize = 20),
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider {
+@ContentSourceParser("CCC_", "CCC追漫台", "zh")
+internal class CccParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.CCC_, pageSize = 20),
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider {
 
     private val apiUrl = "https://api.creative-comic.tw"
     private var token: String? = null
@@ -55,21 +55,21 @@ internal class CccParser(context: MangaLoaderContext) :
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.POPULARITY, SortOrder.UPDATED)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    private val sortTags: List<MangaTag> = listOf(
+    private val sortTags: List<ContentTag> = listOf(
         TagOption("updated_at", "最新", "sort"),
         TagOption("read_count", "閲覽", "sort"),
         TagOption("like_count", "推薦", "sort"),
         TagOption("collect_count", "收藏", "sort"),
     ).map { it.toTag(source) }
 
-    private val categoryTags: List<MangaTag> = listOf(
+    private val categoryTags: List<ContentTag> = listOf(
         TagOption("", "全部", "type"),
         TagOption("2", "劇情", "type"),
         TagOption("6", "愛情", "type"),
@@ -85,32 +85,32 @@ internal class CccParser(context: MangaLoaderContext) :
         TagOption("13", "活動", "type"),
     ).map { it.toTag(source) }
 
-    private val serialTags: List<MangaTag> = listOf(
+    private val serialTags: List<ContentTag> = listOf(
         TagOption("", "全部", "serial"),
         TagOption("2", "已完結", "serial"),
         TagOption("0", "連載中", "serial"),
     ).map { it.toTag(source) }
 
-    private val updatedTags: List<MangaTag> = listOf(
+    private val updatedTags: List<ContentTag> = listOf(
         TagOption("", "全部", "updated"),
         TagOption("month", "本月", "updated"),
         TagOption("week", "本周", "updated"),
     ).map { it.toTag(source) }
 
-    private val literatureTags: List<MangaTag> = listOf(
+    private val literatureTags: List<ContentTag> = listOf(
         TagOption("", "全部", "literature"),
         TagOption("1", "短篇", "literature"),
         TagOption("2", "中篇", "literature"),
         TagOption("3", "長篇", "literature"),
     ).map { it.toTag(source) }
 
-    private val comicTypeTags: List<MangaTag> = listOf(
+    private val comicTypeTags: List<ContentTag> = listOf(
         TagOption("", "全部", "comic_type"),
         TagOption("3", "條漫", "comic_type"),
         TagOption("2", "格漫", "comic_type"),
     ).map { it.toTag(source) }
 
-    private val publisherTags: List<MangaTag> = listOf(
+    private val publisherTags: List<ContentTag> = listOf(
         "44-MOJOIN",
         "37-目宿媒體股份有限公司",
         "4-大辣出版",
@@ -168,26 +168,26 @@ internal class CccParser(context: MangaLoaderContext) :
     ).map { it.split("-", limit = 2) }
         .map { (id, title) -> TagOption(id, title, "publisher").toTag(source) }
 
-    private val rankTags: List<MangaTag> = listOf(
+    private val rankTags: List<ContentTag> = listOf(
         TagOption("read", "人氣榜", "rank"),
         TagOption("buy", "銷售榜", "rank"),
         TagOption("donate", "斗內榜", "rank"),
         TagOption("collect", "收藏榜", "rank"),
     ).map { it.toTag(source) }
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = (sortTags + categoryTags + serialTags + updatedTags + literatureTags + comicTypeTags + publisherTags + rankTags).toSet()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = listOf(
-                MangaTagGroup("排序", sortTags.toSet()),
-                MangaTagGroup("分類", categoryTags.toSet()),
-                MangaTagGroup("連載狀態", serialTags.toSet()),
-                MangaTagGroup("更新日期", updatedTags.toSet()),
-                MangaTagGroup("作品篇幅", literatureTags.toSet()),
-                MangaTagGroup("作品形式", comicTypeTags.toSet()),
-                MangaTagGroup("出版社", publisherTags.toSet()),
-                MangaTagGroup("排行榜", rankTags.toSet()),
+                ContentTagGroup("排序", sortTags.toSet()),
+                ContentTagGroup("分類", categoryTags.toSet()),
+                ContentTagGroup("連載狀態", serialTags.toSet()),
+                ContentTagGroup("更新日期", updatedTags.toSet()),
+                ContentTagGroup("作品篇幅", literatureTags.toSet()),
+                ContentTagGroup("作品形式", comicTypeTags.toSet()),
+                ContentTagGroup("出版社", publisherTags.toSet()),
+                ContentTagGroup("排行榜", rankTags.toSet()),
             ),
             availableStates = emptySet(),
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
@@ -271,7 +271,7 @@ internal class CccParser(context: MangaLoaderContext) :
         return true
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val selected = filter.tags.associateBy { it.key.substringBefore(':') }
         val type = selected["type"]?.key?.substringAfter(':').orEmpty()
         val rank = selected["rank"]?.key?.substringAfter(':')
@@ -310,7 +310,7 @@ internal class CccParser(context: MangaLoaderContext) :
         }
     }
 
-    private suspend fun search(query: String, page: Int): List<Manga> {
+    private suspend fun search(query: String, page: Int): List<Content> {
         val params = listOf(
             "page=$page",
             "rows_per_page=$pageSize",
@@ -321,7 +321,7 @@ internal class CccParser(context: MangaLoaderContext) :
         return parseComics("$apiUrl/book?${params.joinToString("&")}")
     }
 
-    private suspend fun parseComics(url: String): List<Manga> {
+    private suspend fun parseComics(url: String): List<Content> {
         val res = fetchWithFallback(url) ?: return emptyList()
         val root = res.parseJsonObject()
         if (root.optInt("code", 0) != 0) {
@@ -329,7 +329,7 @@ internal class CccParser(context: MangaLoaderContext) :
         }
         val data = root.optJSONObject("data") ?: return emptyList()
         val list = data.optJSONArray("data") ?: return emptyList()
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         for (i in 0 until list.length()) {
             val item = list.optJSONObject(i) ?: continue
             val id = (item.optString("book_id").ifEmpty { item.optString("id") }).ifEmpty { continue }
@@ -337,16 +337,16 @@ internal class CccParser(context: MangaLoaderContext) :
             val cover = item.optString("image1").ifEmpty {
                 item.optString("image2").ifEmpty { item.optString("image3") }
             }
-            val tagSet = mutableSetOf<MangaTag>()
+            val tagSet = mutableSetOf<ContentTag>()
             val authorArr = item.optJSONArray("author") ?: org.json.JSONArray()
             for (j in 0 until authorArr.length()) {
                 val name = (authorArr.optJSONObject(j)?.optString("name")).orEmpty()
-                if (name.isNotEmpty()) tagSet.add(MangaTag(name, name, source))
+                if (name.isNotEmpty()) tagSet.add(ContentTag(name, name, source))
             }
             val typeName = item.optJSONObject("type")?.optString("name").orEmpty()
-            if (typeName.isNotEmpty()) tagSet.add(MangaTag(typeName, typeName, source))
+            if (typeName.isNotEmpty()) tagSet.add(ContentTag(typeName, typeName, source))
             result.add(
-                Manga(
+                Content(
                     id = generateUid(id),
                     url = id,
                     publicUrl = "https://www.creative-comic.tw/zh/book/$id",
@@ -376,7 +376,7 @@ internal class CccParser(context: MangaLoaderContext) :
         return res?.takeIf { it.isSuccessful }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val infoRes = webClient.httpGet("$apiUrl/book/${manga.url}/info", getApiHeaders(true))
         if (!infoRes.isSuccessful) return manga
         val data = infoRes.parseJsonObject().optJSONObject("data") ?: return manga
@@ -387,11 +387,11 @@ internal class CccParser(context: MangaLoaderContext) :
                 if (name.isNotEmpty()) add(name)
             }
         }
-        val tags = mutableSetOf<MangaTag>().apply {
+        val tags = mutableSetOf<ContentTag>().apply {
             val arr = data.optJSONArray("tags") ?: org.json.JSONArray()
             for (i in 0 until arr.length()) {
                 val name = (arr.optJSONObject(i)?.optString("name")).orEmpty()
-                if (name.isNotEmpty()) add(MangaTag(name, name, source))
+                if (name.isNotEmpty()) add(ContentTag(name, name, source))
             }
         }
         val chapters = loadChapters(manga.url.toString())
@@ -410,12 +410,12 @@ internal class CccParser(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun loadChapters(bookId: String): List<MangaChapter> {
+    private suspend fun loadChapters(bookId: String): List<ContentChapter> {
         val chapterRes = webClient.httpGet("$apiUrl/book/$bookId/chapter", getApiHeaders(true))
         if (!chapterRes.isSuccessful) return emptyList()
         val data = chapterRes.parseJsonObject().optJSONObject("data") ?: return emptyList()
         val chaptersArr = data.optJSONArray("chapters") ?: return emptyList()
-        val result = mutableListOf<MangaChapter>()
+        val result = mutableListOf<ContentChapter>()
         for (i in 0 until chaptersArr.length()) {
             val obj = chaptersArr.optJSONObject(i) ?: continue
             val id = obj.optString("id")
@@ -427,7 +427,7 @@ internal class CccParser(context: MangaLoaderContext) :
                 if (name.isNotEmpty()) append("-").append(name)
             }
             result.add(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("$bookId-$id"),
                     url = obj.optString("id"),
                     title = title,
@@ -443,17 +443,17 @@ internal class CccParser(context: MangaLoaderContext) :
         return result
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val res = webClient.httpGet("$apiUrl/book/chapter/${chapter.url}", getApiHeaders(true))
         if (!res.isSuccessful) return emptyList()
         val data = res.parseJsonObject().optJSONObject("data") ?: return emptyList()
         val proportions = data.optJSONObject("chapter")?.optJSONArray("proportion") ?: return emptyList()
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         for (i in 0 until proportions.length()) {
             val obj = proportions.optJSONObject(i) ?: continue
             val id = obj.optString("id")
             pages.add(
-                MangaPage(
+                ContentPage(
                     id = generateUid("$id-$i"),
                     url = id,
                     preview = null,
@@ -464,7 +464,7 @@ internal class CccParser(context: MangaLoaderContext) :
         return pages
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String {
+    override suspend fun getPageUrl(page: ContentPage): String {
         // 1) 获取 key
         val keyRes = webClient.httpGet("$apiUrl/book/chapter/image/${page.url}", getApiHeaders())
         if (!keyRes.isSuccessful) return page.url
@@ -536,6 +536,6 @@ internal class CccParser(context: MangaLoaderContext) :
     }
 
     private data class TagOption(val value: String, val title: String, val ns: String) {
-        fun toTag(source: MangaSource): MangaTag = MangaTag(title, "$ns:$value", source)
+        fun toTag(source: ContentSource): ContentTag = ContentTag(title, "$ns:$value", source)
     }
 }

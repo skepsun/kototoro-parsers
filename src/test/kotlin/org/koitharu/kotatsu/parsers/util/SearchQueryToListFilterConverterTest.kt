@@ -7,26 +7,26 @@ import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType.MANGA
 import org.skepsun.kototoro.parsers.model.ContentType.MANHUA
 import org.skepsun.kototoro.parsers.model.Demographic.SEINEN
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaState
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQuery
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentState
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQuery
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria.*
 import org.skepsun.kototoro.parsers.model.search.SearchableField.*
 import java.util.*
 
-class ConvertToMangaListFilterTest {
+class ConvertToContentListFilterTest {
 
     @Test
-    fun convertToMangaListFilterTest() {
-        val tags = setOf(buildMangaTag("tag1"), buildMangaTag("tag2"))
-        val excludedTags = setOf(buildMangaTag("exclude_tag"))
-        val states = setOf(MangaState.ONGOING)
+    fun convertToContentListFilterTest() {
+        val tags = setOf(buildContentTag("tag1"), buildContentTag("tag2"))
+        val excludedTags = setOf(buildContentTag("exclude_tag"))
+        val states = setOf(ContentState.ONGOING)
         val contentRatings = setOf(ContentRating.SAFE)
         val contentTypes = setOf(MANGA, MANHUA)
         val demographics = setOf(SEINEN)
 
-        val query = MangaSearchQuery.Builder()
+        val query = ContentSearchQuery.Builder()
             .criterion(Match(TITLE_NAME, "title_name"))
             .criterion(Include(TAG, tags))
             .criterion(Exclude(TAG, excludedTags))
@@ -40,7 +40,7 @@ class ConvertToMangaListFilterTest {
             .criterion(Match(PUBLICATION_YEAR, 2020))
             .build()
 
-        val listFilter = convertToMangaListFilter(query)
+        val listFilter = convertToContentListFilter(query)
 
         assertEquals(listFilter.query, "title_name")
         assertEquals(listFilter.tags, tags)
@@ -57,38 +57,38 @@ class ConvertToMangaListFilterTest {
     }
 
     @Test
-    fun convertToMangaListFilterWithMultipleTagsIncludeTest() {
-        val tags1 = setOf(buildMangaTag("tag1"), buildMangaTag("tag2"))
-        val tags2 = setOf(buildMangaTag("tag3"), buildMangaTag("tag4"))
+    fun convertToContentListFilterWithMultipleTagsIncludeTest() {
+        val tags1 = setOf(buildContentTag("tag1"), buildContentTag("tag2"))
+        val tags2 = setOf(buildContentTag("tag3"), buildContentTag("tag4"))
 
-        val query = MangaSearchQuery.Builder()
+        val query = ContentSearchQuery.Builder()
             .criterion(Include(TAG, tags1))
             .criterion(Include(TAG, tags2))
             .build()
 
-        val listFilter = convertToMangaListFilter(query)
+        val listFilter = convertToContentListFilter(query)
 
         assertEquals(listFilter.tags, tags1 union tags2)
     }
 
     @Test
-    fun convertToMangaListFilterWithUnsupportedFieldTest() {
-        val query = MangaSearchQuery.Builder()
-            .criterion(Include(AUTHOR, setOf(buildMangaTag("author"))))
+    fun convertToContentListFilterWithUnsupportedFieldTest() {
+        val query = ContentSearchQuery.Builder()
+            .criterion(Include(AUTHOR, setOf(buildContentTag("author"))))
             .build()
 
         val exception = assertThrows<IllegalArgumentException> {
-            convertToMangaListFilter(query)
+            convertToContentListFilter(query)
         }
 
         assert(exception.message!!.contains("Unsupported field for Include criterion: AUTHOR"))
     }
 
-    private fun buildMangaTag(name: String): MangaTag {
-        return MangaTag(
+    private fun buildContentTag(name: String): ContentTag {
+        return ContentTag(
             key = "${name}Key",
             title = name,
-            source = MangaParserSource.MANGADEX,
+            source = ContentParserSource.MANGADEX,
         )
     }
 }

@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.minutes
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.util.insertCookies
 import org.skepsun.kototoro.parsers.util.getCookies
 
@@ -23,14 +23,14 @@ import org.skepsun.kototoro.parsers.util.getCookies
  */
 class PicacgCredentialLoginMockTest {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
 
     @Test
     fun login_with_credentials_on_mock_context() = runTest(timeout = 2.minutes) {
-        val parser = context.newParserInstance(MangaParserSource.PICACG)
+        val parser = context.newParserInstance(ContentParserSource.PICACG)
         // 显式设置 domain 为 api.go2778.com 以匹配 Python 脚本，避免官方服务器限流
         // 通过配置系统设置域名，而不是直接赋值 parser.domain
-        val config = context.getConfig(MangaParserSource.PICACG) as org.skepsun.kototoro.parsers.SourceConfigMock
+        val config = context.getConfig(ContentParserSource.PICACG) as org.skepsun.kototoro.parsers.SourceConfigMock
         config.set(parser.configKeyDomain, "api.go2778.com")
         val domain = parser.domain
         println("[TEST] PicacgParser domain=$domain")
@@ -56,7 +56,7 @@ class PicacgCredentialLoginMockTest {
 
         val authProviderRaw = parser.authorizationProvider
         println("Auth provider class = ${authProviderRaw?.javaClass?.name}")
-        val credentials = authProviderRaw as? MangaParserCredentialsAuthProvider
+        val credentials = authProviderRaw as? ContentParserCredentialsAuthProvider
             ?: error("Parser does not support credentials auth")
 
         // 执行凭证登录；若服务端限流（429）或设备限制导致异常，跳过测试以避免误报
@@ -69,7 +69,7 @@ class PicacgCredentialLoginMockTest {
         }
         assertTrue(success, "login() 返回 false，登录失败")
 
-        val authProvider = parser.authorizationProvider as MangaParserAuthProvider
+        val authProvider = parser.authorizationProvider as ContentParserAuthProvider
         assertTrue(authProvider.isAuthorized(), "登录后 isAuthorized=false")
 
         // 用户名应可读取；若服务端对当前设备/令牌不授权，跳过断言以避免误报

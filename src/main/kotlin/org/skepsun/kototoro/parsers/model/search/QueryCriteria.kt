@@ -24,7 +24,7 @@ public sealed interface QueryCriteria<T> {
 	 *
 	 * ### Example Usage:
 	 * ```kotlin
-	 * val genreFilter = QueryCriteria.Include(SearchableField.STATE, setOf(MangaState.ONGOING, MangaState.FINISHED))
+	 * val genreFilter = QueryCriteria.Include(SearchableField.STATE, setOf(ContentState.ONGOING, ContentState.FINISHED))
 	 * ```
 	 */
 	public data class Include<T : Any>(
@@ -45,7 +45,7 @@ public sealed interface QueryCriteria<T> {
 	 *
 	 * ### Example Usage:
 	 * ```kotlin
-	 * val excludeTag = QueryCriteria.Exclude(SearchableField.TAG, setOf(MangaTag(key, title, source)))
+	 * val excludeTag = QueryCriteria.Exclude(SearchableField.TAG, setOf(ContentTag(key, title, source)))
 	 * ```
 	 */
 	public data class Exclude<T : Any>(

@@ -5,12 +5,12 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.CloudFlareHelper
@@ -19,12 +19,12 @@ import org.skepsun.kototoro.parsers.util.*
 import java.net.URLEncoder
 import java.util.EnumSet
 
-@MangaSourceParser("SHENCOU", "神凑轻小说", "zh", type = ContentType.NOVEL)
-internal class Shencou(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.SHENCOU, pageSize = 30),
+@ContentSourceParser("SHENCOU", "神凑轻小说", "zh", type = ContentType.NOVEL)
+internal class Shencou(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.SHENCOU, pageSize = 30),
     Interceptor,
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider {
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("www.shencou.com")
     override val userAgentKey = ConfigKey.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0")
@@ -36,51 +36,51 @@ internal class Shencou(context: MangaLoaderContext) :
         SortOrder.NEWEST,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        val groups = mutableListOf<MangaTagGroup>()
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val groups = mutableListOf<ContentTagGroup>()
 
         // Categories (Class 1-12)
         val categoryTags = linkedSetOf(
-            MangaTag("全部", "class:0", source),
-            MangaTag("电击文库", "class:1", source),
-            MangaTag("富士见文库", "class:2", source),
-            MangaTag("角川文库", "class:3", source),
-            MangaTag("MFJ文库", "class:4", source),
-            MangaTag("Fami通文库", "class:5", source),
-            MangaTag("GA文库", "class:6", source),
-            MangaTag("HJ文库", "class:7", source),
-            MangaTag("一迅社", "class:8", source),
-            MangaTag("集英社", "class:9", source),
-            MangaTag("少女文库", "class:10", source),
-            MangaTag("SF文库", "class:11", source),
-            MangaTag("讲谈社", "class:12", source),
+            ContentTag("全部", "class:0", source),
+            ContentTag("电击文库", "class:1", source),
+            ContentTag("富士见文库", "class:2", source),
+            ContentTag("角川文库", "class:3", source),
+            ContentTag("MFJ文库", "class:4", source),
+            ContentTag("Fami通文库", "class:5", source),
+            ContentTag("GA文库", "class:6", source),
+            ContentTag("HJ文库", "class:7", source),
+            ContentTag("一迅社", "class:8", source),
+            ContentTag("集英社", "class:9", source),
+            ContentTag("少女文库", "class:10", source),
+            ContentTag("SF文库", "class:11", source),
+            ContentTag("讲谈社", "class:12", source),
         )
-        groups += MangaTagGroup("分类", categoryTags)
+        groups += ContentTagGroup("分类", categoryTags)
 
         // Rankings (Sort)
         val rankTags = linkedSetOf(
-            MangaTag("默认", "sort:default", source),
-            MangaTag("总排行榜", "sort:allvisit", source),
-            MangaTag("总推荐榜", "sort:allvote", source),
-            MangaTag("月排行榜", "sort:monthvisit", source),
-            MangaTag("月推荐榜", "sort:monthvote", source),
-            MangaTag("周排行榜", "sort:weekvisit", source),
-            MangaTag("周推荐榜", "sort:weekvote", source),
-            MangaTag("最新入库", "sort:postdate", source),
-            MangaTag("最近更新", "sort:lastupdate", source),
-            MangaTag("总收藏榜", "sort:goodnum", source),
-            MangaTag("字数排行", "sort:size", source),
+            ContentTag("默认", "sort:default", source),
+            ContentTag("总排行榜", "sort:allvisit", source),
+            ContentTag("总推荐榜", "sort:allvote", source),
+            ContentTag("月排行榜", "sort:monthvisit", source),
+            ContentTag("月推荐榜", "sort:monthvote", source),
+            ContentTag("周排行榜", "sort:weekvisit", source),
+            ContentTag("周推荐榜", "sort:weekvote", source),
+            ContentTag("最新入库", "sort:postdate", source),
+            ContentTag("最近更新", "sort:lastupdate", source),
+            ContentTag("总收藏榜", "sort:goodnum", source),
+            ContentTag("字数排行", "sort:size", source),
         )
-        groups += MangaTagGroup("榜单", rankTags)
+        groups += ContentTagGroup("榜单", rankTags)
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = (categoryTags + rankTags).toSet(),
             tagGroups = groups,
         )
@@ -105,7 +105,7 @@ internal class Shencou(context: MangaLoaderContext) :
         return chain.proceed(newRequest)
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val query = filter.query?.trim().orEmpty()
         if (query.isNotEmpty()) {
             val encodedQuery = try {
@@ -157,8 +157,8 @@ internal class Shencou(context: MangaLoaderContext) :
         return list
     }
 
-    private fun parseSearchList(doc: Document): List<Manga> {
-        val list = mutableListOf<Manga>()
+    private fun parseSearchList(doc: Document): List<Content> {
+        val list = mutableListOf<Content>()
         // Search table structure: table tr (skip header) or grid div
         val rows = doc.select("table.grid tr, table tr")
         rows.drop(1).forEach { tr -> // Skip header
@@ -171,7 +171,7 @@ internal class Shencou(context: MangaLoaderContext) :
             val title = aTitle.text().trim()
             val author = tds.getOrNull(2)?.text()?.trim()
             
-            list += Manga(
+            list += Content(
                 id = this@Shencou.generateUid(href),
                 title = title,
                 altTitles = emptySet(),
@@ -189,8 +189,8 @@ internal class Shencou(context: MangaLoaderContext) :
         return list
     }
 
-    private fun parseExploreList(doc: Document): List<Manga> {
-        val list = mutableListOf<Manga>()
+    private fun parseExploreList(doc: Document): List<Content> {
+        val list = mutableListOf<Content>()
         // Grid layout: div containing book info
         doc.select("div[style*=\"width:382px\"]").forEach { div ->
             val aTitle = div.selectFirst("b a") ?: div.selectFirst("a:has(img)") ?: return@forEach
@@ -201,7 +201,7 @@ internal class Shencou(context: MangaLoaderContext) :
             val infoText = div.text()
             val author = Regex("著作作者：([^·\\s]+)").find(infoText)?.groupValues?.get(1)
             
-            list += Manga(
+            list += Content(
                 id = this@Shencou.generateUid(href),
                 title = title,
                 altTitles = emptySet(),
@@ -228,7 +228,7 @@ internal class Shencou(context: MangaLoaderContext) :
                  
                 val aTitle = tds[0].selectFirst("a") ?: return@forEach
                 val href = aTitle.attrAsAbsoluteUrlOrNull("href")?.toRelativePath() ?: return@forEach
-                val listManga = Manga(
+                val listContent = Content(
                     id = this@Shencou.generateUid(href),
                     title = aTitle.text().trim(),
                     altTitles = emptySet(),
@@ -242,14 +242,14 @@ internal class Shencou(context: MangaLoaderContext) :
                     authors = setOfNotNull(tds.getOrNull(2)?.text()?.trim()),
                     source = this@Shencou.source,
                 )
-                list += listManga
+                list += listContent
              }
         }
         
         return list
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val url = "https://$domain${manga.url}"
         val response = webClient.httpGet(url, getRequestHeaders())
         if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
@@ -275,14 +275,14 @@ internal class Shencou(context: MangaLoaderContext) :
                    
         // Author: often in the text or specific cell
         // Tag extraction if possible:
-        val tags = linkedSetOf<MangaTag>()
+        val tags = linkedSetOf<ContentTag>()
         // Try parsing meta info text blocks
         val infoText = table?.text().orEmpty()
         val author = Regex("作者：(\\S+)").find(infoText)?.groupValues?.get(1) ?: manga.author
         
         val state = when {
-            infoText.contains("已完成") -> MangaState.FINISHED
-            infoText.contains("连载中") -> MangaState.ONGOING
+            infoText.contains("已完成") -> ContentState.FINISHED
+            infoText.contains("连载中") -> ContentState.ONGOING
             else -> null
         }
 
@@ -309,8 +309,8 @@ internal class Shencou(context: MangaLoaderContext) :
         )
     }
 
-    private fun fetchChapters(doc: Document, mangaUrl: String): List<MangaChapter> {
-        val chapters = mutableListOf<MangaChapter>()
+    private fun fetchChapters(doc: Document, mangaUrl: String): List<ContentChapter> {
+        val chapters = mutableListOf<ContentChapter>()
         var currentVolume = 0
         
         // Select all elements that might be volume headers or chapter links in order
@@ -329,7 +329,7 @@ internal class Shencou(context: MangaLoaderContext) :
                 val title = el.text().trim()
                 if (title.isEmpty()) return@forEach
                 
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = this@Shencou.generateUid(href),
                     title = title,
                     number = chapters.size + 1f,
@@ -345,7 +345,7 @@ internal class Shencou(context: MangaLoaderContext) :
         return chapters
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val url = "https://$domain${chapter.url}"
         val response = webClient.httpGet(url, getRequestHeaders())
         if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
@@ -383,7 +383,7 @@ internal class Shencou(context: MangaLoaderContext) :
         }
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = this@Shencou.generateUid(chapter.url),
                 url = html.toDataUrl(context),
                 preview = null,
@@ -428,7 +428,7 @@ internal class Shencou(context: MangaLoaderContext) :
         return isAuthorized()
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
     
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
@@ -449,7 +449,7 @@ internal class Shencou(context: MangaLoaderContext) :
             .let { if (it.startsWith("/")) it else "/$it" }
     }
     
-    private fun String.toDataUrl(context: MangaLoaderContext): String {
+    private fun String.toDataUrl(context: ContentLoaderContext): String {
         val encoded = context.encodeBase64(toByteArray(Charsets.UTF_8))
         return "data:text/html;charset=utf-8;base64,$encoded"
     }

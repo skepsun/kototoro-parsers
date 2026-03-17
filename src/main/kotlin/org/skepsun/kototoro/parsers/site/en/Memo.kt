@@ -2,10 +2,10 @@ package org.skepsun.kototoro.parsers.site.en
 
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.net.URLDecoder
@@ -42,9 +42,9 @@ import okhttp3.Headers
  * - 当前实现主要支持搜索和直接访问视频页面
  * - 列表浏览功能需要额外的API支持
  */
-@MangaSourceParser("MEMO", "MemoJAV", "en", type = ContentType.HENTAI_VIDEO)
-internal class Memo(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.MEMO, pageSize = 24) {
+@ContentSourceParser("MEMO", "MemoJAV", "en", type = ContentType.HENTAI_VIDEO)
+internal class Memo(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.MEMO, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("memojav.com")
 
@@ -52,20 +52,20 @@ internal class Memo(context: MangaLoaderContext) :
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
             availableTags = fetchCategories(),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val candidates = buildListUrls(page, filter)
         val headers = getRequestHeaders()
         val seen = LinkedHashSet<String>()
@@ -79,7 +79,7 @@ internal class Memo(context: MangaLoaderContext) :
         return emptyList()
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
         val doc = response.parseHtml()
 
@@ -95,10 +95,10 @@ internal class Memo(context: MangaLoaderContext) :
 
         val info = parseInfoBlocks(doc)
         val description = info["Content"] ?: info["Description"] ?: info["Synopsis"] ?: if (code.isNotEmpty()) "番號: $code" else null
-        val label = info["Label"]?.let { MangaTag(it, it, source) }
-        val series = info["Series"]?.let { MangaTag(it, it, source) }
-        val director = info["Director"]?.let { MangaTag(it, it, source) }
-        val studio = info["Studio"]?.let { MangaTag(it, it, source) }
+        val label = info["Label"]?.let { ContentTag(it, it, source) }
+        val series = info["Series"]?.let { ContentTag(it, it, source) }
+        val director = info["Director"]?.let { ContentTag(it, it, source) }
+        val studio = info["Studio"]?.let { ContentTag(it, it, source) }
 
         val categories = doc.select("a[href*=/categories/]").mapNotNull { toTag(it) }.toSet()
         val actresses = doc.select("a[href*=/actress/], a[href*=/actresses/]").mapNotNull { it.text().trim().takeIf(String::isNotEmpty) }.toSet()
@@ -111,7 +111,7 @@ internal class Memo(context: MangaLoaderContext) :
             studio?.let { add(it) }
         }
 
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -134,10 +134,10 @@ internal class Memo(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         if (chapter.url.contains(".m3u8")) {
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid(chapter.url),
                     url = chapter.url,
                     preview = null,
@@ -150,7 +150,7 @@ internal class Memo(context: MangaLoaderContext) :
         val videoUrl = extractVideoUrl(videoId) ?: return emptyList()
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = null,
@@ -159,7 +159,7 @@ internal class Memo(context: MangaLoaderContext) :
         )
     }
     
-    private fun buildListUrls(page: Int, filter: MangaListFilter): List<String> {
+    private fun buildListUrls(page: Int, filter: ContentListFilter): List<String> {
         if (!filter.query.isNullOrBlank()) {
             val q = filter.query.urlEncoded()
             val urls = mutableListOf("https://$domain/search?q=$q")
@@ -204,8 +204,8 @@ internal class Memo(context: MangaLoaderContext) :
         .add("Accept-Language", "en-US,en;q=0.9")
         .build()
 
-    private fun parseListFromDoc(doc: Document, seen: MutableSet<String>): List<Manga> {
-        val items = ArrayList<Manga>(pageSize)
+    private fun parseListFromDoc(doc: Document, seen: MutableSet<String>): List<Content> {
+        val items = ArrayList<Content>(pageSize)
         val videoItems = doc.select("div.video-item, div.item, article.video, div.card, div.module-card, .card-body, li.video")
 
         fun addItem(href: String, img: org.jsoup.nodes.Element?, titleCandidate: String?): Boolean {
@@ -220,7 +220,7 @@ internal class Memo(context: MangaLoaderContext) :
                 ?: img?.attrOrNull("alt")
                 ?: href.substringAfterLast("/").ifBlank { videoId.uppercase() }
             items.add(
-                Manga(
+                Content(
                     id = generateUid(videoId),
                     url = "/$videoId",
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -267,16 +267,16 @@ internal class Memo(context: MangaLoaderContext) :
         runCatching { println("[Memo] $msg") }
     }
 
-    private suspend fun fetchCategories(): Set<MangaTag> = runCatching {
+    private suspend fun fetchCategories(): Set<ContentTag> = runCatching {
         val doc = webClient.httpGet("https://$domain/categories/", getRequestHeaders()).parseHtml()
         doc.select("a[href*=/categories/]").mapNotNullToSet { toTag(it) }
     }.getOrDefault(emptySet())
 
-    private fun toTag(element: Element): MangaTag? {
+    private fun toTag(element: Element): ContentTag? {
         val key = element.attrOrNull("href")?.substringAfterLast("/")?.substringBefore("?")?.trim()
         val title = element.text().trim()
         if (key.isNullOrBlank() || title.isEmpty()) return null
-        return MangaTag(title = title, key = key, source = source)
+        return ContentTag(title = title, key = key, source = source)
     }
 
     private fun parseInfoBlocks(doc: Document): Map<String, String> {

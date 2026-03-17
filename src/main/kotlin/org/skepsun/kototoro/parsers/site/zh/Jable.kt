@@ -2,10 +2,10 @@ package org.skepsun.kototoro.parsers.site.en
 
 import okhttp3.Headers
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
@@ -39,9 +39,9 @@ import java.util.EnumSet
  * - ⚠️ 分类/女优/标签浏览（需要UI支持）
  */
 // @Broken("Requires manual Cloudflare Challenge completion on first access")
-@MangaSourceParser("JABLE", "Jable", "zh", type = ContentType.HENTAI_VIDEO)
-internal class Jable(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.JABLE, pageSize = 24) {
+@ContentSourceParser("JABLE", "Jable", "zh", type = ContentType.HENTAI_VIDEO)
+internal class Jable(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.JABLE, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("jable.tv")
 
@@ -72,23 +72,23 @@ internal class Jable(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, order, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
         val doc = response.parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
         
         // 选择器: div.video-item 或类似结构
@@ -116,7 +116,7 @@ internal class Jable(context: MangaLoaderContext) :
             val duration = item.selectFirst("span[class*=duration], div[class*=duration]")?.text()?.trim() ?: ""
             
             items.add(
-                Manga(
+                Content(
                     id = generateUid(videoId),
                     url = "/videos/$videoId/",
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -140,7 +140,7 @@ internal class Jable(context: MangaLoaderContext) :
         return items
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
         val doc = response.parseHtml()
         
@@ -161,7 +161,7 @@ internal class Jable(context: MangaLoaderContext) :
         val tags = doc.select("a[href*=/tags/], a[href*=/categories/]").mapNotNullToSet { elem ->
             val tagName = elem.text().trim()
             if (tagName.isNotEmpty()) {
-                MangaTag(
+                ContentTag(
                     key = elem.attr("href").substringAfterLast('/'),
                     title = tagName,
                     source = source,
@@ -173,7 +173,7 @@ internal class Jable(context: MangaLoaderContext) :
         val coverUrl = doc.selectFirst("meta[property=og:image]")?.attr("content") ?: manga.coverUrl
         
         // 创建单个章节
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -194,10 +194,10 @@ internal class Jable(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         if (chapter.url.contains(".m3u8")) {
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid(chapter.url),
                     url = chapter.url,
                     preview = null,
@@ -214,7 +214,7 @@ internal class Jable(context: MangaLoaderContext) :
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = poster,
@@ -223,7 +223,7 @@ internal class Jable(context: MangaLoaderContext) :
         )
     }
     
-    private fun buildListUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
         
         if (!filter.query.isNullOrBlank()) {

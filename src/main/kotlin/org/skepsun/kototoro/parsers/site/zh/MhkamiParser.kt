@@ -2,21 +2,21 @@ package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -29,12 +29,12 @@ import java.util.EnumSet
  * m.mhkami.com
  * 规则映射参考用户提供的 resolver（列表、搜索、详情、章节分页）
  */
-@MangaSourceParser(name = "MHKAMI", title = "漫神", locale = "zh", type = ContentType.HENTAI_MANGA)
+@ContentSourceParser(name = "MHKAMI", title = "漫神", locale = "zh", type = ContentType.HENTAI_MANGA)
 internal class MhkamiParser(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.MHKAMI,
+    source = ContentParserSource.MHKAMI,
     pageSize = 30,
 ) {
 
@@ -42,25 +42,25 @@ internal class MhkamiParser(
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.POPULARITY)
 
-    override val filterCapabilities: MangaListFilterCapabilities =
-        MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities =
+        ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        val plotTags = PLOT_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "tag:$value", source) }
-        val areaTags = AREA_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "area:$value", source) }
-        val fullTags = FULL_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "full:$value", source) }
-        val updateTags = UPDATE_TAGS.mapTo(linkedSetOf()) { (title, value) -> MangaTag(title, "update:$value", source) }
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val plotTags = PLOT_TAGS.mapTo(linkedSetOf()) { (title, value) -> ContentTag(title, "tag:$value", source) }
+        val areaTags = AREA_TAGS.mapTo(linkedSetOf()) { (title, value) -> ContentTag(title, "area:$value", source) }
+        val fullTags = FULL_TAGS.mapTo(linkedSetOf()) { (title, value) -> ContentTag(title, "full:$value", source) }
+        val updateTags = UPDATE_TAGS.mapTo(linkedSetOf()) { (title, value) -> ContentTag(title, "update:$value", source) }
+        return ContentListFilterOptions(
             availableTags = (plotTags + areaTags + fullTags + updateTags).toSet(),
             tagGroups = listOf(
-                MangaTagGroup("按剧情", plotTags, isExclusive = true),
-                MangaTagGroup("按地区", areaTags, isExclusive = true),
-                MangaTagGroup("按进度", fullTags, isExclusive = true),
-                MangaTagGroup("独立列表：按天更新", updateTags, isExclusive = true),
+                ContentTagGroup("按剧情", plotTags, isExclusive = true),
+                ContentTagGroup("按地区", areaTags, isExclusive = true),
+                ContentTagGroup("按进度", fullTags, isExclusive = true),
+                ContentTagGroup("独立列表：按天更新", updateTags, isExclusive = true),
             ),
             availableContentRating = EnumSet.of(ContentRating.ADULT),
         )
@@ -73,7 +73,7 @@ internal class MhkamiParser(
 
     private fun baseUrl(): String = "https://$domain"
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val query = filter.query?.trim()
         if (!query.isNullOrEmpty()) {
             if (page > 1) return emptyList()
@@ -98,7 +98,7 @@ internal class MhkamiParser(
         return parseList(doc, isSearch = false)
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
         val title = doc.selectFirst(".book-name .name, .acgn-container .content .title, .content .title")
             ?.ownText()
@@ -116,7 +116,7 @@ internal class MhkamiParser(
         val tags = doc.select(".comic-info-detail .types a.type, .types a.type, .acgn-container .content .tags a, .acgn-container .content .sort a")
             .mapNotNull { it.text().trim().ifEmpty { null } }
             .toSet()
-            .map { MangaTag(it, it, source) }
+            .map { ContentTag(it, it, source) }
             .toSet()
 
         val chapters = doc.select("#js_chapter_list li a, #js_chapters li a, #j_chapter_list li a, #J_chapter_list li a")
@@ -124,7 +124,7 @@ internal class MhkamiParser(
                 val href = a.attr("href").trim()
                 val chapterUrl = href.takeIf { it.isNotEmpty() }?.toAbsoluteUrl(domain) ?: return@mapIndexedNotNull null
                 val chapterTitle = a.attr("title").trim().ifEmpty { a.text().trim() }.ifEmpty { "第${index + 1}话" }
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("${manga.id}|$chapterUrl"),
                     url = chapterUrl,
                     title = chapterTitle,
@@ -147,7 +147,7 @@ internal class MhkamiParser(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val start = toChapterIndexUrl(chapter.url)
         val pageUrls = traverseChapterPages(start)
         if (pageUrls.isEmpty()) return emptyList()
@@ -162,7 +162,7 @@ internal class MhkamiParser(
             imageUrls.addAll(extractChapterImages(fallbackDoc))
         }
         return imageUrls.mapIndexed { index, full ->
-            MangaPage(
+            ContentPage(
                 id = generateUid("$full#$index"),
                 url = "$IMAGE_PROXY?url=${full.urlEncoded()}",
                 preview = full,
@@ -171,9 +171,9 @@ internal class MhkamiParser(
         }
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
-    private fun parseList(doc: Document, isSearch: Boolean): List<Manga> {
+    private fun parseList(doc: Document, isSearch: Boolean): List<Content> {
         val items = if (isSearch) {
             doc.select("#js_comicSortList li, #J_comicSortList li")
         } else {
@@ -188,7 +188,7 @@ internal class MhkamiParser(
             val cover = li.selectFirst("img")?.attr("src")?.trim()?.ifEmpty { null }
             if (href.isEmpty() || title.isEmpty()) return@mapNotNull null
             val publicUrl = href.toAbsoluteUrl(domain)
-            Manga(
+            Content(
                 id = generateUid(publicUrl),
                 url = publicUrl,
                 publicUrl = publicUrl,

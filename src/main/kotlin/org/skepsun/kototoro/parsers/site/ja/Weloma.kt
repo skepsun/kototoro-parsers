@@ -7,10 +7,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
@@ -18,9 +18,9 @@ import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.EnumSet
 
-@MangaSourceParser("WELOMA", "Weloma", "ja")
-internal class Weloma(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.WELOMA, pageSize = 40) {
+@ContentSourceParser("WELOMA", "Weloma", "ja")
+internal class Weloma(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.WELOMA, pageSize = 40) {
 
     override val configKeyDomain = ConfigKey.Domain("weloma.ru")
 
@@ -30,7 +30,7 @@ internal class Weloma(context: MangaLoaderContext) :
         SortOrder.POPULARITY_TODAY
     )
 
-    override val filterCapabilities get() = MangaListFilterCapabilities(
+    override val filterCapabilities get() = ContentListFilterCapabilities(
         isSearchSupported = true,
         isMultipleTagsSupported = false,
         isTagsExclusionSupported = false,
@@ -40,7 +40,7 @@ internal class Weloma(context: MangaLoaderContext) :
         setFirstPage(1)
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = when {
             filter.query != null -> {
                 "https://$domain/spa/search?query=${filter.query.urlEncoded()}&page=$page"
@@ -54,8 +54,8 @@ internal class Weloma(context: MangaLoaderContext) :
                     else -> ""
                 }
                 val status = when {
-                    filter.states.contains(MangaState.ONGOING) -> "ongoing"
-                    filter.states.contains(MangaState.FINISHED) -> "completed"
+                    filter.states.contains(ContentState.ONGOING) -> "ongoing"
+                    filter.states.contains(ContentState.FINISHED) -> "completed"
                     else -> ""
                 }
                 buildString {
@@ -81,10 +81,10 @@ internal class Weloma(context: MangaLoaderContext) :
             val json = JSONObject(response.parseRaw())
             val mangaArray = json.optJSONArray("manga_list") ?: JSONArray()
             
-            val mangaList = mutableListOf<Manga>()
+            val mangaList = mutableListOf<Content>()
             for (i in 0 until mangaArray.length()) {
                 val item = mangaArray.getJSONObject(i)
-                mangaList.add(parseMangaFromJson(item))
+                mangaList.add(parseContentFromJson(item))
             }
             mangaList
         } else {
@@ -103,7 +103,7 @@ internal class Weloma(context: MangaLoaderContext) :
                     img.attr("data-src").ifEmpty { img.attr("src") }
                 }
                 
-                Manga(
+                Content(
                     id = id,
                     title = title,
                     altTitles = emptySet(),
@@ -121,13 +121,13 @@ internal class Weloma(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseMangaFromJson(json: JSONObject): Manga {
+    private fun parseContentFromJson(json: JSONObject): Content {
         val id = json.getLong("manga_id")
         val title = json.getString("manga_name")
         val altTitles = setOfNotNull(json.optString("manga_others_name").ifEmpty { null })
         val cover = json.getString("manga_cover_img")
         
-        return Manga(
+        return Content(
             id = id,
             title = title,
             altTitles = altTitles,
@@ -143,7 +143,7 @@ internal class Weloma(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val url = "https://$domain/spa/manga/${manga.id}"
         val response = webClient.httpGet(url.toHttpUrl())
         val json = JSONObject(response.parseRaw())
@@ -152,14 +152,14 @@ internal class Weloma(context: MangaLoaderContext) :
         val title = detail.getString("manga_name")
         val description = detail.optString("manga_description").ifEmpty { null }
         val cover = detail.getString("manga_cover_img")
-        val state = if (detail.optInt("manga_status") == 0) MangaState.ONGOING else MangaState.FINISHED
+        val state = if (detail.optInt("manga_status") == 0) ContentState.ONGOING else ContentState.FINISHED
         
         val tagsArray = json.optJSONArray("tags") ?: JSONArray()
-        val tags = mutableSetOf<MangaTag>()
+        val tags = mutableSetOf<ContentTag>()
         for (i in 0 until tagsArray.length()) {
             val tagItem = tagsArray.getJSONObject(i)
             val tagName = tagItem.getString("tag_name")
-            tags.add(MangaTag(translateTag(tagName), tagItem.opt("tag_id").toString(), source))
+            tags.add(ContentTag(translateTag(tagName), tagItem.opt("tag_id").toString(), source))
         }
 
         val authorsArray = json.optJSONArray("authors") ?: JSONArray()
@@ -169,13 +169,13 @@ internal class Weloma(context: MangaLoaderContext) :
         }
 
         val chaptersArray = json.optJSONArray("chapters") ?: JSONArray()
-        val chaptersList = mutableListOf<MangaChapter>()
+        val chaptersList = mutableListOf<ContentChapter>()
         for (i in 0 until chaptersArray.length()) {
             val chapterItem = chaptersArray.getJSONObject(i)
             val number = chapterItem.optDouble("chapter_number", 0.0).toFloat()
             val chapterId = chapterItem.optLong("chapter_id", 0L)
             chaptersList.add(
-                MangaChapter(
+                ContentChapter(
                     id = chapterId,
                     title = null, // Strip .0 by letting the app format it
                     number = number,
@@ -200,7 +200,7 @@ internal class Weloma(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val match = Regex("/reader/ru(\\d+)/chapter-([\\d.]+)").find(chapter.url) ?: return emptyList()
         val mangaId = match.groupValues[1]
         val chapterNum = match.groupValues[2]
@@ -218,7 +218,7 @@ internal class Weloma(context: MangaLoaderContext) :
         
         return canvases.mapIndexed { index, canvas ->
             val dataSrcset = canvas.attr("data-srcset")
-            MangaPage(
+            ContentPage(
                 id = generateUid("$mangaId-$chapterNum-$index"),
                 url = server + dataSrcset,
                 preview = null,
@@ -227,10 +227,10 @@ internal class Weloma(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             tagGroups = listOf(
-                MangaTagGroup(
+                ContentTagGroup(
                     title = translateText("ジャンル", "标签"),
                     tags = setOf(
                         // English tags
@@ -297,12 +297,12 @@ internal class Weloma(context: MangaLoaderContext) :
                     )
                 )
             ),
-            availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED)
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED)
         )
     }
 
-    private fun createTag(name: String, key: String): MangaTag {
-        return MangaTag(translateTag(name), key, source)
+    private fun createTag(name: String, key: String): ContentTag {
+        return ContentTag(translateTag(name), key, source)
     }
 
     private fun translateTag(name: String): String {

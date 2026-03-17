@@ -4,11 +4,11 @@ import androidx.collection.ArraySet
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
@@ -19,13 +19,13 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-@MangaSourceParser("BATOTO", "Bato.To")
-internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
+@ContentSourceParser("BATOTO", "Bato.To")
+internal class BatoToParser(context: ContentLoaderContext) : PagedContentParser(
 	context = context,
-	source = MangaParserSource.BATOTO,
+	source = ContentParserSource.BATOTO,
 	pageSize = 60,
 	searchPageSize = 20,
-), MangaParserAuthProvider {
+), ContentParserAuthProvider {
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
@@ -59,22 +59,22 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		SortOrder.POPULARITY_HOUR,
 	)
 
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
+	override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities(
 			isMultipleTagsSupported = true,
 			isTagsExclusionSupported = true,
 			isSearchSupported = true,
 			isOriginalLocaleSupported = true,
 		)
 
-	override suspend fun getFilterOptions() = MangaListFilterOptions(
+	override suspend fun getFilterOptions() = ContentListFilterOptions(
 		availableTags = fetchAvailableTags(),
 		availableStates = EnumSet.of(
-			MangaState.ONGOING,
-			MangaState.FINISHED,
-			MangaState.ABANDONED,
-			MangaState.PAUSED,
-			MangaState.UPCOMING,
+			ContentState.ONGOING,
+			ContentState.FINISHED,
+			ContentState.ABANDONED,
+			ContentState.PAUSED,
+			ContentState.UPCOMING,
 		),
 		availableContentRating = EnumSet.of(ContentRating.SAFE),
 		availableLocales = setOf(
@@ -124,7 +124,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		"jto.to",
 	)
 
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
 		when {
 			!filter.query.isNullOrEmpty() -> {
 				return search(page, filter.query)
@@ -154,11 +154,11 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 						append("&release=")
 						append(
 							when (it) {
-								MangaState.ONGOING -> "ongoing"
-								MangaState.FINISHED -> "completed"
-								MangaState.ABANDONED -> "cancelled"
-								MangaState.PAUSED -> "hiatus"
-								MangaState.UPCOMING -> "pending"
+								ContentState.ONGOING -> "ongoing"
+								ContentState.FINISHED -> "completed"
+								ContentState.ABANDONED -> "cancelled"
+								ContentState.PAUSED -> "hiatus"
+								ContentState.UPCOMING -> "pending"
 								else -> throw IllegalArgumentException("$it not supported")
 							},
 						)
@@ -213,7 +213,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		}
 	}
 
-	override suspend fun getDetails(manga: Manga): Manga {
+	override suspend fun getDetails(manga: Content): Content {
 		val root = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
 			.requireElementById("mainer")
 		val details = root.selectFirstOrThrow(".detail-set")
@@ -234,10 +234,10 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 				?.html(),
 			tags = manga.tags + attrs["Genres:"]?.parseTags().orEmpty(),
 			state = when (attrs["Original work:"]?.text()) {
-				"Ongoing" -> MangaState.ONGOING
-				"Completed" -> MangaState.FINISHED
-				"Cancelled" -> MangaState.ABANDONED
-				"Hiatus" -> MangaState.PAUSED
+				"Ongoing" -> ContentState.ONGOING
+				"Completed" -> ContentState.FINISHED
+				"Cancelled" -> ContentState.ABANDONED
+				"Hiatus" -> ContentState.PAUSED
 				else -> manga.state
 			},
 			authors = author?.let { setOf(it) } ?: manga.authors,
@@ -250,7 +250,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		)
 	}
 
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val fullUrl = chapter.url.toAbsoluteUrl(domain)
 		val scripts = webClient.httpGet(fullUrl).parseHtml().select("script")
 		for (script in scripts) {
@@ -270,10 +270,10 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 			val password = context.evaluateJs(batoPass)?.removeSurrounding('"')
 				?: script.parseFailed("Cannot evaluate batoPass")
 			val args = JSONArray(decryptAES(batoWord, password))
-			val result = ArrayList<MangaPage>(images.length())
+			val result = ArrayList<ContentPage>(images.length())
 			repeat(images.length()) { i ->
 				val url = images.getString(i)
-				result += MangaPage(
+				result += ContentPage(
 					id = generateUid(url),
 					url = if (args.length() == 0) url else url + "?" + args.getString(i),
 					preview = null,
@@ -285,17 +285,17 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		throw ParseException("Cannot find images list", fullUrl)
 	}
 
-	private suspend fun fetchAvailableTags(): Set<MangaTag> {
+	private suspend fun fetchAvailableTags(): Set<ContentTag> {
 		val scripts = webClient.httpGet(
 			"https://${domain}/browse",
 		).parseHtml().selectOrThrow("script")
 		for (script in scripts) {
 			val genres = script.html().substringBetweenFirst("const _genres =", ";") ?: continue
 			val jo = JSONObject(genres)
-			val result = ArraySet<MangaTag>(jo.length())
+			val result = ArraySet<ContentTag>(jo.length())
 			jo.keys().forEach { key ->
 				val item = jo.getJSONObject(key)
-				result += MangaTag(
+				result += ContentTag(
 					title = item.getString("text").toTitleCase(Locale.ENGLISH),
 					key = item.getString("file"),
 					source = source,
@@ -306,7 +306,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		throw ParseException("Cannot find gernes list", scripts[0].baseUri())
 	}
 
-	private suspend fun search(page: Int, query: String): List<Manga> {
+	private suspend fun search(page: Int, query: String): List<Content> {
 		val url = buildString {
 			append("https://")
 			append(domain)
@@ -323,7 +323,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		?.text()
 		?.toIntOrNull() ?: body.parseFailed("Cannot determine current page")
 
-	private suspend fun parseList(url: String, page: Int): List<Manga> {
+	private suspend fun parseList(url: String, page: Int): List<Content> {
 		val body = webClient.httpGet(url).parseHtml().body()
 		if (body.selectFirst(".browse-no-matches") != null) {
 			return emptyList()
@@ -337,7 +337,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 			val a = div.selectFirstOrThrow("a")
 			val href = a.attrAsRelativeUrl("href")
 			val title = div.selectFirstOrThrow(".item-title").text()
-			Manga(
+			Content(
 				id = generateUid(href),
 				title = title,
 				altTitles = setOfNotNull(div.selectFirst(".item-alias")?.textOrNull()?.takeUnless { it == title }),
@@ -358,18 +358,18 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 
 	private fun Element.parseTags() = children().mapToSet { span ->
 		val text = span.ownText()
-		MangaTag(
+		ContentTag(
 			title = text.toTitleCase(),
 			key = text.lowercase(Locale.ENGLISH).replace(' ', '_'),
 			source = source,
 		)
 	}
 
-	private fun Element.parseChapter(index: Int): MangaChapter? {
+	private fun Element.parseChapter(index: Int): ContentChapter? {
 		val a = selectFirst("a.chapt") ?: return null
 		val extra = selectFirst(".extra")
 		val href = a.attrAsRelativeUrl("href")
-		return MangaChapter(
+		return ContentChapter(
 			id = generateUid(href),
 			title = a.textOrNull(),
 			number = index + 1f,

@@ -1,20 +1,20 @@
 package org.skepsun.kototoro.parsers.site.zh
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.attrAsAbsoluteUrlOrNull
@@ -25,12 +25,12 @@ import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import java.util.EnumSet
 
-@MangaSourceParser(name = "PO85", title = "85PO", locale = "zh", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser(name = "PO85", title = "85PO", locale = "zh", type = ContentType.HENTAI_VIDEO)
 internal class Po85(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.PO85,
+    source = ContentParserSource.PO85,
     pageSize = 30,
 ) {
 
@@ -47,51 +47,51 @@ internal class Po85(
         SortOrder.RATING,      // 最赞影片
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        val tags = LinkedHashSet<MangaTag>()
-        val tagGroups = ArrayList<MangaTagGroup>()
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val tags = LinkedHashSet<ContentTag>()
+        val tagGroups = ArrayList<ContentTagGroup>()
 
-        val listTags = LinkedHashSet<MangaTag>().apply {
-            add(MangaTag("最新影片", "path:/latest-updates/", source))
-            add(MangaTag("最赞", "path:/top-rated/", source))
-            add(MangaTag("热门", "path:/most-popular/", source))
-            add(MangaTag("4K影片", "path:/4k/", source))
+        val listTags = LinkedHashSet<ContentTag>().apply {
+            add(ContentTag("最新影片", "path:/latest-updates/", source))
+            add(ContentTag("最赞", "path:/top-rated/", source))
+            add(ContentTag("热门", "path:/most-popular/", source))
+            add(ContentTag("4K影片", "path:/4k/", source))
         }
         tags.addAll(listTags)
-        tagGroups.add(MangaTagGroup("榜单/频道", listTags))
+        tagGroups.add(ContentTagGroup("榜单/频道", listTags))
 
         // Attempt to fetch tags from /tags/ page
         runCatching {
             val doc = webClient.httpGet("https://$domain/tags/", getRequestHeaders()).parseHtml()
-            val categoryTags = LinkedHashSet<MangaTag>()
+            val categoryTags = LinkedHashSet<ContentTag>()
             doc.select("a[href*='/tags/']").forEach { 
                 val text = it.text().trim().replace(Regex("""\s+\d+$"""), "") // Remove count
                 val href = it.attrAsRelativeUrl("href")
                 if (text.length > 1 && !href.endsWith("/tags/")) {
-                    categoryTags.add(MangaTag(text, "path:$href", source))
+                    categoryTags.add(ContentTag(text, "path:$href", source))
                 }
             }
             if (categoryTags.isNotEmpty()) {
                 tags.addAll(categoryTags)
-                tagGroups.add(MangaTagGroup("所有标签", categoryTags))
+                tagGroups.add(ContentTagGroup("所有标签", categoryTags))
             }
         }.onFailure {
              // Fallback if tag page fails
-             val fallback = LinkedHashSet<MangaTag>().apply {
-                 add(MangaTag("真实偷拍", "path:/tags/zhen-shi-tou-pai/", source))
+             val fallback = LinkedHashSet<ContentTag>().apply {
+                 add(ContentTag("真实偷拍", "path:/tags/zhen-shi-tou-pai/", source))
              }
              tags.addAll(fallback)
-             tagGroups.add(MangaTagGroup("热门标签", fallback))
+             tagGroups.add(ContentTagGroup("热门标签", fallback))
         }
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = tagGroups,
         )
@@ -100,11 +100,11 @@ internal class Po85(
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         val url = buildUrl(page, order, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-        val items = ArrayList<Manga>()
+        val items = ArrayList<Content>()
 
         // Specific selector for 85PO grid items
         val videoElements = doc.select(".video-item, .thumb-block, .card, a[href*='/v/']")
@@ -133,7 +133,7 @@ internal class Po85(
                 ?: img?.attrAsAbsoluteUrlOrNull("data-original")
 
             items.add(
-                Manga(
+                Content(
                     id = generateUid(href),
                     url = href,
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -155,7 +155,7 @@ internal class Po85(
         return items
     }
 
-    private fun buildUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         if (!filter.query.isNullOrBlank()) {
             val encodedQuery = java.net.URLEncoder.encode(filter.query!!, "UTF-8")
             // Search pagination: /search/query/page/
@@ -191,22 +191,22 @@ internal class Po85(
         return result
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
 
         val title = doc.selectFirst("h1")?.text() ?: manga.title
         val desc = doc.selectFirst("meta[name=description]")?.attr("content")
             ?: doc.selectFirst("meta[property=og:description]")?.attr("content")
         
-        val tags = LinkedHashSet<MangaTag>()
+        val tags = LinkedHashSet<ContentTag>()
         doc.select(".video-tags a, .tags a, a[href*='/tags/']").forEach { 
             val tagText = it.text().trim()
             if (tagText.isNotBlank() && tagText != title && tagText.length < 20 && !tagText.contains("85PO")) {
-                tags.add(MangaTag(title = tagText, key = tagText, source = source))
+                tags.add(ContentTag(title = tagText, key = tagText, source = source))
             }
         }
 
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}_video"),
             url = manga.url,
             title = "Video",
@@ -226,7 +226,7 @@ internal class Po85(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val baseUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(baseUrl, getRequestHeaders()).parseHtml()
         
@@ -263,7 +263,7 @@ internal class Po85(
             headersMap["Referer"] = baseUrl
             headersMap["User-Agent"] = getRequestHeaders()["User-Agent"] ?: ""
             
-            MangaPage(
+            ContentPage(
                 id = generateUid(url),
                 url = url,
                 preview = null,

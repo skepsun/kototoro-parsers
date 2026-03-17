@@ -5,12 +5,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -38,11 +38,11 @@ import org.skepsun.kototoro.parsers.util.json.mapJSONNotNullToSet
 import org.skepsun.kototoro.parsers.util.mapToSet
 import org.skepsun.kototoro.parsers.util.runCatchingCancellable
 
-@MangaSourceParser("KOMIIC", "Komiic", "zh")
-internal class KomiicParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.KOMIIC, pageSize = 20),
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider,
+@ContentSourceParser("KOMIIC", "Komiic", "zh")
+internal class KomiicParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.KOMIIC, pageSize = 20),
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider,
     FavoritesProvider,
     FavoritesSyncProvider {
 
@@ -62,8 +62,8 @@ internal class KomiicParser(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
@@ -71,7 +71,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
 
     // 简单的第一页列表缓存，返回上次已加载的数据以避免返回时闪烁刷新
     @Volatile
-    private var recentFirstPageCache: List<Manga>? = null
+    private var recentFirstPageCache: List<Content>? = null
 
     @Volatile
     private var recentFirstPageCacheLevel: Int? = null
@@ -80,7 +80,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
     private var searchFirstPageCacheQuery: String? = null
 
     @Volatile
-    private var searchFirstPageCache: List<Manga>? = null
+    private var searchFirstPageCache: List<Content>? = null
 
     // 为图片请求补充必要的头（主要是 Referer），避免部分服务端拒绝
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -116,18 +116,18 @@ internal class KomiicParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 分类只保留站点的固定分类，不混入色气程度标签
         val tags = fetchAvailableTags()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = listOf(
-                MangaTagGroup(
+                ContentTagGroup(
                     title = "主题",
                     tags = tags,
                 ),
             ),
-            availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
         )
     }
@@ -158,14 +158,14 @@ internal class KomiicParser(context: MangaLoaderContext) :
         }
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val offset = (page - paginator.firstPage) * pageSize
         val sexyLevel = parseSexyLevel(filter)
         // 严格使用原始查询：始终将 sexyLevel 传递给远端（若未选择则为 null）
         val remoteSexyLevel: Int? = sexyLevel
         val statusParam = when {
-            filter.states.contains(MangaState.ONGOING) && !filter.states.contains(MangaState.FINISHED) -> "ONGOING"
-            filter.states.contains(MangaState.FINISHED) && !filter.states.contains(MangaState.ONGOING) -> "END"
+            filter.states.contains(ContentState.ONGOING) && !filter.states.contains(ContentState.FINISHED) -> "ONGOING"
+            filter.states.contains(ContentState.FINISHED) && !filter.states.contains(ContentState.ONGOING) -> "END"
             else -> ""
         }
         val orderByParam = when (order) {
@@ -245,7 +245,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         return applyLocalFilters(base, filter)
     }
 
-    private suspend fun recentUpdate(offset: Int, status: String = "", sexyLevel: Int? = null): List<Manga> {
+    private suspend fun recentUpdate(offset: Int, status: String = "", sexyLevel: Int? = null): List<Content> {
         val query = """
 	query recentUpdate(${'$'}pagination: Pagination!) {
 		recentUpdate(pagination: ${'$'}pagination) {
@@ -281,10 +281,10 @@ internal class KomiicParser(context: MangaLoaderContext) :
         }
         val data = apiCall(query, "recentUpdate", variables)
         val arr: JSONArray = data.optJSONArray("recentUpdate") ?: JSONArray()
-        return arr.toMangaList()
+        return arr.toContentList()
     }
 
-    private suspend fun hotComics(offset: Int, orderBy: String, status: String, sexyLevel: Int? = null): List<Manga> {
+    private suspend fun hotComics(offset: Int, orderBy: String, status: String, sexyLevel: Int? = null): List<Content> {
         val query = """
 	query hotComics(${'$'}pagination: Pagination!) {
 		hotComics(pagination: ${'$'}pagination) {
@@ -320,7 +320,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         }
         val data = apiCall(query, "hotComics", variables)
         val arr: JSONArray = data.optJSONArray("hotComics") ?: JSONArray()
-        return arr.toMangaList()
+        return arr.toContentList()
     }
 
     private suspend fun listByCategories(
@@ -330,7 +330,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         status: String,
         asc: Boolean,
         sexyLevel: Int? = null,
-    ): List<Manga> {
+    ): List<Content> {
         val query = """
 	query comicByCategories(${'$'}categoryId: [ID!]!, ${'$'}pagination: Pagination!) {
 		comicByCategories(categoryId: ${'$'}categoryId, pagination: ${'$'}pagination) {
@@ -372,10 +372,10 @@ internal class KomiicParser(context: MangaLoaderContext) :
         }
         val data = apiCall(query, "comicByCategories", variables)
         val arr: JSONArray = data.optJSONArray("comicByCategories") ?: JSONArray()
-        return arr.toMangaList()
+        return arr.toContentList()
     }
 
-    private suspend fun search(query: String): List<Manga> {
+    private suspend fun search(query: String): List<Content> {
         val request = """
 	query searchComicAndAuthorQuery(${'$'}keyword: String!) {
 		searchComicsAndAuthors(keyword: ${'$'}keyword) {
@@ -404,17 +404,17 @@ internal class KomiicParser(context: MangaLoaderContext) :
         val data = apiCall(request, "searchComicAndAuthorQuery", variables)
         val parent = data.optJSONObject("searchComicsAndAuthors")
         val arr = parent?.optJSONArray("comics") ?: JSONArray()
-        return arr.toMangaList()
+        return arr.toContentList()
     }
 
-    private fun JSONArray.toMangaList(): List<Manga> = mapJSON { jo ->
+    private fun JSONArray.toContentList(): List<Content> = mapJSON { jo ->
         val id = jo.optString("id")
         val title = jo.optString("title")
         val cover = jo.optString("imageUrl", null)
         val status = jo.optString("status", null)
         val state = when (status) {
-            "END", "FINISHED", "finished" -> MangaState.FINISHED
-            "ONGOING", "ongoing" -> MangaState.ONGOING
+            "END", "FINISHED", "finished" -> ContentState.FINISHED
+            "ONGOING", "ongoing" -> ContentState.ONGOING
             else -> null
         }
         val authors = jo.optJSONArray("authors")?.mapJSONNotNullToSet { a ->
@@ -427,10 +427,10 @@ internal class KomiicParser(context: MangaLoaderContext) :
             c.optString("id").takeIf { it.isNotEmpty() }
         }.orEmpty()
         val tags = catNames.zip(catIds.ifEmpty { catNames }).mapToSet { (n, k) ->
-            MangaTag(title = n, key = k, source = source)
+            ContentTag(title = n, key = k, source = source)
         }
         val rating = guessContentRating(catNames)
-        Manga(
+        Content(
             id = generateUid(id.ifEmpty { title }),
             title = title,
             altTitles = emptySet(),
@@ -447,7 +447,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun applyLocalFilters(list: List<Manga>, filter: MangaListFilter): List<Manga> {
+    private suspend fun applyLocalFilters(list: List<Content>, filter: ContentListFilter): List<Content> {
         var result = list
         // 仅保留状态与排除标签的本地过滤；色气程度严格依赖远端 sexyLevel
         if (filter.states.isNotEmpty()) {
@@ -460,7 +460,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         return result
     }
 
-    private fun parseSexyLevel(filter: MangaListFilter): Int? {
+    private fun parseSexyLevel(filter: ContentListFilter): Int? {
         // 将“内容分级”映射到色气程度阈值：SAFE -> 0, SUGGESTIVE -> 1, ADULT -> 4
         var max: Int? = null
         if (filter.contentRating.isNotEmpty()) {
@@ -488,9 +488,9 @@ internal class KomiicParser(context: MangaLoaderContext) :
     }
 
     @Volatile
-    private var cachedTags: Set<MangaTag>? = null
+    private var cachedTags: Set<ContentTag>? = null
 
-    private fun fetchAvailableTags(): Set<MangaTag> {
+    private fun fetchAvailableTags(): Set<ContentTag> {
         val cached = cachedTags
         if (cached != null) return cached
         // 以站点固定分类为基准（来源于官方前端配置），避免采样不全
@@ -574,7 +574,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
             "40",
             "42",
         )
-        val set = names.zip(ids).mapToSet { (n, k) -> MangaTag(title = n, key = k, source = source) }
+        val set = names.zip(ids).mapToSet { (n, k) -> ContentTag(title = n, key = k, source = source) }
         cachedTags = set
         return set
     }
@@ -643,7 +643,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         return level
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val request = """
         query comicById(${'$'}id: ID!) {
             comicById(comicId: ${'$'}id) {
@@ -662,8 +662,8 @@ internal class KomiicParser(context: MangaLoaderContext) :
         val cover = obj.optString("imageUrl", manga.coverUrl)
         val status = obj.optString("status", null)
         val state = when (status) {
-            "END", "FINISHED", "finished" -> MangaState.FINISHED
-            "ONGOING", "ongoing" -> MangaState.ONGOING
+            "END", "FINISHED", "finished" -> ContentState.FINISHED
+            "ONGOING", "ongoing" -> ContentState.ONGOING
             else -> manga.state
         }
 
@@ -693,7 +693,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
                     timeZone = java.util.TimeZone.getTimeZone("UTC")
                 }.parse(dateStr)?.time ?: 0L
             }.getOrDefault(0L) else 0L
-            MangaChapter(
+            ContentChapter(
                 id = generateUid(chId),
                 title = "第${serialStr}话",
                 number = number,
@@ -716,7 +716,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val chapterId = chapter.url.substringAfterLast('/')
         val comicId = chapter.branch
         // 预热图片页面，促使站点生成必要状态/缓存，减少首次为空
@@ -754,7 +754,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
             }
         }
 
-        val pages = ArrayList<MangaPage>(imagesArray.length())
+        val pages = ArrayList<ContentPage>(imagesArray.length())
         for (i in 0 until imagesArray.length()) {
             val jo = imagesArray.optJSONObject(i) ?: continue
             val kid = jo.optString("kid", null)
@@ -762,7 +762,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
             if (img.isNullOrEmpty()) continue
             val fragment = if (!comicId.isNullOrEmpty()) "comic=$comicId&ep=$chapterId" else null
             val finalUrl = if (fragment != null) "$img#$fragment" else img
-            pages += MangaPage(
+            pages += ContentPage(
                 id = generateUid("${chapter.url}/$i"),
                 url = finalUrl,
                 preview = null,
@@ -908,7 +908,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         return false
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         if (!isAuthorized()) throw AuthRequiredException(source)
         // 1) 获取收藏夹列表
         val folderQuery = """
@@ -967,7 +967,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         if (allIds.isEmpty()) return emptyList()
 
         // 3) 按批查询漫画详情
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         val idsList = allIds.toList()
         val chunkSize = 30
         val site = domain
@@ -1000,10 +1000,10 @@ internal class KomiicParser(context: MangaLoaderContext) :
                     a.optString("name").takeIf { it.isNotEmpty() }
                 }.toSet()
                 val tags = (c.optJSONArray("categories") ?: JSONArray()).mapJSONNotNull { t ->
-                    t.optString("name").takeIf { it.isNotEmpty() }?.let { MangaTag(it, it, source) }
+                    t.optString("name").takeIf { it.isNotEmpty() }?.let { ContentTag(it, it, source) }
                 }.toSet()
                 result.add(
-                    Manga(
+                    Content(
                         id = generateUid(cid),
                         url = cid,
                         publicUrl = "https://$site/comic/$cid",
@@ -1051,7 +1051,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         return data.optJSONObject("createFolder")?.optString("id").orEmpty()
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val folderId = ensureDefaultFolderId()
         if (folderId.isEmpty()) return false
@@ -1069,7 +1069,7 @@ internal class KomiicParser(context: MangaLoaderContext) :
         return ok
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val q = """
             mutation removeComicToFolder(${'$'}comicId: ID!, ${'$'}folderId: ID!) {

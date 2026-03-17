@@ -4,12 +4,12 @@ import okhttp3.Cookie
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
@@ -36,11 +36,11 @@ import java.util.EnumSet
  * - 支持中日对照和纯中文两种模式
  * - 默认使用Sakura翻译
  */
-@MangaSourceParser("NOVELIA_WENKU", "轻小说机翻(文库)", "zh", type = ContentType.HENTAI_NOVEL)
-internal class NoveliaWenku(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.NOVELIA_WENKU, pageSize = 24), 
-    MangaParserAuthProvider, 
-    MangaParserCredentialsAuthProvider {
+@ContentSourceParser("NOVELIA_WENKU", "轻小说机翻(文库)", "zh", type = ContentType.HENTAI_NOVEL)
+internal class NoveliaWenku(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.NOVELIA_WENKU, pageSize = 24), 
+    ContentParserAuthProvider, 
+    ContentParserCredentialsAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("n.novelia.cc")
     
@@ -214,30 +214,30 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableTags = buildFilterTags(),
         )
     }
 
-    private fun buildFilterTags(): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun buildFilterTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         
         // 等级过滤
-        tags += MangaTag("等级: 全部小说", "level:0", source)
-        tags += MangaTag("等级: 轻小说", "level:1", source)
-        tags += MangaTag("等级: 轻文学", "level:2", source)
-        tags += MangaTag("等级: 文学", "level:3", source)
-        tags += MangaTag("等级: 非小说", "level:4", source)
-        tags += MangaTag("等级: R18男性向", "level:5", source)
-        tags += MangaTag("等级: R18女性向", "level:6", source)
+        tags += ContentTag("等级: 全部小说", "level:0", source)
+        tags += ContentTag("等级: 轻小说", "level:1", source)
+        tags += ContentTag("等级: 轻文学", "level:2", source)
+        tags += ContentTag("等级: 文学", "level:3", source)
+        tags += ContentTag("等级: 非小说", "level:4", source)
+        tags += ContentTag("等级: R18男性向", "level:5", source)
+        tags += ContentTag("等级: R18女性向", "level:6", source)
         
         return tags
     }
@@ -248,7 +248,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
      * 
      * 注意：需要登录认证，R18内容（level=4,5）需要额外的授权头
      */
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val apiPage = page - 1  // API使用0-based页码
         
         // 解析等级过滤
@@ -275,8 +275,8 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
     /**
      * 解析小说列表
      */
-    private fun parseNovelList(json: JSONObject): List<Manga> {
-        val result = ArrayList<Manga>()
+    private fun parseNovelList(json: JSONObject): List<Content> {
+        val result = ArrayList<Content>()
         val items = json.optJSONArray("items") ?: return result
         
         for (i in 0 until items.length()) {
@@ -290,7 +290,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
             
             val cover = item.optString("cover", "")
             
-            result += Manga(
+            result += Content(
                 id = generateUid("/wenku/$id"),
                 url = "/wenku/$id",
                 publicUrl = "https://$domain/wenku/$id",
@@ -315,7 +315,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
      * 获取小说详情
      * API: GET /api/wenku/{id}
      */
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val novelId = manga.url.substringAfterLast("/")
         val apiUrl = "https://$domain/api/wenku/$novelId"
         
@@ -332,7 +332,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
     /**
      * 解析小说详情
      */
-    private fun parseNovelDetail(manga: Manga, json: JSONObject, novelId: String): Manga {
+    private fun parseNovelDetail(manga: Content, json: JSONObject, novelId: String): Content {
         val title = json.optString("titleZh", json.optString("title", manga.title))
         val cover = json.optString("cover", "")
         
@@ -358,7 +358,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         val tags = if (keywordsArray != null) {
             (0 until keywordsArray.length()).mapNotNull { 
                 val keyword = keywordsArray.optString(it)
-                if (keyword.isNotEmpty()) MangaTag(keyword, keyword, source) else null
+                if (keyword.isNotEmpty()) ContentTag(keyword, keyword, source) else null
             }.toSet()
         } else {
             emptySet()
@@ -366,7 +366,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         
         // 生成章节列表
         // 注意：文库小说的"章节"实际上是EPUB卷
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         
         // novelId从参数传入，确保不为空
         
@@ -383,7 +383,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
                 // 调试日志
                 println("NoveliaWenku: Building chapter URL (ZH) - novelId=$novelId, volumeId=$volumeId")
                 
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = generateUid("/wenku/$novelId/${volumeId.urlEncoded()}/zh"),
                     title = "$volumeId [EPUB]",  // 简化标题，不显示"(中文)"
                     number = (i + 1).toFloat(),
@@ -429,7 +429,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
                 // 调试日志
                 println("NoveliaWenku: Building chapter URL - novelId=$novelId, volumeId=$volumeId")
                 
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = generateUid("/wenku/$novelId/${volumeId.urlEncoded()}"),
                     title = chapterTitle,
                     number = (i + 1).toFloat(),
@@ -483,7 +483,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
      * 
      * 注意：需要登录认证才能下载
      */
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val parts = chapter.url.split("/").filter { it.isNotEmpty() }
         
         println("========================================")
@@ -538,7 +538,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         
         // 返回EPUB标记页面（用于下载）
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = epubUrl,
                 preview = "EPUB",
@@ -551,7 +551,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
      * 检查章节是否可以在线阅读
      * EPUB章节不支持在线阅读，只能下载
      */
-    fun isReadableOnline(chapter: MangaChapter): Boolean {
+    fun isReadableOnline(chapter: ContentChapter): Boolean {
         // EPUB章节不支持在线阅读
         return false
     }
@@ -602,7 +602,7 @@ internal class NoveliaWenku(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String {
+    override suspend fun getPageUrl(page: ContentPage): String {
         // 直接返回EPUB下载URL
         return page.url
     }

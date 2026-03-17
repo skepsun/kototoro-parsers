@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.minutes
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.util.getCookies
 import org.skepsun.kototoro.parsers.util.insertCookies
 import java.io.File
@@ -23,7 +23,7 @@ import java.io.File
  */
 class PicacgAuthTest {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
 
     @Test
     fun login_and_authorized_with_token_cookie() = runTest(timeout = 2.minutes) {
@@ -54,7 +54,7 @@ class PicacgAuthTest {
         }.onFailure { /* ignore */ }
 
         // 优先使用已预置的授权（环境变量或 Cookie）以绕过登录限流
-        val parser = context.newParserInstance(MangaParserSource.PICACG)
+        val parser = context.newParserInstance(ContentParserSource.PICACG)
         val domain = parser.domain
         println("[TEST] PicacgParser domain=$domain")
         println("[TEST] Cookies on domain($domain): " + context.cookieJar.getCookies(domain).map { it.name })
@@ -70,14 +70,14 @@ class PicacgAuthTest {
         )
         val authProviderRaw = parser.authorizationProvider
         println("Auth provider class = ${authProviderRaw?.javaClass?.name}")
-        val credentials = authProviderRaw as? MangaParserCredentialsAuthProvider
+        val credentials = authProviderRaw as? ContentParserCredentialsAuthProvider
             ?: error("Parser does not support credentials auth")
 
         // 通过 token 预置绕过登录
         assertTrue(tokenPreset, "未预置 PICACG_TOKEN")
 
         // 授权状态应为真
-        val authProvider = parser.authorizationProvider as MangaParserAuthProvider
+        val authProvider = parser.authorizationProvider as ContentParserAuthProvider
         val isAuth = authProvider.isAuthorized()
         assertTrue(isAuth, "登录后 isAuthorized=false")
 

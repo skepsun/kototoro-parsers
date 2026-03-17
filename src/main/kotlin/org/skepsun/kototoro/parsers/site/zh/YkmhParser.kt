@@ -5,19 +5,19 @@ package org.skepsun.kototoro.parsers.site.zh
 import okhttp3.Headers
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -29,9 +29,9 @@ import java.util.Locale
 /**
  * 优酷漫画 (ykmh.net)
  */
-@MangaSourceParser("YKMH", "优酷漫画", "zh")
-internal class YkmhParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.YKMH, pageSize = 20) {
+@ContentSourceParser("YKMH", "优酷漫画", "zh")
+internal class YkmhParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.YKMH, pageSize = 20) {
 
     override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("www.ykmh.net")
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST, SortOrder.UPDATED, SortOrder.POPULARITY)
@@ -209,26 +209,26 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		"连载中" to "lianzai",
 	)
 
-	private val tagGroups: List<MangaTagGroup> by lazy {
-		val allTags = categoryMap.map { MangaTag(it.key, it.value, source) }.toSet()
-		val mainTags = categoryMap.filterKeys { !it.startsWith("#") }.map { MangaTag(it.key, it.value, source) }.toSet()
-		val hashTags = categoryMap.filterKeys { it.startsWith("#") }.map { MangaTag(it.key, it.value, source) }.toSet()
+	private val tagGroups: List<ContentTagGroup> by lazy {
+		val allTags = categoryMap.map { ContentTag(it.key, it.value, source) }.toSet()
+		val mainTags = categoryMap.filterKeys { !it.startsWith("#") }.map { ContentTag(it.key, it.value, source) }.toSet()
+		val hashTags = categoryMap.filterKeys { it.startsWith("#") }.map { ContentTag(it.key, it.value, source) }.toSet()
 		buildList {
-			if (mainTags.isNotEmpty()) add(MangaTagGroup("分类", mainTags))
-			if (hashTags.isNotEmpty()) add(MangaTagGroup("话题", hashTags))
-			if (isEmpty() && allTags.isNotEmpty()) add(MangaTagGroup("分类", allTags))
+			if (mainTags.isNotEmpty()) add(ContentTagGroup("分类", mainTags))
+			if (hashTags.isNotEmpty()) add(ContentTagGroup("话题", hashTags))
+			if (isEmpty() && allTags.isNotEmpty()) add(ContentTagGroup("分类", allTags))
 		}
 	}
 
-	override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+	override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions =
-        MangaListFilterOptions(
-			availableTags = categoryMap.map { MangaTag(it.key, it.value, source) }.toSet(),
+    override suspend fun getFilterOptions(): ContentListFilterOptions =
+        ContentListFilterOptions(
+			availableTags = categoryMap.map { ContentTag(it.key, it.value, source) }.toSet(),
 			tagGroups = tagGroups,
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
         )
@@ -241,7 +241,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 	private fun baseUrl(): String = "https://${domain}"
 	private fun mobileBaseUrl(): String = "https://m.ykmh.net"
 
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page)
         }
@@ -266,7 +266,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
         return parseLatest(doc)
 	}
 
-	private suspend fun search(keyword: String, page: Int): List<Manga> {
+	private suspend fun search(keyword: String, page: Int): List<Content> {
 		val resp = webClient.httpGet(
 			"${baseUrl()}/search/?keywords=${keyword.urlEncoded()}&page=$page",
 			getRequestHeaders()
@@ -277,7 +277,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		return parseList(items)
 	}
 
-	private fun parseLatest(doc: Document): List<Manga> {
+	private fun parseLatest(doc: Document): List<Content> {
 		val items = doc.select(
 			".ebooks ul.list-unstyled > li," +
 				"ul.ebook-ol > li," +
@@ -291,17 +291,17 @@ internal class YkmhParser(context: MangaLoaderContext) :
 			return parseList(items)
 		}
 		// Fallback to carousel keywords if no items
-		val list = mutableListOf<Manga>()
+		val list = mutableListOf<Content>()
 		val regex = Regex("<li data-key=\"(\\d+)\"><a href=\"(https://www\\.ykmh\\.net/manhua/[^\"]+)\"[^>]*>([^<]+)</a></li>")
 		regex.findAll(doc.html()).take(10).forEach { m ->
 			val href = m.groupValues[2]
 			val title = m.groupValues[3]
 			// 规范化 URL：移除域名前缀，确保使用相对路径
-			val relUrl = normalizeMangaUrl(href.removePrefix(baseUrl()).removePrefix(mobileBaseUrl()))
+			val relUrl = normalizeContentUrl(href.removePrefix(baseUrl()).removePrefix(mobileBaseUrl()))
 			val generatedId = generateUid(relUrl)
 			println("[YkmhParser] parseLatest: title='$title' href='$href' relUrl='$relUrl' generatedId=$generatedId")
 			list.add(
-				Manga(
+				Content(
 					id = generatedId,
 					url = relUrl,
 					publicUrl = href,
@@ -309,7 +309,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 					title = title,
 					altTitles = emptySet(),
 					rating = org.skepsun.kototoro.parsers.model.RATING_UNKNOWN,
-					tags = setOf(MangaTag("热门推荐", "热门推荐", source)),
+					tags = setOf(ContentTag("热门推荐", "热门推荐", source)),
 					authors = emptySet(),
 					state = null,
 					source = source,
@@ -321,8 +321,8 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		return list
 	}
 
-	private fun parseList(items: Iterable<org.jsoup.nodes.Element>): List<Manga> {
-		val list = mutableListOf<Manga>()
+	private fun parseList(items: Iterable<org.jsoup.nodes.Element>): List<Content> {
+		val list = mutableListOf<Content>()
 		items.forEach { item ->
 			val link = item.selectFirst("a[href^=/manhua/]")
 				?: item.selectFirst("a[href^=/book/]")
@@ -348,7 +348,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 				}
 				val rawRelUrl = absolute.removePrefix(baseUrl()).removePrefix(mobileBaseUrl())
 				// 规范化 URL：移除章节后缀（如 /299812.html），只保留漫画路径
-				val relUrl = normalizeMangaUrl(rawRelUrl)
+				val relUrl = normalizeContentUrl(rawRelUrl)
 				val uidSource = relUrl.ifEmpty { href }
 				val generatedId = generateUid(uidSource)
 				
@@ -357,7 +357,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 				
 				val coverAbs = cover?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("http")) it else baseUrl() + it }
 				list.add(
-					Manga(
+					Content(
 						id = generatedId,
 						url = relUrl.ifEmpty { href },
 						publicUrl = absolute,
@@ -379,7 +379,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
     }
 
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
 		val href = if (manga.url.startsWith("http")) manga.url else baseUrl() + manga.url
 		val mobileHref = when {
 			href.startsWith("${baseUrl()}/") -> href.replace(baseUrl(), mobileBaseUrl())
@@ -413,7 +413,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		val categoryTags = doc.select("p.txtItme a[href*=/list/] , .comic__tags a")
 			.mapNotNull { a ->
 				val t = a.text().trim()
-				if (t.isNotEmpty()) MangaTag(t, t.lowercase(Locale.ROOT), source) else null
+				if (t.isNotEmpty()) ContentTag(t, t.lowercase(Locale.ROOT), source) else null
 			}
 			.toSet()
 
@@ -423,7 +423,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		val chapters = chapterLinks.reversed().mapIndexedNotNull { index, a ->
 			val chHref = a.attr("href")
 			val name = a.text().trim().ifEmpty { a.selectFirst("span")?.text()?.trim().orEmpty() }
-			if (chHref.isEmpty()) null else MangaChapter(
+			if (chHref.isEmpty()) null else ContentChapter(
 				id = generateUid("$chHref-${manga.id}"),
 				url = chHref,
 				title = name.ifEmpty { "Ch ${index + 1}" },
@@ -437,7 +437,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		}
 
 		val tags = buildSet {
-			if (!statusTag.isNullOrEmpty()) add(MangaTag(statusTag, statusTag, source))
+			if (!statusTag.isNullOrEmpty()) add(ContentTag(statusTag, statusTag, source))
 			addAll(categoryTags)
 		}
 
@@ -452,7 +452,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		)
 	}
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val chapterUrl = if (chapter.url.startsWith("http")) {
 			chapter.url.replace(baseUrl(), mobileBaseUrl())
 		} else {
@@ -487,7 +487,7 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		}
 
 		return images.mapIndexed { index, url ->
-			MangaPage(
+			ContentPage(
 				id = generateUid("$url-$index"),
 				url = url,
 				preview = url,
@@ -496,13 +496,13 @@ internal class YkmhParser(context: MangaLoaderContext) :
 		}
 	}
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
     
     /**
      * 规范化漫画 URL：移除章节后缀，只保留漫画路径
      * 例如：/manhua/wotaitaishinvzigaozhongsheng/299812.html -> /manhua/wotaitaishinvzigaozhongsheng/
      */
-    private fun normalizeMangaUrl(url: String): String {
+    private fun normalizeContentUrl(url: String): String {
         // 匹配 /manhua/名称/ 或 /book/名称/ 模式，移除后面的章节部分
         val mangaPathRegex = Regex("^(/(?:manhua|book)/[^/]+)(?:/.*)?$")
         val match = mangaPathRegex.find(url)

@@ -6,11 +6,11 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
@@ -19,9 +19,9 @@ import java.util.ArrayList
 import java.util.EnumSet
 import java.util.LinkedHashSet
 
-@MangaSourceParser("WENKU8", "轻小说文库", "zh", type = ContentType.NOVEL)
-internal class Wenku8(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.WENKU8, pageSize = 20), MangaParserAuthProvider {
+@ContentSourceParser("WENKU8", "轻小说文库", "zh", type = ContentType.NOVEL)
+internal class Wenku8(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.WENKU8, pageSize = 20), ContentParserAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("www.wenku8.net")
 
@@ -31,31 +31,31 @@ internal class Wenku8(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val initialTags = LETTERS.map { letter ->
-            MangaTag("首字母 $letter", "initial:$letter", source)
+            ContentTag("首字母 $letter", "initial:$letter", source)
         }
         val categoryTags = CATEGORIES.map { (name, value) ->
-            MangaTag(name, "class:$value", source)
+            ContentTag(name, "class:$value", source)
         }
         val tagTags = buildTagGroups(source)
         val rankTags = RANKINGS.map { (name, sort) ->
-            MangaTag(name, "rank:$sort", source)
+            ContentTag(name, "rank:$sort", source)
         }
         val allTags = (initialTags + categoryTags + tagTags.flatMap { it.tags } + rankTags).toSet()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             tagGroups = listOf(
-                MangaTagGroup(title = "首字母", tags = initialTags.toSet()),
-                MangaTagGroup(title = "文库分类", tags = categoryTags.toSet()),
-            ) + tagTags + listOf(MangaTagGroup(title = "排行榜", tags = rankTags.toSet())),
+                ContentTagGroup(title = "首字母", tags = initialTags.toSet()),
+                ContentTagGroup(title = "文库分类", tags = categoryTags.toSet()),
+            ) + tagTags + listOf(ContentTagGroup(title = "排行榜", tags = rankTags.toSet())),
         )
     }
 
@@ -78,8 +78,8 @@ internal class Wenku8(context: MangaLoaderContext) :
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         val url = when {
             !filter.query.isNullOrBlank() -> buildSearchUrl(filter.query!!, page)
             else -> buildCatalogUrl(filter, page)
@@ -88,7 +88,7 @@ internal class Wenku8(context: MangaLoaderContext) :
         return parseCatalog(doc)
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val url = manga.url.toAbsoluteUrl(domain)
         val doc = runCatching { webClient.httpGet(url).parseHtmlGBK(url) }.getOrElse {
             return manga
@@ -150,11 +150,11 @@ internal class Wenku8(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val content = getChapterContent(chapter) ?: return listOf(createErrorPage("内容为空"))
         val dataUrl = content.html.toDataUrl()
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = dataUrl,
                 preview = null,
@@ -163,7 +163,7 @@ internal class Wenku8(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getChapterContent(chapter: MangaChapter): NovelChapterContent? {
+    override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         val url = chapter.url.toAbsoluteUrl(domain)
         return runCatching {
             val doc = webClient.httpGet(url).parseHtmlGBK(url)
@@ -226,11 +226,11 @@ internal class Wenku8(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url.toAbsoluteUrl(domain)
+    override suspend fun getPageUrl(page: ContentPage): String = page.url.toAbsoluteUrl(domain)
 
-    private fun parseCatalog(doc: Document): List<Manga> {
+    private fun parseCatalog(doc: Document): List<Content> {
         val blocks = doc.select("table.grid div[style*=width:373px]")
-        val list = ArrayList<Manga>(blocks.size)
+        val list = ArrayList<Content>(blocks.size)
         for (block in blocks) {
             val titleLink = block.selectFirst("b a[href]") ?: continue
             val href = titleLink.attr("href").toRelativeUrl(domain)
@@ -243,7 +243,7 @@ internal class Wenku8(context: MangaLoaderContext) :
             var size: String? = null
             var status: String? = null
             var desc: String? = null
-            var tagSet: Set<MangaTag> = emptySet()
+            var tagSet: Set<ContentTag> = emptySet()
             for (p in info) {
                 val text = p.text().trim()
                 when {
@@ -268,7 +268,7 @@ internal class Wenku8(context: MangaLoaderContext) :
             }
             val cover = block.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrl(domain)
             val state = parseState(status)
-            list += Manga(
+            list += Content(
                 id = generateUid(href),
                 url = href,
                 publicUrl = href.toAbsoluteUrl(domain),
@@ -288,9 +288,9 @@ internal class Wenku8(context: MangaLoaderContext) :
         return list
     }
 
-    private suspend fun fetchChapters(indexUrl: String): List<MangaChapter> {
+    private suspend fun fetchChapters(indexUrl: String): List<ContentChapter> {
         val doc = webClient.httpGet(indexUrl).parseHtmlGBK(indexUrl).ensureAuthorized()
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         var currentVolume: String? = null
         var volumeIndex = 0
         val baseUrl = indexUrl.toHttpUrlOrNull()
@@ -317,7 +317,7 @@ internal class Wenku8(context: MangaLoaderContext) :
             val href = absoluteUrl.toRelativeUrl(domain)
             
             val title = link.text().trim().ifEmpty { "Chapter ${chapters.size + 1}" }
-            chapters += MangaChapter(
+            chapters += ContentChapter(
                 id = generateUid(href),
                 title = title,
                 number = extractChapterNumber(title),
@@ -332,7 +332,7 @@ internal class Wenku8(context: MangaLoaderContext) :
         return chapters
     }
 
-    private fun buildCatalogUrl(filter: MangaListFilter, page: Int): String {
+    private fun buildCatalogUrl(filter: ContentListFilter, page: Int): String {
         // 仅取第一个标签，互斥模式
         val firstTag = filter.tags.firstOrNull()
 
@@ -435,8 +435,8 @@ internal class Wenku8(context: MangaLoaderContext) :
             .takeIf { it.isNotEmpty() }
     }
 
-    private fun List<String>.mapToLinkedTags(): Set<MangaTag> = mapTo(linkedSetOf()) { name ->
-        MangaTag(name, name, source)
+    private fun List<String>.mapToLinkedTags(): Set<ContentTag> = mapTo(linkedSetOf()) { name ->
+        ContentTag(name, name, source)
     }
 
     private fun parseVolumeNumber(text: String?): Int {
@@ -449,22 +449,22 @@ internal class Wenku8(context: MangaLoaderContext) :
         return Regex("""\d+(\.\d+)?""").find(title)?.value?.toFloatOrNull() ?: 0f
     }
 
-    private fun buildChapterIndexUrl(manga: Manga): String {
+    private fun buildChapterIndexUrl(manga: Content): String {
         val id = Regex("""\d+""").find(manga.url)?.value ?: return manga.url
         val num = id.toIntOrNull() ?: return manga.url
         val prefix = num / 1000
         return "https://$domain/novel/$prefix/$id/index.htm"
     }
 
-    private fun MangaListFilter.valueFor(prefix: String): String? {
+    private fun ContentListFilter.valueFor(prefix: String): String? {
         return tags.firstOrNull { it.key.startsWith("$prefix:") }
             ?.key
             ?.substringAfter(':')
     }
 
-	private fun createErrorPage(message: String): MangaPage {
+	private fun createErrorPage(message: String): ContentPage {
 		val html = buildErrorHtml(message)
-		return MangaPage(
+		return ContentPage(
 			id = generateUid(message),
 			url = html.toDataUrl(),
 			preview = null,
@@ -488,10 +488,10 @@ internal class Wenku8(context: MangaLoaderContext) :
         return name.contains("jieqi") || name.contains("phpdisk")
     }
 
-    private fun parseState(raw: String?): MangaState? = when {
+    private fun parseState(raw: String?): ContentState? = when {
         raw.isNullOrBlank() -> null
-        raw.contains("完结") -> MangaState.FINISHED
-        raw.contains("连载") -> MangaState.ONGOING
+        raw.contains("完结") -> ContentState.FINISHED
+        raw.contains("连载") -> ContentState.ONGOING
         else -> null
     }
 
@@ -581,11 +581,11 @@ internal class Wenku8(context: MangaLoaderContext) :
             "字数排行" to "size",
         )
 
-        private fun buildTagGroups(source: MangaSource): List<MangaTagGroup> {
-            fun toGroup(title: String, pairs: List<Pair<String, String>>): MangaTagGroup =
-                MangaTagGroup(
+        private fun buildTagGroups(source: ContentSource): List<ContentTagGroup> {
+            fun toGroup(title: String, pairs: List<Pair<String, String>>): ContentTagGroup =
+                ContentTagGroup(
                     title = title,
-                    tags = pairs.map { (name, value) -> MangaTag(name, "tag:$value", source) }.toSet(),
+                    tags = pairs.map { (name, value) -> ContentTag(name, "tag:$value", source) }.toSet(),
                 )
             return listOf(
                 toGroup("日常系属性", DAILY_TAGS),

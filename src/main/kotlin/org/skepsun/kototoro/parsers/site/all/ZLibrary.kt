@@ -3,11 +3,11 @@ package org.skepsun.kototoro.parsers.site.en
 import okhttp3.Headers
 import org.json.JSONObject
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
@@ -40,10 +40,10 @@ import java.util.EnumSet
  * - ✅ 多语言支持
  * - ✅ 格式筛选
  */
-@MangaSourceParser("ZLIBRARY", "Z-Library", type = ContentType.NOVEL)
-internal class ZLibrary(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.ZLIBRARY, pageSize = 50),
-    MangaParserAuthProvider {
+@ContentSourceParser("ZLIBRARY", "Z-Library", type = ContentType.NOVEL)
+internal class ZLibrary(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.ZLIBRARY, pageSize = 50),
+    ContentParserAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("zh.z-library.sk")
 
@@ -57,8 +57,8 @@ internal class ZLibrary(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
@@ -84,55 +84,55 @@ internal class ZLibrary(context: MangaLoaderContext) :
         return if (userId != null) "User #$userId" else "Unknown"
     }
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableTags = buildCategoryTags() + buildLanguageTags(),
             availableContentTypes = EnumSet.of(ContentType.NOVEL),
         )
     }
 
-    private fun buildCategoryTags(): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun buildCategoryTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         
         // 主要分类
-        tags += MangaTag("� 最Computer Science (计算机)", "cat:173", source)
-        tags += MangaTag("📚 Biology (生物学)", "cat:94", source)
-        tags += MangaTag("📖 Literature (文学)", "cat:191", source)
-        tags += MangaTag("� Sciengce (科学)", "cat:199", source)
-        tags += MangaTag("� Histotry (历史)", "cat:201", source)
-        tags += MangaTag("🧠 Psychology (心理学)", "cat:203", source)
-        tags += MangaTag("� Butsiness (商业)", "cat:205", source)
-        tags += MangaTag("⚖️ Law (法律)", "cat:207", source)
-        tags += MangaTag("🏥 Medicine (医学)", "cat:209", source)
-        tags += MangaTag("🎨 Art (艺术)", "cat:189", source)
+        tags += ContentTag("� 最Computer Science (计算机)", "cat:173", source)
+        tags += ContentTag("📚 Biology (生物学)", "cat:94", source)
+        tags += ContentTag("📖 Literature (文学)", "cat:191", source)
+        tags += ContentTag("� Sciengce (科学)", "cat:199", source)
+        tags += ContentTag("� Histotry (历史)", "cat:201", source)
+        tags += ContentTag("🧠 Psychology (心理学)", "cat:203", source)
+        tags += ContentTag("� Butsiness (商业)", "cat:205", source)
+        tags += ContentTag("⚖️ Law (法律)", "cat:207", source)
+        tags += ContentTag("🏥 Medicine (医学)", "cat:209", source)
+        tags += ContentTag("🎨 Art (艺术)", "cat:189", source)
         
         return tags
     }
 
-    private fun buildLanguageTags(): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun buildLanguageTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         
         // 主要语言
-        tags += MangaTag("English", "lang:english", source)
-        tags += MangaTag("中文", "lang:chinese", source)
-        tags += MangaTag("日本語", "lang:japanese", source)
-        tags += MangaTag("한국어", "lang:korean", source)
-        tags += MangaTag("Русский", "lang:russian", source)
-        tags += MangaTag("Español", "lang:spanish", source)
-        tags += MangaTag("Français", "lang:french", source)
-        tags += MangaTag("Deutsch", "lang:german", source)
-        tags += MangaTag("Italiano", "lang:italian", source)
-        tags += MangaTag("Português", "lang:portuguese", source)
-        tags += MangaTag("العربية", "lang:arabic", source)
-        tags += MangaTag("Türkçe", "lang:turkish", source)
-        tags += MangaTag("Polski", "lang:polish", source)
-        tags += MangaTag("Nederlands", "lang:dutch", source)
-        tags += MangaTag("Tiếng Việt", "lang:vietnamese", source)
+        tags += ContentTag("English", "lang:english", source)
+        tags += ContentTag("中文", "lang:chinese", source)
+        tags += ContentTag("日本語", "lang:japanese", source)
+        tags += ContentTag("한국어", "lang:korean", source)
+        tags += ContentTag("Русский", "lang:russian", source)
+        tags += ContentTag("Español", "lang:spanish", source)
+        tags += ContentTag("Français", "lang:french", source)
+        tags += ContentTag("Deutsch", "lang:german", source)
+        tags += ContentTag("Italiano", "lang:italian", source)
+        tags += ContentTag("Português", "lang:portuguese", source)
+        tags += ContentTag("العربية", "lang:arabic", source)
+        tags += ContentTag("Türkçe", "lang:turkish", source)
+        tags += ContentTag("Polski", "lang:polish", source)
+        tags += ContentTag("Nederlands", "lang:dutch", source)
+        tags += ContentTag("Tiếng Việt", "lang:vietnamese", source)
         
         return tags
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 支持搜索和浏览两种模式
 
         val url = buildSearchUrl(page, order, filter)
@@ -142,7 +142,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         return parseBookList(doc)
     }
 
-    private fun buildSearchUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildSearchUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
         
         // 检查是否有分类标签
@@ -195,8 +195,8 @@ internal class ZLibrary(context: MangaLoaderContext) :
         return base.toString().trimEnd('&', '?')
     }
 
-    private fun parseBookList(doc: Document): List<Manga> {
-        val items = ArrayList<Manga>()
+    private fun parseBookList(doc: Document): List<Content> {
+        val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
         
         // 选择器: z-bookcard 元素
@@ -243,7 +243,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
             val finalCoverUrl = if (coverUrl.contains("cover-not-exists")) "" else coverUrl
             
             items.add(
-                Manga(
+                Content(
                     id = generateUid(bookId),
                     url = bookUrl,
                     publicUrl = "https://$domain$bookUrl",
@@ -296,7 +296,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val detailUrl = "https://$domain${manga.url}"
         val response = webClient.httpGet(detailUrl, getRequestHeaders())
         val doc = response.parseHtml()
@@ -336,7 +336,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         val categoryDiv = detailsBox?.selectFirst("div.property_categories div.property_value")
         val tags = if (categoryDiv != null) {
             val categoryText = categoryDiv.text().trim()
-            setOf(MangaTag(categoryText, categoryText, source))
+            setOf(ContentTag(categoryText, categoryText, source))
         } else {
             emptySet()
         }
@@ -376,7 +376,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         
         // 创建单个章节（下载链接）
         val chapter = if (downloadUrl != null) {
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("${manga.url}|download"),
                 url = downloadUrl,
                 title = "Download ${extension ?: "EPUB"}",
@@ -403,7 +403,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         // 检查是否是本地EPUB章节（已下载的）- NEW ARCHITECTURE
         // 新架构使用epub://协议：epub://{manga_id}/chapter/{index}
         if (chapter.url.startsWith("epub://")) {
@@ -429,7 +429,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         val downloadUrl = "https://$domain${chapter.url}"
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(downloadUrl),
                 url = downloadUrl,
                 preview = "EPUB",  // 标记为EPUB，用于下载处理
@@ -438,7 +438,7 @@ internal class ZLibrary(context: MangaLoaderContext) :
         )
     }
     
-    override suspend fun getPageUrl(page: MangaPage): String {
+    override suspend fun getPageUrl(page: ContentPage): String {
         // 直接返回EPUB下载URL
         // Cookie会自动从CookieJar发送
         return page.url

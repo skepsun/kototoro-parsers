@@ -10,10 +10,10 @@ import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.AbstractMangaParser
+import org.skepsun.kototoro.parsers.core.AbstractContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import org.skepsun.kototoro.parsers.util.json.getStringOrNull
@@ -29,8 +29,8 @@ import java.util.Locale
 import kotlin.math.min
 
 @OptIn(ExperimentalUnsignedTypes::class)
-@MangaSourceParser("HITOMILA", "Hitomi.La", type = ContentType.HENTAI_MANGA)
-internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser(context, MangaParserSource.HITOMILA) {
+@ContentSourceParser("HITOMILA", "Hitomi.La", type = ContentType.HENTAI_MANGA)
+internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentParser(context, ContentParserSource.HITOMILA) {
 	override val configKeyDomain = ConfigKey.Domain("hitomi.la")
 
 	private val cdnDomain = "gold-usergeneratedcontent.net"
@@ -77,13 +77,13 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 		Locale.CHINESE to "chinese",
 		Locale.JAPANESE to "japanese",
 	)
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
+	override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities(
 			isMultipleTagsSupported = true,
 			isSearchSupported = true,
 		)
 
-	override suspend fun getFilterOptions() = MangaListFilterOptions(
+	override suspend fun getFilterOptions() = ContentListFilterOptions(
 		availableTags = fetchAvailableTags(),
 		availableLocales = localeMap.keys,
 	)
@@ -93,7 +93,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 		else -> localeMap[this] ?: "all"
 	}
 
-	private suspend fun fetchAvailableTags(): Set<MangaTag> = coroutineScope {
+	private suspend fun fetchAvailableTags(): Set<ContentTag> = coroutineScope {
 		('a'..'z').map { alphabet ->
 			async {
 				val doc = webClient.httpGet("https://$domain/alltags-$alphabet.html").parseHtml()
@@ -110,7 +110,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 							url?.attrAsRelativeUrl("href")
 								?: return@mapNotNull null
 
-						MangaTag(
+						ContentTag(
 							title = url.ownText().toTagTitle(),
 							key = href.tagUrlToTag(),
 							source = source,
@@ -125,7 +125,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 
 	private var cachedSearchIds: List<Int> = emptyList()
 
-	override suspend fun getList(offset: Int, order: SortOrder, filter: MangaListFilter): List<Manga> = when {
+	override suspend fun getList(offset: Int, order: SortOrder, filter: ContentListFilter): List<Content> = when {
 		filter.query.isNullOrEmpty() -> {
 
 			if (filter.tags.isEmpty()) {
@@ -189,7 +189,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 			}
 			cachedSearchIds.subList(offset, min(offset + 25, cachedSearchIds.size))
 		}
-	}.toMangaList()
+	}.toContentList()
 
 	private fun Int.nextOffsetRange(): LongRange {
 		val bytes = this * 4L
@@ -504,7 +504,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 		return MessageDigest.getInstance("SHA-256").digest(data)
 	}
 
-	private suspend fun Collection<Int>.toMangaList(): List<Manga> = coroutineScope {
+	private suspend fun Collection<Int>.toContentList(): List<Content> = coroutineScope {
 		map { id ->
 			async {
 				runCatchingCancellable {
@@ -514,7 +514,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 						Jsoup.parse(rewriteTnPaths(html), baseUri)
 					}
 
-					Manga(
+					Content(
 						id = generateUid(id.toString()),
 						title = doc.selectFirstOrThrow("h1").text(),
 						url = id.toString(),
@@ -539,7 +539,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 		}.awaitAll().filterNotNull()
 	}
 
-	override suspend fun getDetails(manga: Manga): Manga {
+	override suspend fun getDetails(manga: Content): Content {
 		val json = webClient.httpGet("$ltnBaseUrl/galleries/${manga.url}.js")
 			.parseRaw()
 			.substringAfter("var galleryinfo = ")
@@ -581,7 +581,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 						?.let(::addAll)
 				},
 			chapters = listOf(
-				MangaChapter(
+				ContentChapter(
 					id = generateUid(manga.url),
 					url = manga.url,
 					title = json.getStringOrNull("title"),
@@ -598,10 +598,10 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 
 	private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH)
 
-	private fun JSONArray.mapToTags(key: String): Set<MangaTag> {
-		val tags = ArraySet<MangaTag>(length())
+	private fun JSONArray.mapToTags(key: String): Set<ContentTag> {
+		val tags = ArraySet<ContentTag>(length())
 		mapJSON {
-			MangaTag(
+			ContentTag(
 				title =
 					it.getString(key).toCamelCase().let { title ->
 						if (it.getStringOrNull("female")?.toIntOrNull() == 1) {
@@ -635,7 +635,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 		}
 	}
 
-	override suspend fun getRelatedManga(seed: Manga): List<Manga> {
+	override suspend fun getRelatedContent(seed: Content): List<Content> {
 		val json = webClient.httpGet("$ltnBaseUrl/galleries/${seed.url}.js")
 			.parseRaw()
 			.substringAfter("var galleryinfo = ")
@@ -644,10 +644,10 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 		// any better way to get List<Int> from this json?
 		return json.getJSONArray("related").let {
 			0.until(it.length()).map { i -> it.getInt(i) }
-		}.toMangaList()
+		}.toContentList()
 	}
 
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val json = webClient.httpGet("$ltnBaseUrl/galleries/${chapter.url}.js")
 			.parseRaw()
 			.substringAfter("var galleryinfo = ")
@@ -659,7 +659,7 @@ internal class HitomiLaParser(context: MangaLoaderContext) : AbstractMangaParser
 			val imageId = imageIdFromHash(hash)
 			val subDomain = subdomainOffset(imageId) + 1
 			val thumbSubdomain = 'a' + subdomainOffset(imageId)
-			MangaPage(
+			ContentPage(
 				id = generateUid(hash),
 				url = "https://a${subDomain}.$cdnDomain/$commonId$imageId/$hash.avif",
 				preview = "https://${thumbSubdomain}tn.$cdnDomain/webpsmallsmalltn/${thumbPathFromHash(hash)}/$hash.webp",

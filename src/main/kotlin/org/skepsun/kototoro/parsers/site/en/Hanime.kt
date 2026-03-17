@@ -5,20 +5,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
+import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.util.attrOrNull
@@ -37,12 +37,12 @@ import java.net.URLEncoder
  * It is annotated and registered via KSP and can be iterated on later.
  */
 @Broken("Under development")
-@MangaSourceParser(name = "HANIME", title = "Hanime", locale = "en", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser(name = "HANIME", title = "Hanime", locale = "en", type = ContentType.HENTAI_VIDEO)
 internal class Hanime(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.HANIME,
+    source = ContentParserSource.HANIME,
     pageSize = 24,
 ) {
     private val DISALLOWED_STREAM_HOSTS: Set<String> = setOf(
@@ -63,17 +63,17 @@ internal class Hanime(
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
             isTagsExclusionSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val dynamic = fetchAvailableTags()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = if (dynamic.isNotEmpty()) dynamic else defaultHanimeTags(),
         )
     }
@@ -81,15 +81,15 @@ internal class Hanime(
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         // 优先使用 API 获取可分页的结果；失败时回退到 HTML
         val apiItems = runCatching { fetchListByApi(page, filter) }.getOrElse { emptyList() }
         if (apiItems.isNotEmpty()) return apiItems
 
         val url = buildSearchUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
         // Strategy 1: anchors linking to video pages (hanime.tv uses /videos/hentai/...)
@@ -115,7 +115,7 @@ internal class Hanime(
                 val coverAbs = resolveCover(img, container)
 
                 items.add(
-                    Manga(
+                    Content(
                         id = generateUid(href),
                         url = href,
                         publicUrl = href.toAbsoluteUrl(domain),
@@ -151,7 +151,7 @@ internal class Hanime(
                 val coverAbs = resolveCover(img, c)
 
                 items.add(
-                    Manga(
+                    Content(
                         id = generateUid(href),
                         url = href,
                         publicUrl = href.toAbsoluteUrl(domain),
@@ -175,7 +175,7 @@ internal class Hanime(
         return items
     }
 
-    private suspend fun fetchListByApi(page: Int, filter: MangaListFilter): List<Manga> {
+    private suspend fun fetchListByApi(page: Int, filter: ContentListFilter): List<Content> {
         val endpoint = "https://members.$domain/api/v5/hentai-search"
         val body = JSONObject()
         val search = JSONObject()
@@ -201,7 +201,7 @@ internal class Hanime(
             ?: JSONArray()
 
         val site = domain
-        val list = ArrayList<Manga>(arr.length())
+        val list = ArrayList<Content>(arr.length())
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             val slug = o.optString("slug").takeIf { it.isNotBlank() }
@@ -214,7 +214,7 @@ internal class Hanime(
                 ?: null
 
             list.add(
-                Manga(
+                Content(
                     id = generateUid(slug),
                     url = "/hentai-videos/$slug",
                     publicUrl = "https://$site/hentai-videos/$slug",
@@ -235,7 +235,7 @@ internal class Hanime(
         return list
     }
 
-    private fun buildSearchTokens(filter: MangaListFilter): List<String> {
+    private fun buildSearchTokens(filter: ContentListFilter): List<String> {
         val tokens = mutableListOf<String>()
         if (!filter.query.isNullOrBlank()) tokens += filter.query!!
         if (filter.tags.isNotEmpty()) {
@@ -253,7 +253,7 @@ internal class Hanime(
         return tokens
     }
 
-    private fun buildSearchUrl(page: Int, filter: MangaListFilter): String {
+    private fun buildSearchUrl(page: Int, filter: ContentListFilter): String {
         // 当有查询/标签时走 search；否则回退到通用视频列表
         val tokens = mutableListOf<String>()
         if (!filter.query.isNullOrBlank()) tokens += filter.query!!
@@ -311,18 +311,18 @@ internal class Hanime(
         return url.toAbsoluteUrl(domain)
     }
 
-    private suspend fun fetchAvailableTags(): Set<MangaTag> {
+    private suspend fun fetchAvailableTags(): Set<ContentTag> {
         return try {
             val doc = webClient.httpGet("https://$domain/search", getRequestHeaders()).parseHtml()
             val chips = doc.select(
                 "div.search-dialog:has(.search-dialog__toolbar .toolbar__title:matchesOwn(Filters)) " +
                     ".layout.row.wrap span.chip .chip__content",
             )
-            val result = LinkedHashSet<MangaTag>(chips.size)
+            val result = LinkedHashSet<ContentTag>(chips.size)
             for (chip in chips) {
                 val text = chip.text().trim()
                 if (text.isEmpty()) continue
-                result += MangaTag(
+                result += ContentTag(
                     title = text,
                     key = tagKeyFromText(text),
                     source = source,
@@ -334,31 +334,31 @@ internal class Hanime(
         }
     }
 
-    private fun defaultHanimeTags(): Set<MangaTag> = linkedSetOf(
+    private fun defaultHanimeTags(): Set<ContentTag> = linkedSetOf(
         // 常见标签作为回退；key 统一为 tag:slug
-        MangaTag("3D", "tag:3d", source),
-        MangaTag("Ahegao", "tag:ahegao", source),
-        MangaTag("Anal", "tag:anal", source),
-        MangaTag("Big Boobs", "tag:big-boobs", source),
-        MangaTag("Blowjob", "tag:blowjob", source),
-        MangaTag("Creampie", "tag:creampie", source),
-        MangaTag("Double Penetration", "tag:double-penetration", source),
-        MangaTag("Footjob", "tag:footjob", source),
-        MangaTag("Gangbang", "tag:gangbang", source),
-        MangaTag("Handjob", "tag:handjob", source),
-        MangaTag("Loli", "tag:loli", source),
-        MangaTag("MILF", "tag:milf", source),
-        MangaTag("Schoolgirl", "tag:schoolgirl", source),
-        MangaTag("Tentacles", "tag:tentacles", source),
-        MangaTag("Threesome", "tag:threesome", source),
-        MangaTag("Virgin", "tag:virgin", source),
-        MangaTag("Yuri", "tag:yuri", source),
-        MangaTag("Yaoi", "tag:yaoi", source),
-        MangaTag("Oppai", "tag:oppai", source),
-        MangaTag("Futanari", "tag:futanari", source),
-        MangaTag("NTR", "tag:ntr", source),
-        MangaTag("Harem", "tag:harem", source),
-        MangaTag("Bdsm", "tag:bdsm", source),
+        ContentTag("3D", "tag:3d", source),
+        ContentTag("Ahegao", "tag:ahegao", source),
+        ContentTag("Anal", "tag:anal", source),
+        ContentTag("Big Boobs", "tag:big-boobs", source),
+        ContentTag("Blowjob", "tag:blowjob", source),
+        ContentTag("Creampie", "tag:creampie", source),
+        ContentTag("Double Penetration", "tag:double-penetration", source),
+        ContentTag("Footjob", "tag:footjob", source),
+        ContentTag("Gangbang", "tag:gangbang", source),
+        ContentTag("Handjob", "tag:handjob", source),
+        ContentTag("Loli", "tag:loli", source),
+        ContentTag("MILF", "tag:milf", source),
+        ContentTag("Schoolgirl", "tag:schoolgirl", source),
+        ContentTag("Tentacles", "tag:tentacles", source),
+        ContentTag("Threesome", "tag:threesome", source),
+        ContentTag("Virgin", "tag:virgin", source),
+        ContentTag("Yuri", "tag:yuri", source),
+        ContentTag("Yaoi", "tag:yaoi", source),
+        ContentTag("Oppai", "tag:oppai", source),
+        ContentTag("Futanari", "tag:futanari", source),
+        ContentTag("NTR", "tag:ntr", source),
+        ContentTag("Harem", "tag:harem", source),
+        ContentTag("Bdsm", "tag:bdsm", source),
     )
 
     private fun tagKeyFromText(text: String): String {
@@ -369,7 +369,7 @@ internal class Hanime(
         return "tag:$slug"
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         // 尝试通过 members API 获取更完整的详情与封面
         val slug = manga.publicUrl.substringAfterLast('/')
         val apiDetails = runCatching { fetchDetailsByApi(slug) }.getOrNull()
@@ -379,7 +379,7 @@ internal class Hanime(
             largeCoverUrl = apiDetails.poster ?: manga.largeCoverUrl,
             tags = if (manga.tags.isEmpty()) apiDetails.tags else manga.tags,
             chapters = listOf(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("${manga.url}|video"),
                     url = manga.url,
                     title = "Watch",
@@ -407,13 +407,13 @@ internal class Hanime(
             keywordsRaw.split(',')
                 .mapNotNull { it.trim().takeIf { t -> t.isNotEmpty() } }
                 .map { kw ->
-                    MangaTag(title = kw.replaceFirstChar { ch -> ch.uppercase() }, key = kw.lowercase(), source = source)
+                    ContentTag(title = kw.replaceFirstChar { ch -> ch.uppercase() }, key = kw.lowercase(), source = source)
                 }
                 .toSet()
         } else emptySet()
 
         // Create a single chapter pointing to the watch page
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -434,7 +434,7 @@ internal class Hanime(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val watchUrl = chapter.url.toAbsoluteUrl(domain)
         val slug = watchUrl.substringAfterLast('/')
         // 优先使用 members API 获取播放地址
@@ -466,7 +466,7 @@ internal class Hanime(
         }
 
         return filtered.map { s ->
-            MangaPage(
+            ContentPage(
                 id = generateUid(s.toRelativeUrl(domain)),
                 url = s,
                 preview = poster,
@@ -479,7 +479,7 @@ internal class Hanime(
         val title: String?,
         val description: String?,
         val poster: String?,
-        val tags: Set<MangaTag>,
+        val tags: Set<ContentTag>,
     )
 
     private suspend fun fetchDetailsByApi(slug: String): ApiDetails? {
@@ -496,18 +496,18 @@ internal class Hanime(
         val poster = hv.optString("poster_url").takeIf { it.isNotBlank() }
             ?: hv.optString("cover_url").takeIf { it.isNotBlank() }
         val tagArr = hv.optJSONArray("tags") ?: JSONArray()
-        val tags = LinkedHashSet<MangaTag>(tagArr.length())
+        val tags = LinkedHashSet<ContentTag>(tagArr.length())
         for (i in 0 until tagArr.length()) {
             val to = tagArr.optJSONObject(i) ?: continue
             val name = to.optString("text").takeIf { it.isNotBlank() }
                 ?: to.optString("name").takeIf { it.isNotBlank() } ?: continue
             val key = to.optString("slug").takeIf { it.isNotBlank() } ?: name.lowercase()
-            tags.add(MangaTag(title = name, key = key, source = source))
+            tags.add(ContentTag(title = name, key = key, source = source))
         }
         return ApiDetails(title = title, description = desc, poster = poster, tags = tags)
     }
 
-    private suspend fun fetchStreamsByApi(slug: String): List<MangaPage> {
+    private suspend fun fetchStreamsByApi(slug: String): List<ContentPage> {
         val url = "https://members.$domain/api/v5/hentai-videos/$slug"
         val headers = getRequestHeaders().newBuilder()
             .add("Accept", "application/json")
@@ -520,11 +520,11 @@ internal class Hanime(
             ?: hv.optString("cover_url").takeIf { it.isNotBlank() }
         val raw = json.toString()
         // 从完整 JSON 中兜底提取 m3u8/mp4
-        val res = ArrayList<MangaPage>()
+        val res = ArrayList<ContentPage>()
         Regex("https?://[^\"'\\s>]+\\.m3u8", RegexOption.IGNORE_CASE).findAll(raw).forEach { m ->
             val s = m.value
             res.add(
-                MangaPage(
+                ContentPage(
                     id = generateUid(s.toRelativeUrl(domain)),
                     url = s,
                     preview = poster,
@@ -535,7 +535,7 @@ internal class Hanime(
         Regex("https?://[^\"'\\s>]+\\.mp4", RegexOption.IGNORE_CASE).findAll(raw).forEach { m ->
             val s = m.value
             res.add(
-                MangaPage(
+                ContentPage(
                     id = generateUid(s.toRelativeUrl(domain)),
                     url = s,
                     preview = poster,

@@ -7,19 +7,19 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -33,9 +33,9 @@ import java.util.EnumSet
 /**
  * nhentai (nhentai.net)
  */
-@MangaSourceParser("NHENTAI", "nhentai", type=ContentType.HENTAI_MANGA)
-internal class NhentaiParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.NHENTAI, pageSize = 25), Interceptor {
+@ContentSourceParser("NHENTAI", "nhentai", type=ContentType.HENTAI_MANGA)
+internal class NhentaiParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.NHENTAI, pageSize = 25), Interceptor {
 
     override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("nhentai.net")
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
@@ -46,13 +46,13 @@ internal class NhentaiParser(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(isSearchSupported = true)
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(isSearchSupported = true)
 
 	private val languageTags = listOf(
-		MangaTag("中文", "language:chinese", source),
-		MangaTag("English", "language:english", source),
-		MangaTag("日本語", "language:japanese", source),
+		ContentTag("中文", "language:chinese", source),
+		ContentTag("English", "language:english", source),
+		ContentTag("日本語", "language:japanese", source),
 	)
 
 	private val nhTagMap: Map<String, String> by lazy {
@@ -787,12 +787,12 @@ internal class NhentaiParser(context: MangaLoaderContext) :
 			}.toMap()
 	}
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions =
-        MangaListFilterOptions(
-            availableTags = (languageTags + nhTagMap.map { MangaTag(it.value, "tag:${it.key}", source) }).toSet(),
+    override suspend fun getFilterOptions(): ContentListFilterOptions =
+        ContentListFilterOptions(
+            availableTags = (languageTags + nhTagMap.map { ContentTag(it.value, "tag:${it.key}", source) }).toSet(),
             tagGroups = listOf(
-				MangaTagGroup("语言", languageTags.toSet()),
-				MangaTagGroup("标签", nhTagMap.map { MangaTag(it.value, "tag:${it.key}", source) }.toSet()),
+				ContentTagGroup("语言", languageTags.toSet()),
+				ContentTagGroup("标签", nhTagMap.map { ContentTag(it.value, "tag:${it.key}", source) }.toSet()),
 			),
             availableContentRating = EnumSet.of(ContentRating.ADULT),
         )
@@ -816,7 +816,7 @@ internal class NhentaiParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
 		val query = filter.query.orEmpty()
 		val langTag = filter.tags.firstOrNull { it.key.startsWith("language:") }
 		val tagFilter = filter.tags.firstOrNull { it.key.startsWith("tag:") }
@@ -846,7 +846,7 @@ internal class NhentaiParser(context: MangaLoaderContext) :
         return parseGalleryList(doc)
     }
 
-    private fun parseGalleryList(doc: Document): List<Manga> {
+    private fun parseGalleryList(doc: Document): List<Content> {
         return doc.select(".gallery").mapNotNull { el ->
             val a = if (el.tagName() == "a") el else el.selectFirst("a")
             if (a == null) return@mapNotNull null
@@ -877,7 +877,7 @@ internal class NhentaiParser(context: MangaLoaderContext) :
             val coverUrl = cover
                 ?.let { if (it.startsWith("//")) "https:$it" else it }
                 ?.replace("http://", "https://")
-            Manga(
+            Content(
                 id = generateUid(id),
                 title = title,
                 altTitles = emptySet(),
@@ -929,7 +929,7 @@ internal class NhentaiParser(context: MangaLoaderContext) :
         return runCatching { JSONObject(decoded) }.getOrNull()
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val galleryId = normalizeId(manga.url)
         val json = fetchGallery(galleryId) ?: return manga
 
@@ -964,7 +964,7 @@ internal class NhentaiParser(context: MangaLoaderContext) :
 						}
 						if (name.equals("translated", ignoreCase = true)) translated = true
 						if (type == "artist") authors.add(name)
-						add(MangaTag(name, name, source))
+						add(ContentTag(name, name, source))
 						// Backup: derive language by id if not set
 						if (type == "language") {
 							when (id) {
@@ -1000,7 +1000,7 @@ internal class NhentaiParser(context: MangaLoaderContext) :
             title = title,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
             chapters = listOf(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("${manga.id}-0"),
                     title = "Chapter 1",
                     number = 1f,
@@ -1019,18 +1019,18 @@ internal class NhentaiParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val json = fetchGallery(normalizeId(chapter.url)) ?: return emptyList()
         val mediaId = json.optString("media_id")
         val pages = json.optJSONObject("images")?.optJSONArray("pages") ?: return emptyList()
-        val result = mutableListOf<MangaPage>()
+        val result = mutableListOf<ContentPage>()
         for (i in 0 until pages.length()) {
             val type = pages.optJSONObject(i)?.optString("t") ?: "j"
             val url = "$imageHost/galleries/$mediaId/${i + 1}.${imageExt(type)}"
-            result.add(MangaPage(id = generateUid(url), url = url, preview = url, source = source))
+            result.add(ContentPage(id = generateUid(url), url = url, preview = url, source = source))
         }
         return result
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 }

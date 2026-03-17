@@ -1,20 +1,20 @@
 package org.skepsun.kototoro.parsers.site.zh
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
@@ -35,10 +35,10 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.io.IOException
 
-@MangaSourceParser(name = "CG51", title = "51吃瓜", locale = "zh", type = ContentType.HENTAI_VIDEO)
-internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
+@ContentSourceParser(name = "CG51", title = "51吃瓜", locale = "zh", type = ContentType.HENTAI_VIDEO)
+internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
     context = context,
-    source = MangaParserSource.CG51,
+    source = ContentParserSource.CG51,
     pageSize = 20,
 ) {
 
@@ -51,8 +51,8 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = false, // Selecting multiple categories usually not supported by simple path modification unless using query params, simpler to keep single selection for categories
@@ -93,22 +93,22 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
 
     override fun getRequestHeaders(): Headers = headers
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = categories.map { (name, id) ->
-            MangaTag(
+            ContentTag(
                 key = "category:$id",
                 title = name,
                 source = source
             )
         }.toSet()
         
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
-            tagGroups = listOf(MangaTagGroup("分类", tags))
+            tagGroups = listOf(ContentTagGroup("分类", tags))
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // Handle category selection
         val selectedCategory = filter.tags.firstOrNull { it.key.startsWith("category:") }?.key?.removePrefix("category:")
         
@@ -170,7 +170,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
                          cover = decryptImage(cover) ?: cover
                     }
 
-                    Manga(
+                    Content(
                         id = generateUid(absoluteUrl),
                         title = title,
                         url = absoluteUrl, // Use absolute URL here to pass checking later
@@ -192,7 +192,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         // Double check URL validity before requesting
         val url = manga.url.toAbsoluteUrl()
         
@@ -230,7 +230,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         
         val tags = doc.select("a[rel=tag], .tags a, .tag-cloud a").mapNotNull { 
             val name = it.text().trim()
-            if (name.isNotEmpty()) MangaTag(key = name, title = name, source = source) else null 
+            if (name.isNotEmpty()) ContentTag(key = name, title = name, source = source) else null 
         }.toSet()
 
         // Extract videos to determine chapters
@@ -238,7 +238,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         
         val chapters = if (videoLinks.isNotEmpty()) {
             videoLinks.mapIndexed { index, link ->
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("${manga.url}#video_index=$index"),
                     url = "${manga.url}#video_index=$index",
                     title = "Video ${index + 1}",
@@ -253,7 +253,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         } else {
             // Create a single chapter for images/gallery
             listOf(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid(manga.url),
                     url = manga.url,
                     title = "Gallery",
@@ -275,7 +275,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val chapterUrl = chapter.url
         val isVideoChapter = chapterUrl.contains("#video_index=")
         
@@ -289,7 +289,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
             if (index in videoLinks.indices) {
                 val src = videoLinks[index]
                 return listOf(
-                    MangaPage(
+                    ContentPage(
                         id = generateUid(src),
                         url = src,
                         source = source,
@@ -303,7 +303,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         val videoLinks = extractVideos(doc)
         if (videoLinks.isNotEmpty() && !isVideoChapter) {
              return videoLinks.map { src ->
-                MangaPage(
+                ContentPage(
                     id = generateUid(src),
                     url = src,
                     source = source,
@@ -344,7 +344,7 @@ internal class Cg51(context: MangaLoaderContext) : PagedMangaParser(
         }
         
         return decryptedImages.mapIndexed { index, src ->
-            MangaPage(
+            ContentPage(
                 id = generateUid(src),
                 url = src, // This will drastically be longer for Data URIs
                 source = source,

@@ -7,24 +7,24 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -39,11 +39,11 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * 再漫画 (v4api.zaimanhua.com)
  */
-@MangaSourceParser("ZAIMANHUA", "再漫画", "zh")
-internal class ZaimanhuaParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.ZAIMANHUA, pageSize = 20),
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider,
+@ContentSourceParser("ZAIMANHUA", "再漫画", "zh")
+internal class ZaimanhuaParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.ZAIMANHUA, pageSize = 20),
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider,
     FavoritesProvider,
     org.skepsun.kototoro.parsers.FavoritesSyncProvider {
 
@@ -163,26 +163,26 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED, SortOrder.POPULARITY)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
     )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val themeTags = categoryMap.map { it.toTag(source) }.toSet()
         val cateTags = cateOptions.map { it.toTag(source) }.toSet()
         val statusTags = statusOptions.map { it.toTag(source) }.toSet()
         val zoneTags = zoneOptions.map { it.toTag(source) }.toSet()
         val all = themeTags + cateTags + statusTags + zoneTags
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = all,
             tagGroups = listOf(
-                MangaTagGroup("分类", themeTags),
-                MangaTagGroup("题材", cateTags),
-                MangaTagGroup("状态", statusTags),
-                MangaTagGroup("地区", zoneTags),
+                ContentTagGroup("分类", themeTags),
+                ContentTagGroup("题材", cateTags),
+                ContentTagGroup("状态", statusTags),
+                ContentTagGroup("地区", zoneTags),
             ),
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
         )
@@ -190,7 +190,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
 
     override fun getRequestHeaders(): Headers = headers()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         runCatching { trySignTask() }
         val selected = filter.tags.associateBy { it.key.substringBefore(':', "") }
         val theme = selected["theme"]?.key?.substringAfter(':').orEmpty()
@@ -214,7 +214,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
             ?: root.optJSONArray("data")
             ?: root.optJSONArray("result")
             ?: return emptyList()
-        val list = mutableListOf<Manga>()
+        val list = mutableListOf<Content>()
         for (i in 0 until items.length()) {
             val obj = items.optJSONObject(i) ?: continue
             val id = listOf(obj.optString("comic_id"), obj.optString("id"))
@@ -222,27 +222,27 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
                 ?: continue
             val title = obj.optString("title").ifEmpty { obj.optString("name") }
             val cover = obj.optString("cover")
-            val tags: Set<MangaTag> = when {
+            val tags: Set<ContentTag> = when {
                 obj.optJSONArray("types") != null -> {
                     val tArr = obj.optJSONArray("types")
-                    mutableSetOf<MangaTag>().apply {
+                    mutableSetOf<ContentTag>().apply {
                         for (j in 0 until tArr.length()) {
                             val t = tArr.optJSONObject(j)?.optString("tag_name").orEmpty()
-                            if (t.isNotEmpty()) add(MangaTag(t, t, source))
+                            if (t.isNotEmpty()) add(ContentTag(t, t, source))
                         }
                     }
                 }
                 obj.optString("types").isNotEmpty() -> {
                     obj.optString("types").split('/', '、', ',', '|').mapNotNull {
                         val t = it.trim()
-                        t.takeIf { it.isNotEmpty() }?.let { name -> MangaTag(name, name, source) }
+                        t.takeIf { it.isNotEmpty() }?.let { name -> ContentTag(name, name, source) }
                     }.toSet()
                 }
                 else -> emptySet()
             }
             val rating = classifyRating(tags)
             list.add(
-                Manga(
+                Content(
                     id = generateUid(id),
                     url = id,
                     publicUrl = "https://www.zaimanhua.com/comic/$id",
@@ -262,7 +262,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         return if (ratingFilter.isEmpty()) list else list.filter { it.contentRating in ratingFilter }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         fun freshHeaders(): Headers = headers().newBuilder()
             .add("Cache-Control", "no-cache")
             .add("Pragma", "no-cache")
@@ -292,11 +292,11 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         val cover = data.optString("cover", manga.coverUrl)
         val desc = data.optString("description", manga.description ?: "")
 
-        fun mapTags(arr: org.json.JSONArray?): MutableSet<MangaTag> = mutableSetOf<MangaTag>().apply {
+        fun mapTags(arr: org.json.JSONArray?): MutableSet<ContentTag> = mutableSetOf<ContentTag>().apply {
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val name = arr.optJSONObject(i)?.optString("tag_name").orEmpty()
-                    if (name.isNotEmpty()) add(MangaTag(name, name, source))
+                    if (name.isNotEmpty()) add(ContentTag(name, name, source))
                 }
             }
         }
@@ -313,7 +313,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         tags.addAll(mapTags(data.optJSONArray("status")))
         val rating = classifyRating(tags)
 
-        val chapters = mutableListOf<MangaChapter>()
+        val chapters = mutableListOf<ContentChapter>()
         val groupsArray = data.optJSONArray("chapters")
             ?: data.optJSONArray("chapterList")
         val groupsObject = if (groupsArray == null) data.optJSONObject("chapters") else null
@@ -326,7 +326,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
                 if (cid.isEmpty()) continue
                 val number = (chapters.size + 1).toFloat()
                 chapters.add(
-                    MangaChapter(
+                    ContentChapter(
                         id = generateUid("$cid-${manga.id}"),
                         url = "${manga.url}/$cid",
                         title = name.ifEmpty { "Chapter $cid" },
@@ -370,7 +370,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val parts = chapter.url.split("/")
         val comicId = parts.firstOrNull().orEmpty()
         val chapterId = parts.getOrNull(1).orEmpty()
@@ -379,13 +379,13 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         if (!res.isSuccessful) return emptyList()
         val data = res.parseJsonObject().optJSONObject("data")?.optJSONObject("data") ?: return emptyList()
         val images = data.optJSONArray("page_url_hd") ?: data.optJSONArray("page_url") ?: return emptyList()
-        val list = mutableListOf<MangaPage>()
+        val list = mutableListOf<ContentPage>()
         for (i in 0 until images.length()) {
             val img = images.optString(i)
             if (img.isNotEmpty()) {
                 val finalUrl = if (img.startsWith("http")) img else "https://i.zaimanhua.com$img"
                 list.add(
-                    MangaPage(
+                    ContentPage(
                         id = generateUid("$finalUrl-$i"),
                         url = finalUrl,
                         preview = finalUrl,
@@ -397,7 +397,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         return list
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     override suspend fun login(username: String, password: String): Boolean {
         val encrypted = java.security.MessageDigest.getInstance("MD5")
@@ -514,7 +514,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         kotlin.runCatching { println("[ZaimanhuaAuth] $msg") }
     }
 
-    private fun classifyRating(tags: Set<MangaTag>): ContentRating {
+    private fun classifyRating(tags: Set<ContentTag>): ContentRating {
         val titles = tags.map { it.title.lowercase() }
         val adultKeywords = setOf("r18", "18+", "成人", "限制", "h漫", "本子", "里番", "nsfw", "smut", "情色", "节操")
         val suggestiveKeywords = setOf("后宫", "福利", "擦边", "性感")
@@ -526,7 +526,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
     }
 
     private data class FilterOption(val value: String, val title: String, val ns: String) {
-        fun toTag(source: MangaSource): MangaTag = MangaTag(title, "$ns:$value", source)
+        fun toTag(source: ContentSource): ContentTag = ContentTag(title, "$ns:$value", source)
     }
 
     private suspend fun trySignTask() {
@@ -549,10 +549,10 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val headers = headers()
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         var page = 1
         val size = 50
         while (true) {
@@ -571,16 +571,16 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
                 val title = obj.optString("title").ifEmpty { obj.optString("name") }
                 val cover = obj.optString("cover")
                 val tags = obj.optJSONArray("types")?.let { arr ->
-                    mutableSetOf<MangaTag>().apply {
+                    mutableSetOf<ContentTag>().apply {
                         for (j in 0 until arr.length()) {
                             val n = arr.optJSONObject(j)?.optString("tag_name").orEmpty()
-                            if (n.isNotEmpty()) add(MangaTag(n, n, source))
+                            if (n.isNotEmpty()) add(ContentTag(n, n, source))
                         }
                     }
                 } ?: emptySet()
                 val rating = classifyRating(tags)
                 result.add(
-                    Manga(
+                    Content(
                         id = generateUid(id),
                         url = id,
                         publicUrl = "https://www.zaimanhua.com/comic/$id",
@@ -603,7 +603,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         return result
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val headers = headers()
         val url = buildUrl("comic/sub/add?comic_id=${manga.url}")
@@ -613,7 +613,7 @@ internal class ZaimanhuaParser(context: MangaLoaderContext) :
         return json.optInt("errno", -1) == 0
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val headers = headers()
         val url = buildUrl("comic/sub/del?comic_id=${manga.url}")

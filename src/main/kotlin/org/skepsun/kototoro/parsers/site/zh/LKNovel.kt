@@ -3,10 +3,10 @@ package org.skepsun.kototoro.parsers.site.zh
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.model.NovelChapterContent
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -19,9 +19,9 @@ import java.util.Locale
 /**
  * 轻之国度 - 基于 APP API
  */
-@MangaSourceParser("LKNOVEL_US", "轻之国度", "zh", type = ContentType.NOVEL)
-internal class LKNovelUs(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.valueOf("LKNOVEL_US"), pageSize = 20) {
+@ContentSourceParser("LKNOVEL_US", "轻之国度", "zh", type = ContentType.NOVEL)
+internal class LKNovelUs(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.valueOf("LKNOVEL_US"), pageSize = 20) {
 
     override val configKeyDomain = ConfigKey.Domain("www.lightnovel.fun")
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
@@ -55,14 +55,14 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions()
+    override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         return if (!filter.query.isNullOrBlank()) {
             search(page, filter.query!!)
         } else {
@@ -70,7 +70,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         }
     }
 
-    private suspend fun search(page: Int, query: String): List<Manga> {
+    private suspend fun search(page: Int, query: String): List<Content> {
         val url = "https://$domain/proxy/api/search/search-result"
         val data = JSONObject().apply {
             put("q", query)
@@ -84,7 +84,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         val webCode = webResp.code
         val webPreview = runCatching { webResp.peekBody(2048).string() }.getOrDefault("")
         val webJson = webResp.parseJson()
-        var list = parseMangaList(webJson)
+        var list = parseContentList(webJson)
         println("LKNovel search: url=$url code=$webCode page=$page query=\"$query\" body=$webBody preview=${webPreview.take(512)} results=${list.size}")
 
         if (list.isEmpty() || webJson.optInt("code", -1) != 0) {
@@ -93,7 +93,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
             val appCode = appResp.code
             val appPreview = runCatching { appResp.peekBody(2048).string() }.getOrDefault("")
             val appJson = appResp.parseJson()
-            list = parseMangaList(appJson)
+            list = parseContentList(appJson)
             println("LKNovel search fallback(app): code=$appCode page=$page query=\"$query\" body=$appBody preview=${appPreview.take(512)} results=${list.size}")
         }
         return list
@@ -109,7 +109,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         put("gz", 0)
     }
 
-    private suspend fun explore(page: Int): List<Manga> {
+    private suspend fun explore(page: Int): List<Content> {
         // 这里的探索接口参数参考了原源的 exploreUrl
         val url = "https://$domain/proxy/api/category/get-article-by-cate"
         val data = JSONObject().apply {
@@ -126,24 +126,24 @@ internal class LKNovelUs(context: MangaLoaderContext) :
             put("d", data as Any)
         }
         val response = postJson(url, body).parseJson()
-        return parseMangaList(response)
+        return parseContentList(response)
     }
 
-    private fun parseMangaList(response: JSONObject): List<Manga> {
-        val list = mutableListOf<Manga>()
+    private fun parseContentList(response: JSONObject): List<Content> {
+        val list = mutableListOf<Content>()
         val dataObj = response.optJSONObject("data") ?: return list
         
         // collections (合集/系列)
         dataObj.optJSONArray("collections")?.let { arr ->
             for (i in 0 until arr.length()) {
-                list.add(parseMangaItem(arr.getJSONObject(i), isSeries = true))
+                list.add(parseContentItem(arr.getJSONObject(i), isSeries = true))
             }
         }
         
         // articles (单篇)
         dataObj.optJSONArray("articles")?.let { arr ->
             for (i in 0 until arr.length()) {
-                list.add(parseMangaItem(arr.getJSONObject(i), isSeries = false))
+                list.add(parseContentItem(arr.getJSONObject(i), isSeries = false))
             }
         }
         
@@ -152,14 +152,14 @@ internal class LKNovelUs(context: MangaLoaderContext) :
             for (i in 0 until arr.length()) {
                 val item = arr.getJSONObject(i)
                 val sid = item.optInt("sid", 0)
-                list.add(parseMangaItem(item, isSeries = sid != 0))
+                list.add(parseContentItem(item, isSeries = sid != 0))
             }
         }
         
         return list
     }
 
-    private fun parseMangaItem(item: JSONObject, isSeries: Boolean): Manga {
+    private fun parseContentItem(item: JSONObject, isSeries: Boolean): Content {
         val idVal = if (isSeries) item.optString("sid") else item.optString("aid")
         val url = if (isSeries) "/series/$idVal" else "/article/$idVal"
         val seriesName = item.optString("series_name")
@@ -177,7 +177,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         val groupName = item.optString("group_name")
         val upload = dateFormat.parseSafe(item.optString("last_time"))
         
-        return Manga(
+        return Content(
             id = generateUid(url),
             title = title,
             altTitles = emptySet(),
@@ -187,7 +187,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
             contentRating = null,
             coverUrl = cover?.takeIf { it.isNotBlank() },
             tags = buildSet {
-                if (groupName.isNotBlank()) add(MangaTag(groupName, "group:$groupName", source))
+                if (groupName.isNotBlank()) add(ContentTag(groupName, "group:$groupName", source))
             },
             state = null,
             authors = if (author.isNotBlank()) setOf(author) else emptySet(),
@@ -195,7 +195,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val novelId = manga.url.substringAfterLast("/")
         return if (manga.url.startsWith("/series/")) {
             getSeriesDetails(manga, novelId)
@@ -204,7 +204,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         }
     }
 
-    private suspend fun getSeriesDetails(manga: Manga, sid: String): Manga {
+    private suspend fun getSeriesDetails(manga: Content, sid: String): Content {
         val url = "https://api.lightnovel.fun/api/series/get-info"
         val data = JSONObject().apply {
             put("sid", sid.toInt())
@@ -215,13 +215,13 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         
         val articles = dataObj.optJSONArray("articles")
         val chapters = if (articles != null) {
-            val list = mutableListOf<MangaChapter>()
+            val list = mutableListOf<ContentChapter>()
             for (i in 0 until articles.length()) {
                 val art = articles.getJSONObject(i)
                 val aid = art.getString("aid")
                 val order = art.optInt("order")
                 val title = art.getString("title")
-                list.add(MangaChapter(
+                list.add(ContentChapter(
                     id = generateUid("/article/$aid"),
                     title = "P${order.toString().padStart(2, '0')} $title",
                     number = i + 1f,
@@ -242,7 +242,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun getArticleDetails(manga: Manga, aid: String): Manga {
+    private suspend fun getArticleDetails(manga: Content, aid: String): Content {
         val url = "https://api.lightnovel.fun/api/article/get-detail"
         val data = JSONObject().apply {
             put("aid", aid.toInt())
@@ -251,7 +251,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         val response = postJson(url, createBaseBody(data)).parseJson()
         val dataObj = response.getJSONObject("data")
         
-        val chapters = listOf(MangaChapter(
+        val chapters = listOf(ContentChapter(
             id = manga.id,
             title = manga.title,
             number = 1f,
@@ -269,10 +269,10 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val content = getChapterContent(chapter) ?: return emptyList()
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = content.html.toDataUrl(),
                 preview = null,
@@ -281,7 +281,7 @@ internal class LKNovelUs(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getChapterContent(chapter: MangaChapter): NovelChapterContent? {
+    override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         val aid = chapter.url.substringAfterLast("/")
         val url = "https://api.lightnovel.fun/api/article/get-detail"
         val data = JSONObject().apply {

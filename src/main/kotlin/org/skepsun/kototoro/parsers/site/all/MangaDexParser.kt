@@ -7,14 +7,14 @@ import kotlinx.coroutines.coroutineScope
 import okhttp3.HttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.FlexibleMangaParser
+import org.skepsun.kototoro.parsers.core.FlexibleContentParser
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQuery
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQueryCapabilities
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQuery
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQueryCapabilities
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria.*
 import org.skepsun.kototoro.parsers.model.search.SearchCapability
 import org.skepsun.kototoro.parsers.model.search.SearchableField
@@ -33,8 +33,8 @@ private const val LOCALE_FALLBACK = "en"
 private const val SERVER_DATA = "data"
 private const val SERVER_DATA_SAVER = "data-saver"
 
-@MangaSourceParser("MANGADEX", "MangaDex")
-internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser(context, MangaParserSource.MANGADEX) {
+@ContentSourceParser("MANGADEX", "MangaDex")
+internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentParser(context, ContentParserSource.MANGADEX) {
 
 	override val configKeyDomain = ConfigKey.Domain("mangadex.org")
 
@@ -68,8 +68,8 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		SortOrder.RELEVANCE,
 	)
 
-	override val searchQueryCapabilities: MangaSearchQueryCapabilities
-		get() = MangaSearchQueryCapabilities(
+	override val searchQueryCapabilities: ContentSearchQueryCapabilities
+		get() = ContentSearchQueryCapabilities(
 			SearchCapability(
 				field = TAG,
 				criteriaTypes = setOf(Include::class, Exclude::class),
@@ -122,16 +122,16 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			),
 		)
 
-	override suspend fun getFilterOptions(): MangaListFilterOptions = coroutineScope {
+	override suspend fun getFilterOptions(): ContentListFilterOptions = coroutineScope {
 		val localesDeferred = async { fetchAvailableLocales() }
 		val tagsDeferred = async { fetchAvailableTags() }
-		MangaListFilterOptions(
+		ContentListFilterOptions(
 			availableTags = tagsDeferred.await(),
 			availableStates = EnumSet.of(
-				MangaState.ONGOING,
-				MangaState.FINISHED,
-				MangaState.PAUSED,
-				MangaState.ABANDONED,
+				ContentState.ONGOING,
+				ContentState.FINISHED,
+				ContentState.PAUSED,
+				ContentState.ABANDONED,
 			),
 			availableContentRating = EnumSet.allOf(ContentRating::class.java),
 			availableDemographics = EnumSet.of(
@@ -161,12 +161,12 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 	private fun Any?.toQueryParam(): String = when (this) {
 		is String -> urlEncoded()
 		is Locale -> if (language == "in") "id" else language
-		is MangaTag -> key
-		is MangaState -> when (this) {
-			MangaState.ONGOING -> "ongoing"
-			MangaState.FINISHED -> "completed"
-			MangaState.ABANDONED -> "cancelled"
-			MangaState.PAUSED -> "hiatus"
+		is ContentTag -> key
+		is ContentState -> when (this) {
+			ContentState.ONGOING -> "ongoing"
+			ContentState.FINISHED -> "completed"
+			ContentState.ABANDONED -> "cancelled"
+			ContentState.PAUSED -> "hiatus"
 			else -> ""
 		}
 
@@ -214,7 +214,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 	}
 
-	override suspend fun getList(query: MangaSearchQuery): List<Manga> {
+	override suspend fun getList(query: ContentSearchQuery): List<Content> {
 		val url = buildString {
 			append("https://api.$domain/manga?limit=$PAGE_SIZE&offset=${query.offset}")
 				.append("&includes[]=cover_art&includes[]=author&includes[]=artist&includedTagsMode=AND&excludedTagsMode=OR")
@@ -254,31 +254,31 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 
 		val json = webClient.httpGet(url).parseJson().getJSONArray("data")
-		return json.mapJSON { jo -> jo.fetchManga(null) }
+		return json.mapJSON { jo -> jo.fetchContent(null) }
 	}
 
-	override suspend fun getDetails(manga: Manga): Manga {
+	override suspend fun getDetails(manga: Content): Content {
 		val mangaId = manga.url.removePrefix("/")
 		return getDetails(mangaId)
 	}
 
-	override suspend fun resolveLink(resolver: LinkResolver, link: HttpUrl): Manga? {
+	override suspend fun resolveLink(resolver: LinkResolver, link: HttpUrl): Content? {
 		val regex = Regex("[0-9a-f\\-]{10,}", RegexOption.IGNORE_CASE)
 		val mangaId = link.pathSegments.find { regex.matches(it) } ?: return null
 		return getDetails(mangaId)
 	}
 
-	private suspend fun getDetails(mangaId: String): Manga = coroutineScope {
+	private suspend fun getDetails(mangaId: String): Content = coroutineScope {
 		val jsonDeferred = async {
 			webClient.httpGet(
 				"https://api.$domain/manga/${mangaId}?includes[]=artist&includes[]=author&includes[]=cover_art",
 			).parseJson().getJSONObject("data")
 		}
 		val feedDeferred = async { loadChapters(mangaId) }
-		jsonDeferred.await().fetchManga(mapChapters(feedDeferred.await()))
+		jsonDeferred.await().fetchContent(mapChapters(feedDeferred.await()))
 	}
 
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val json = webClient.httpGet(
 			"https://api.$domain/at-home/server/${chapter.url}?forcePort443=false",
 		).parseJson()
@@ -290,7 +290,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		val prefix = "${json.getString("baseUrl")}/$server/${chapterJson.getString("hash")}/"
 		return List(pages.length()) { i ->
 			val url = prefix + pages.getString(i)
-			MangaPage(
+			ContentPage(
 				id = generateUid(url),
 				url = url,
 				preview = null, // TODO prefix + dataSaver.getString(i),
@@ -299,11 +299,11 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 	}
 
-	private suspend fun fetchAvailableTags(): Set<MangaTag> {
+	private suspend fun fetchAvailableTags(): Set<ContentTag> {
 		val tags = webClient.httpGet("https://api.${domain}/manga/tag").parseJson()
 			.getJSONArray("data")
 		return tags.mapJSONToSet { jo ->
-			MangaTag(
+			ContentTag(
 				title = jo.getJSONObject("attributes").getJSONObject("name")
 					.firstStringValue()
 					.toTitleCase(Locale.ENGLISH),
@@ -322,7 +322,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			}
 	}
 
-	private fun JSONObject.fetchManga(chapters: List<MangaChapter>?): Manga {
+	private fun JSONObject.fetchContent(chapters: List<ContentChapter>?): Content {
 		val id = getString("id")
 		val attrs = getJSONObject("attributes")
 		val relations = getJSONArray("relationships").associateByKey("type")
@@ -338,7 +338,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 				it.getJSONObject("attributes")?.getStringOrNull("name")
 			}.orEmpty()
 
-		return Manga(
+		return Content(
 			id = generateUid(id),
 			title = requireNotNull(attrs.getJSONObject("title").selectByLocale()) {
 				"Title should not be null"
@@ -357,7 +357,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			largeCoverUrl = cover,
 			description = attrs.optJSONObject("description")?.selectByLocale(),
 			tags = attrs.getJSONArray("tags").mapJSONToSet { tag ->
-				MangaTag(
+				ContentTag(
 					title = tag.getJSONObject("attributes")
 						.getJSONObject("name")
 						.firstStringValue()
@@ -367,10 +367,10 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 				)
 			},
 			state = when (attrs.getStringOrNull("status")) {
-				"ongoing" -> MangaState.ONGOING
-				"completed" -> MangaState.FINISHED
-				"hiatus" -> MangaState.PAUSED
-				"cancelled" -> MangaState.ABANDONED
+				"ongoing" -> ContentState.ONGOING
+				"completed" -> ContentState.FINISHED
+				"hiatus" -> ContentState.PAUSED
+				"cancelled" -> ContentState.ABANDONED
 				else -> null
 			},
 			authors = authors,
@@ -457,14 +457,14 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 	}
 
-	private fun mapChapters(list: List<JSONObject>): List<MangaChapter> {
+	private fun mapChapters(list: List<JSONObject>): List<ContentChapter> {
 		// 2022-01-02T00:27:11+00:00
 		val dateFormat = SimpleDateFormat(
 			"yyyy-MM-dd'T'HH:mm:ss'+00:00'",
 			Locale.ROOT,
 		)
 		val chaptersBuilder = ChaptersListBuilder(list.size)
-		val branchedChapters = HashMap<String?, HashMap<Pair<Int, Float>, MangaChapter>>()
+		val branchedChapters = HashMap<String?, HashMap<Pair<Int, Float>, ContentChapter>>()
 		for (jo in list) {
 			val id = jo.getString("id")
 			val attrs = jo.getJSONObject("attributes")
@@ -482,7 +482,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 				val b = if (i == 0) lc else "$lc ($i)"
 				if (branchedChapters[b]?.get(volume to number) == null) b else null
 			}
-			val chapter = MangaChapter(
+			val chapter = ContentChapter(
 				id = generateUid(id),
 				title = attrs.getStringOrNull("title"),
 				number = number,

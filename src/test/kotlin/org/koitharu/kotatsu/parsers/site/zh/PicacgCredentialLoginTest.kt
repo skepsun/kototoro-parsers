@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.minutes
-import org.skepsun.kototoro.parsers.MangaLoaderContextIsolated
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextIsolated
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.util.getCookies
 
 /**
@@ -19,7 +19,7 @@ import org.skepsun.kototoro.parsers.util.getCookies
  */
 class PicacgCredentialLoginTest {
 
-    private val context = MangaLoaderContextIsolated
+    private val context = ContentLoaderContextIsolated
 
     @Test
     fun login_with_credentials_and_fetch_username() = runTest(timeout = 2.minutes) {
@@ -28,19 +28,19 @@ class PicacgCredentialLoginTest {
         val password = System.getenv("PICACG_PASSWORD")?.trim().orEmpty()
         assumeTrue(accountOrEmail.isNotBlank() && password.isNotBlank(), "Missing PICACG_ACCOUNT/PICACG_EMAIL or PICACG_PASSWORD, skipping")
 
-        val parser = context.newParserInstance(MangaParserSource.PICACG)
+        val parser = context.newParserInstance(ContentParserSource.PICACG)
         val domain = parser.domain
         println("[TEST] PICACG domain=$domain")
         println("[TEST] Cookies before login on $domain: " + context.cookieJar.getCookies(domain).map { it.name })
 
         val authProviderRaw = parser.authorizationProvider
-        val credentials = authProviderRaw as? MangaParserCredentialsAuthProvider
+        val credentials = authProviderRaw as? ContentParserCredentialsAuthProvider
             ?: error("Parser does not support credentials auth")
 
         val ok = credentials.login(accountOrEmail, password)
         assertTrue(ok, "登录方法返回 false")
 
-        val authProvider = parser.authorizationProvider as MangaParserAuthProvider
+        val authProvider = parser.authorizationProvider as ContentParserAuthProvider
         assertTrue(authProvider.isAuthorized(), "登录后 isAuthorized=false")
 
         val username = authProvider.getUsername()

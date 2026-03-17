@@ -5,27 +5,27 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
 import org.skepsun.kototoro.parsers.CategorizedFavoritesProvider
-import org.skepsun.kototoro.parsers.MangaFavoriteFolder
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentFavoriteFolder
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -46,13 +46,13 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlin.random.Random
 import org.jsoup.HttpStatusException
 
-@MangaSourceParser("WNACG", "紳士漫畫", "zh", type = ContentType.HENTAI_MANGA)
-internal class WnacgParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.WNACG, 30),
+@ContentSourceParser("WNACG", "紳士漫畫", "zh", type = ContentType.HENTAI_MANGA)
+internal class WnacgParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.WNACG, 30),
     FavoritesSyncProvider,
     CategorizedFavoritesProvider,
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider {
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider {
 
     override val authUrl: String
         get() = "https://$domain/"
@@ -77,8 +77,8 @@ internal class WnacgParser(context: MangaLoaderContext) :
     private var discoveredDomainsCache: List<String>? = null
     @Volatile
     private var lastSuccessfulDomain: String? = null
-    private val chapterPagesCache = object : LinkedHashMap<String, List<MangaPage>>(48, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MangaPage>>): Boolean {
+    private val chapterPagesCache = object : LinkedHashMap<String, List<ContentPage>>(48, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ContentPage>>): Boolean {
             return size > 48
         }
     }
@@ -191,23 +191,23 @@ internal class WnacgParser(context: MangaLoaderContext) :
     )
 
     // 提供过滤器标签（与站点现有类别一致）
-    private val availableCateTags: Set<MangaTag> = run {
+    private val availableCateTags: Set<ContentTag> = run {
         val ids = listOf(5, 1, 12, 16, 2, 22, 3, 6, 9, 13, 17, 7, 10, 14, 18, 19, 20, 21)
         ids.map { id ->
             val group = cateGroup[id]
             val sub = cateMap[id]
             val title = if (sub == null || sub == group) (group ?: sub ?: "分類") else "$group/$sub"
-            MangaTag(title = title, key = "cate-$id", source = source)
+            ContentTag(title = title, key = "cate-$id", source = source)
         }.toSet()
     }
 
-    private fun buildTag(title: String): MangaTag = MangaTag(
+    private fun buildTag(title: String): ContentTag = ContentTag(
         key = title,
         title = title,
         source = source,
     )
-    private fun composeTags(cateId: Int?, category: String?, groupTitle: String?): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>(2)
+    private fun composeTags(cateId: Int?, category: String?, groupTitle: String?): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>(2)
         val group = when {
             cateId != null -> cateGroup[cateId]
             !groupTitle.isNullOrBlank() -> groupTitle
@@ -230,18 +230,18 @@ internal class WnacgParser(context: MangaLoaderContext) :
         return null
     }
 
-    override val filterCapabilities: MangaListFilterCapabilities = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities = ContentListFilterCapabilities(
         isSearchSupported = true,
         isMultipleTagsSupported = true,
         isOriginalLocaleSupported = true,
     )
 
-    override suspend fun getFilterOptions() = MangaListFilterOptions(
+    override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableTags = availableCateTags,
         availableLocales = setOf(Locale.CHINESE),
     )
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 优先使用 cateId 过滤构建分类页 URL
         val cateId = filter.tags.firstOrNull { it.key.startsWith("cate-") }?.key?.substringAfter("cate-")?.toIntOrNull()
         val url = when {
@@ -279,17 +279,17 @@ internal class WnacgParser(context: MangaLoaderContext) :
             }
         }
         val doc = httpGetHtmlWithBackoff(url)
-        return parseMangaList(doc)
+        return parseContentList(doc)
     }
 
 
-    private fun parseMangaList(doc: Document): List<Manga> {
+    private fun parseContentList(doc: Document): List<Content> {
         // 优先解析首页分区：div.title_sort + div.bodywrap
         val titleBlocks = doc.select("div.title_sort")
         val contentBlocks = doc.select("div.bodywrap")
         if (titleBlocks.isNotEmpty() && contentBlocks.isNotEmpty()) {
             val n = minOf(titleBlocks.size, contentBlocks.size)
-            val out = ArrayList<Manga>(n * 20)
+            val out = ArrayList<Content>(n * 20)
             for (i in 0 until n) {
                 val groupTitle = titleBlocks[i].selectFirst("div.title_h2")?.text()?.trim()
                 val container = contentBlocks[i]
@@ -326,7 +326,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
                     val tags = composeTags(itemCateId, cateFromInfo, groupTitle)
 
                     out.add(
-                        Manga(
+                        Content(
                             id = generateUid(detailPath),
                             title = title,
                             altTitles = emptySet(),
@@ -381,7 +381,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
                 val itemCateId = li?.let { extractCateId(it) }
                 val tags = composeTags(itemCateId, cateFromInfo, groupTitle = null)
 
-                Manga(
+                Content(
                     id = generateUid(detailPath),
                     title = title,
                     altTitles = emptySet(),
@@ -434,7 +434,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
             val itemCateId = extractCateId(li)
             val tags = composeTags(itemCateId, cateFromInfo, groupTitle = null)
 
-            Manga(
+            Content(
                 id = generateUid(detailPath),
                 title = title,
                 altTitles = emptySet(),
@@ -451,7 +451,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = httpGetHtmlWithBackoff(manga.publicUrl)
         val id = extractIdFromUrl(manga.url) ?: extractIdFromUrl(doc.location())
         val title = doc.selectFirst("div.userwrap h2")?.text()?.trim()
@@ -464,14 +464,14 @@ internal class WnacgParser(context: MangaLoaderContext) :
         }
         val cover = normalizeCover(doc.selectFirst("div.userwrap .asTBcell.uwthumb img")?.src()) ?: manga.coverUrl
         val tags = doc.select("a.tagshow").mapToSet { a ->
-            MangaTag(
+            ContentTag(
                 key = a.text().trim(),
                 title = a.text().trim(),
                 source = source,
             )
         }
         val chapters = if (id != null) listOf(
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("/photos-slist-aid-$id.html"),
                 url = "/photos-slist-aid-$id.html",
                 title = title ?: manga.title,
@@ -499,7 +499,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         synchronized(chapterPagesCache) {
             chapterPagesCache[chapter.url]?.let { return it }
         }
@@ -524,7 +524,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
             if (urls.isNotEmpty()) {
                 lastSuccessfulDomain = host
                 val pages = urls.mapIndexed { i, url ->
-                    MangaPage(
+                    ContentPage(
                         id = i.toLong(),
                         url = url,
                         preview = null,
@@ -600,21 +600,21 @@ internal class WnacgParser(context: MangaLoaderContext) :
         return if (end == -1) sub.filter { it.isDigit() } else sub.substring(0, end).filter { it.isDigit() }
     }
 
-    override suspend fun fetchFavoriteFolders(): List<MangaFavoriteFolder> {
+    override suspend fun fetchFavoriteFolders(): List<ContentFavoriteFolder> {
         val headers = authorizedHeaders()
         val folders = loadFavoriteFolders(headers)
         return if (folders.isEmpty()) {
-            listOf(MangaFavoriteFolder("0", "My Favorites"))
+            listOf(ContentFavoriteFolder("0", "My Favorites"))
         } else {
-            folders.map { (id, name) -> MangaFavoriteFolder(id, name) }
+            folders.map { (id, name) -> ContentFavoriteFolder(id, name) }
         }
     }
 
-    override suspend fun fetchFavorites(folderId: String): List<Manga> {
+    override suspend fun fetchFavorites(folderId: String): List<Content> {
         val headers = authorizedHeaders()
         val folders = loadFavoriteFolders(headers)
         val folderName = if (folderId == "0") "My Favorites" else folders[folderId]
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         var page = 1
         var maxPage = Int.MAX_VALUE
         while (page <= maxPage) {
@@ -634,11 +634,11 @@ internal class WnacgParser(context: MangaLoaderContext) :
         return result
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         return fetchFavorites("0")
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         val headers = authorizedHeaders().newBuilder()
             .add("Content-Type", "application/x-www-form-urlencoded")
             .build()
@@ -654,7 +654,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
         return false
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         val headers = authorizedHeaders()
         val comicId = extractIdFromUrl(manga.url) ?: extractIdFromUrl(manga.publicUrl)
             ?: return false
@@ -707,9 +707,9 @@ internal class WnacgParser(context: MangaLoaderContext) :
         return folders.keys.firstOrNull() ?: "0"
     }
 
-    private fun parseFavoritePage(doc: Document, folderName: String?, folderId: String): List<Manga> {
+    private fun parseFavoritePage(doc: Document, folderName: String?, folderId: String): List<Content> {
         val tag = folderName?.takeIf { it.isNotBlank() }?.let {
-            MangaTag(key = "fav-$folderId", title = it, source = source)
+            ContentTag(key = "fav-$folderId", title = it, source = source)
         }
         return doc.select("div.asTB").mapNotNull { el ->
             val link = el.selectFirst("div.box_cel.u_listcon > p.l_title > a") ?: return@mapNotNull null
@@ -725,7 +725,7 @@ internal class WnacgParser(context: MangaLoaderContext) :
                 ?.let { onclick -> Regex("del-id-(\\d+)").find(onclick)?.groupValues?.getOrNull(1) }
             val tags = if (tag != null) setOf(tag) else emptySet()
 
-            Manga(
+            Content(
                 id = generateUid(detailPath),
                 title = title,
                 altTitles = emptySet(),

@@ -1,17 +1,17 @@
 package org.skepsun.kototoro.parsers.site.all
 
 import okhttp3.Headers
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import java.util.*
 
-@MangaSourceParser("BUONDUA", "Buondua", type = ContentType.HENTAI_MANGA)
-internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, MangaParserSource.BUONDUA, 20) {
+@ContentSourceParser("BUONDUA", "Buondua", type = ContentType.HENTAI_MANGA)
+internal class Buondua(context: ContentLoaderContext) : PagedContentParser(context, ContentParserSource.BUONDUA, 20) {
 
     override val configKeyDomain = ConfigKey.Domain("buondua.com")
 
@@ -20,8 +20,8 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
         SortOrder.POPULARITY
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false
         )
@@ -46,26 +46,26 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
         .add("Upgrade-Insecure-Requests", "1")
         .build()
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val categories = listOf(
-            MangaTag("Japan 🇯🇵", "jp-11853", source),
-            MangaTag("Cosplay 🎭", "cosplay-10688", source),
-            MangaTag("XiuRen ✨", "xiuren-7417", source),
-            MangaTag("Korean 🇰🇷", "korean-realgraphic-11066", source),
-            MangaTag("OtherXXX 🔞", "otherxxx-13913", source),
-            MangaTag("Pure Media 📸", "pure-media-10876", source),
-            MangaTag("JVID 🎥", "jvid-11832", source),
-            MangaTag("Bimilstory 📔", "bimilstory-11116", source),
-            MangaTag("MFStar ⭐", "mfstar-7419", source),
-            MangaTag("YouMei 🌸", "youmei-10700", source),
+            ContentTag("Japan 🇯🇵", "jp-11853", source),
+            ContentTag("Cosplay 🎭", "cosplay-10688", source),
+            ContentTag("XiuRen ✨", "xiuren-7417", source),
+            ContentTag("Korean 🇰🇷", "korean-realgraphic-11066", source),
+            ContentTag("OtherXXX 🔞", "otherxxx-13913", source),
+            ContentTag("Pure Media 📸", "pure-media-10876", source),
+            ContentTag("JVID 🎥", "jvid-11832", source),
+            ContentTag("Bimilstory 📔", "bimilstory-11116", source),
+            ContentTag("MFStar ⭐", "mfstar-7419", source),
+            ContentTag("YouMei 🌸", "youmei-10700", source),
         )
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = categories.toSet(),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val tag = filter.tags.firstOrNull()
         val baseUrl = buildString {
             append("https://")
@@ -100,7 +100,7 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
             val href = a.attrAsRelativeUrl("href")
             val img = a.selectFirst("img")
 
-            Manga(
+            Content(
                 id = generateUid(href),
                 title = img?.attr("alt")?.trim() ?: div.selectFirst("h2")?.text()?.trim() ?: "Unknown",
                 altTitles = emptySet(),
@@ -110,7 +110,7 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
                 contentRating = ContentRating.ADULT,
                 coverUrl = img?.absUrl("src").orEmpty(),
                 tags = div.select(".item-tags .tag").mapToSet { tagA ->
-                    MangaTag(
+                    ContentTag(
                         key = tagA.attr("href").substringAfterLast("/tag/"),
                         title = tagA.text().trim(),
                         source = source
@@ -123,12 +123,12 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         val article = doc.selectFirst("div.article.content") ?: doc.parseFailed("Cannot find article content")
 
         val tags = article.select(".article-tags .tag").mapToSet { a ->
-            MangaTag(
+            ContentTag(
                 key = a.attr("href").substringAfterLast("/tag/"),
                 title = a.text().trim(),
                 source = source
@@ -138,7 +138,7 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
         return manga.copy(
             tags = tags,
             chapters = listOf(
-                MangaChapter(
+                ContentChapter(
                     id = manga.id,
                     title = manga.title,
                     number = 1f,
@@ -153,11 +153,11 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val firstPageUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(firstPageUrl).parseHtml()
         
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         
         // Find all detail pages for this gallery
         val paginationLinks = doc.select(".pagination .pagination-link").mapNotNull { a ->
@@ -178,7 +178,7 @@ internal class Buondua(context: MangaLoaderContext) : PagedMangaParser(context, 
                 val src = img.absUrl("src")
                 if (src.isNotEmpty()) {
                     pages.add(
-                        MangaPage(
+                        ContentPage(
                             id = generateUid(src),
                             url = src,
                             preview = null,

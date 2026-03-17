@@ -1,8 +1,8 @@
 package org.skepsun.kototoro.parsers.util
 
 import org.junit.jupiter.api.Test
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.newParser
 import java.io.File
 
@@ -21,8 +21,8 @@ class IntentFilterGenerator {
             writer.appendTab().appendLine("<data android:scheme=\"http\" />")
             writer.appendTab().appendLine("<data android:scheme=\"https\" />")
             writer.appendLine()
-            for (source in MangaParserSource.entries) {
-                val parser = source.newParser(MangaLoaderContextMock)
+            for (source in ContentParserSource.entries) {
+                val parser = source.newParser(ContentLoaderContextMock)
                 parser.configKeyDomain.presetValues.forEach { domain ->
                     writer.appendTab().append("<data android:host=\"").append(domain).appendLine("\" />")
                 }

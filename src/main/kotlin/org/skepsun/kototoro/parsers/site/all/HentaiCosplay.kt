@@ -1,9 +1,9 @@
 package org.skepsun.kototoro.parsers.site.en
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
@@ -37,9 +37,9 @@ import java.util.EnumSet
  * - ✅ 标签支持
  * - ✅ 排序支持
  */
-@MangaSourceParser("HENTAICOSPLAY", "HentaiCosplay", type = ContentType.HENTAI_MANGA)
-internal class HentaiCosplay(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.HENTAICOSPLAY, pageSize = 30) {
+@ContentSourceParser("HENTAICOSPLAY", "HentaiCosplay", type = ContentType.HENTAI_MANGA)
+internal class HentaiCosplay(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.HENTAICOSPLAY, pageSize = 30) {
 
 	override val configKeyDomain = ConfigKey.Domain("hentai-cosplay-xxx.com")
 
@@ -51,72 +51,72 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 		SortOrder.NEWEST,       // 最近更新 (/recently/)
 	)
 
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
+	override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities(
 			isSearchSupported = false,
 			isMultipleTagsSupported = false,
 		)
 
-	override suspend fun getFilterOptions(): MangaListFilterOptions {
+	override suspend fun getFilterOptions(): ContentListFilterOptions {
 		// 常用标签列表
 		val tags = setOf(
 			// 角色/作品
-			MangaTag(title = "2B", key = "2b", source = source),
-			MangaTag(title = "Nier Automata", key = "nier-automata", source = source),
-			MangaTag(title = "Genshin Impact", key = "genshin-impact", source = source),
-			MangaTag(title = "Fate", key = "fate", source = source),
-			MangaTag(title = "Fate/Grand Order", key = "fategrand-order", source = source),
-			MangaTag(title = "Honkai Star Rail", key = "honkai-star-rail", source = source),
-			MangaTag(title = "Vocaloid", key = "vocaloid", source = source),
-			MangaTag(title = "Love Live", key = "lovelive", source = source),
-			MangaTag(title = "Chainsaw Man", key = "chainsaw-man", source = source),
-			MangaTag(title = "Makima", key = "makima", source = source),
-			MangaTag(title = "Power", key = "power", source = source),
-			MangaTag(title = "Shiranui Mai", key = "mai-shiranui", source = source),
+			ContentTag(title = "2B", key = "2b", source = source),
+			ContentTag(title = "Nier Automata", key = "nier-automata", source = source),
+			ContentTag(title = "Genshin Impact", key = "genshin-impact", source = source),
+			ContentTag(title = "Fate", key = "fate", source = source),
+			ContentTag(title = "Fate/Grand Order", key = "fategrand-order", source = source),
+			ContentTag(title = "Honkai Star Rail", key = "honkai-star-rail", source = source),
+			ContentTag(title = "Vocaloid", key = "vocaloid", source = source),
+			ContentTag(title = "Love Live", key = "lovelive", source = source),
+			ContentTag(title = "Chainsaw Man", key = "chainsaw-man", source = source),
+			ContentTag(title = "Makima", key = "makima", source = source),
+			ContentTag(title = "Power", key = "power", source = source),
+			ContentTag(title = "Shiranui Mai", key = "mai-shiranui", source = source),
 			
 			// 服装/风格
-			MangaTag(title = "Bunny Girl", key = "bunny-girl", source = source),
-			MangaTag(title = "Maid", key = "maid", source = source),
-			MangaTag(title = "Nurse", key = "nurse", source = source),
-			MangaTag(title = "School Uniform", key = "school-uniform", source = source),
-			MangaTag(title = "Swimsuit", key = "swimsuit", source = source),
-			MangaTag(title = "Bikini", key = "bikini", source = source),
-			MangaTag(title = "Lingerie", key = "lingerie", source = source),
-			MangaTag(title = "Latex", key = "latex", source = source),
-			MangaTag(title = "Pantyhose", key = "pantyhose", source = source),
-			MangaTag(title = "Stockings", key = "stockings", source = source),
-			MangaTag(title = "Fishnets", key = "fishnets", source = source),
-			MangaTag(title = "Thigh High Boots", key = "thigh-high-boots", source = source),
+			ContentTag(title = "Bunny Girl", key = "bunny-girl", source = source),
+			ContentTag(title = "Maid", key = "maid", source = source),
+			ContentTag(title = "Nurse", key = "nurse", source = source),
+			ContentTag(title = "School Uniform", key = "school-uniform", source = source),
+			ContentTag(title = "Swimsuit", key = "swimsuit", source = source),
+			ContentTag(title = "Bikini", key = "bikini", source = source),
+			ContentTag(title = "Lingerie", key = "lingerie", source = source),
+			ContentTag(title = "Latex", key = "latex", source = source),
+			ContentTag(title = "Pantyhose", key = "pantyhose", source = source),
+			ContentTag(title = "Stockings", key = "stockings", source = source),
+			ContentTag(title = "Fishnets", key = "fishnets", source = source),
+			ContentTag(title = "Thigh High Boots", key = "thigh-high-boots", source = source),
 			
 			// 特征
-			MangaTag(title = "Big Breasts", key = "big-breasts", source = source),
-			MangaTag(title = "Kemonomimi", key = "kemonomimi", source = source),
-			MangaTag(title = "Cat Ears", key = "cat-ears", source = source),
-			MangaTag(title = "Elf", key = "elf", source = source),
-			MangaTag(title = "Glasses", key = "glasses", source = source),
-			MangaTag(title = "Makeup", key = "makeup", source = source),
+			ContentTag(title = "Big Breasts", key = "big-breasts", source = source),
+			ContentTag(title = "Kemonomimi", key = "kemonomimi", source = source),
+			ContentTag(title = "Cat Ears", key = "cat-ears", source = source),
+			ContentTag(title = "Elf", key = "elf", source = source),
+			ContentTag(title = "Glasses", key = "glasses", source = source),
+			ContentTag(title = "Makeup", key = "makeup", source = source),
 			
 			// 类型
-			MangaTag(title = "Solo", key = "solo", source = source),
-			MangaTag(title = "Females Only", key = "females-only", source = source),
-			MangaTag(title = "Nude", key = "nude", source = source),
-			MangaTag(title = "Topless", key = "topless", source = source),
+			ContentTag(title = "Solo", key = "solo", source = source),
+			ContentTag(title = "Females Only", key = "females-only", source = source),
+			ContentTag(title = "Nude", key = "nude", source = source),
+			ContentTag(title = "Topless", key = "topless", source = source),
 			
 			// 地区
-			MangaTag(title = "Japanese", key = "japanese", source = source),
-			MangaTag(title = "Chinese", key = "chinese", source = source),
-			MangaTag(title = "Korean", key = "korean", source = source),
-			MangaTag(title = "Taiwan", key = "taiwan", source = source),
-			MangaTag(title = "Russia", key = "ロシア", source = source),
+			ContentTag(title = "Japanese", key = "japanese", source = source),
+			ContentTag(title = "Chinese", key = "chinese", source = source),
+			ContentTag(title = "Korean", key = "korean", source = source),
+			ContentTag(title = "Taiwan", key = "taiwan", source = source),
+			ContentTag(title = "Russia", key = "ロシア", source = source),
 		)
 		
-		return MangaListFilterOptions(
+		return ContentListFilterOptions(
 			availableTags = tags,
 			availableContentTypes = EnumSet.of(ContentType.HENTAI_MANGA),
 		)
 	}
 
-	override suspend fun getDetails(manga: Manga): Manga {
+	override suspend fun getDetails(manga: Content): Content {
 		val fullUrl = manga.url.toAbsoluteUrl(domain)
 		val doc = webClient.httpGet(fullUrl).parseHtml()
 		
@@ -128,7 +128,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 			val tagKey = a.attr("href").substringAfterLast("/search/tag/").substringBefore("/")
 			val tagTitle = a.text().trim()
 			if (tagKey.isNotEmpty() && tagTitle.isNotEmpty()) {
-				MangaTag(
+				ContentTag(
 					key = tagKey,
 					title = tagTitle.toTitleCase(),
 					source = source,
@@ -137,7 +137,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 		}
 		
 		// 创建单个章节（图集）
-		val chapter = MangaChapter(
+		val chapter = ContentChapter(
 			id = generateUid("${manga.url}|gallery"),
 			url = manga.url,
 			title = title,
@@ -161,7 +161,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 		)
 	}
 
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		// Use /story/ URL instead of /image/ to get the AMP page with all images
 		val storyUrl = chapter.url.replace("/image/", "/story/").toAbsoluteUrl(domain)
 		val doc = webClient.httpGet(storyUrl).parseHtml()
@@ -173,7 +173,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 			val imageUrl = element.attr("src")
 			if (imageUrl.isBlank()) return@mapIndexedNotNull null
 			
-			MangaPage(
+			ContentPage(
 				id = generateUid(imageUrl),
 				url = imageUrl.replace("http://", "https://"),
 				preview = null,
@@ -182,7 +182,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 		}
 	}
 
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
 		// 构建URL
 		val url = buildString {
 			append("https://")
@@ -229,7 +229,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 		}
 		
 		val doc = webClient.httpGet(url).parseHtml()
-		val items = ArrayList<Manga>(pageSize)
+		val items = ArrayList<Content>(pageSize)
 		
 		// Try desktop layout first
 		val desktopItems = doc.select("div.image-list-item:has(a[href*=/image/])")
@@ -253,7 +253,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 						.toTitleCase()
 				
 				items.add(
-					Manga(
+					Content(
 						id = generateUid(href),
 						url = href,
 						publicUrl = href.toAbsoluteUrl(domain),
@@ -287,7 +287,7 @@ internal class HentaiCosplay(context: MangaLoaderContext) :
 						.toTitleCase()
 				
 				items.add(
-					Manga(
+					Content(
 						id = generateUid(href),
 						url = href,
 						publicUrl = href.toAbsoluteUrl(domain),

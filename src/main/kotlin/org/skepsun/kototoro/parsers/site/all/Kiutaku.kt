@@ -2,17 +2,17 @@ package org.skepsun.kototoro.parsers.site.all
 
 import okhttp3.Headers
 import okhttp3.Response
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import java.util.*
 
-@MangaSourceParser("KIUTAKU", "Kiutaku", type = ContentType.HENTAI_MANGA)
-internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, MangaParserSource.KIUTAKU, 24) {
+@ContentSourceParser("KIUTAKU", "Kiutaku", type = ContentType.HENTAI_MANGA)
+internal class Kiutaku(context: ContentLoaderContext) : PagedContentParser(context, ContentParserSource.KIUTAKU, 24) {
 
     override val configKeyDomain = ConfigKey.Domain("kiutaku.com")
 
@@ -21,8 +21,8 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
         SortOrder.POPULARITY
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false
         )
@@ -47,21 +47,21 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
         .add("Upgrade-Insecure-Requests", "1")
         .build()
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val categories = listOf(
-            MangaTag("Cosplay 🎭", "272", source),
-            MangaTag("Genshin Impact ☄️", "516", source),
-            MangaTag("Honkai: Star Rail ✨", "1305", source),
-            MangaTag("Azur Lane ⚓", "165", source),
-            MangaTag("NIKKE 🔫", "899", source),
-            MangaTag("Wuthering Waves 🌊", "1723", source),
-            MangaTag("Chainsaw Man 🪚", "648", source),
-            MangaTag("2B ⚔️", "18", source),
-            MangaTag("Nier Automata 🤖", "19", source),
-            MangaTag("VTuber 🎙️", "1162", source),
+            ContentTag("Cosplay 🎭", "272", source),
+            ContentTag("Genshin Impact ☄️", "516", source),
+            ContentTag("Honkai: Star Rail ✨", "1305", source),
+            ContentTag("Azur Lane ⚓", "165", source),
+            ContentTag("NIKKE 🔫", "899", source),
+            ContentTag("Wuthering Waves 🌊", "1723", source),
+            ContentTag("Chainsaw Man 🪚", "648", source),
+            ContentTag("2B ⚔️", "18", source),
+            ContentTag("Nier Automata 🤖", "19", source),
+            ContentTag("VTuber 🎙️", "1162", source),
         )
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = categories.toSet(),
         )
     }
@@ -77,7 +77,7 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
         return chain.proceed(request)
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val tag = filter.tags.firstOrNull()
         val baseUrl = buildString {
             append("https://")
@@ -112,7 +112,7 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
             val href = a.attrAsRelativeUrl("href")
             val img = a.selectFirst("img")
 
-            Manga(
+            Content(
                 id = generateUid(href),
                 title = img?.attr("alt")?.trim() ?: div.selectFirst("h2")?.text()?.trim() ?: "Unknown",
                 altTitles = emptySet(),
@@ -122,7 +122,7 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
                 contentRating = ContentRating.ADULT,
                 coverUrl = img?.absUrl("src").orEmpty(),
                 tags = div.select(".item-tags .tag").mapToSet { tagA ->
-                    MangaTag(
+                    ContentTag(
                         key = tagA.attr("href").substringAfterLast("/tag/"),
                         title = tagA.text().trim(),
                         source = source
@@ -135,12 +135,12 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         val article = doc.selectFirst("div.article.content") ?: doc.parseFailed("Cannot find article content")
 
         val tags = article.select(".article-tags .tag").mapToSet { a ->
-            MangaTag(
+            ContentTag(
                 key = a.attr("href").substringAfterLast("/tag/"),
                 title = a.text().removePrefix("#").trim(),
                 source = source
@@ -150,7 +150,7 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
         return manga.copy(
             tags = tags,
             chapters = listOf(
-                MangaChapter(
+                ContentChapter(
                     id = manga.id,
                     title = manga.title,
                     number = 1f,
@@ -165,11 +165,11 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val firstPageUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(firstPageUrl).parseHtml()
         
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         
         // Find all detail pages for this gallery
         val paginationLinks = doc.select(".pagination .pagination-link").mapNotNull { a ->
@@ -191,7 +191,7 @@ internal class Kiutaku(context: MangaLoaderContext) : PagedMangaParser(context, 
                 val src = img.absUrl("src")
                 if (src.isNotEmpty()) {
                     pages.add(
-                        MangaPage(
+                        ContentPage(
                             id = generateUid(src),
                             url = src,
                             preview = null,

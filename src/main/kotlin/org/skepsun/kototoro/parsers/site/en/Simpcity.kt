@@ -4,23 +4,23 @@ import okhttp3.Headers
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.attrAsRelativeUrl
@@ -36,26 +36,26 @@ import java.util.ArrayDeque
 import java.util.EnumSet
 import java.util.Locale
 
-@MangaSourceParser("SIMPCITY", "SimpCity", "en", type = ContentType.HENTAI_MANGA)
-internal class Simpcity(context: MangaLoaderContext) : SimpcityBaseParser(
+@ContentSourceParser("SIMPCITY", "SimpCity", "en", type = ContentType.HENTAI_MANGA)
+internal class Simpcity(context: ContentLoaderContext) : SimpcityBaseParser(
     context = context,
-    source = MangaParserSource.valueOf("SIMPCITY"),
+    source = ContentParserSource.valueOf("SIMPCITY"),
     videoOnly = false,
 )
 
 @Broken("Under development")
-@MangaSourceParser("SIMPCITY_VIDEO", "SimpCity Video", "en", type = ContentType.HENTAI_VIDEO)
-internal class SimpcityVideo(context: MangaLoaderContext) : SimpcityBaseParser(
+@ContentSourceParser("SIMPCITY_VIDEO", "SimpCity Video", "en", type = ContentType.HENTAI_VIDEO)
+internal class SimpcityVideo(context: ContentLoaderContext) : SimpcityBaseParser(
     context = context,
-    source = MangaParserSource.valueOf("SIMPCITY_VIDEO"),
+    source = ContentParserSource.valueOf("SIMPCITY_VIDEO"),
     videoOnly = true,
 )
 
 internal abstract class SimpcityBaseParser(
-    context: MangaLoaderContext,
-    source: MangaParserSource,
+    context: ContentLoaderContext,
+    source: ContentParserSource,
     private val videoOnly: Boolean,
-) : PagedMangaParser(context, source, pageSize = 24), MangaParserAuthProvider {
+) : PagedContentParser(context, source, pageSize = 24), ContentParserAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("simpcity.cr", "simpcity.su")
     private val replyChaptersKey = ConfigKey.Toggle("reply_chapters", "Reply Chapters (media posts)", false)
@@ -73,13 +73,13 @@ internal abstract class SimpcityBaseParser(
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val now = System.currentTimeMillis()
         if (cachedForumTags != null && cachedHomeLabelTags != null && (now - lastCacheTime) < CACHE_TTL) {
             logDebug("getFilterOptions: using cached tags")
@@ -98,7 +98,7 @@ internal abstract class SimpcityBaseParser(
         return buildFilterOptions(forumTags, homeLabelTags)
     }
 
-    private suspend fun buildFilterOptions(forumTags: Set<MangaTag>, homeLabelTags: Set<MangaTag>): MangaListFilterOptions {
+    private suspend fun buildFilterOptions(forumTags: Set<ContentTag>, homeLabelTags: Set<ContentTag>): ContentListFilterOptions {
         val forumPath = forumTags.firstOrNull { it.title.contains("onlyfans", ignoreCase = true) }
             ?.key
             ?.substringAfter(FORUM_KEY_PREFIX)
@@ -107,16 +107,16 @@ internal abstract class SimpcityBaseParser(
         val prefixTags = fetchPrefixTags(forumPath)
         
         val groups = buildList {
-            if (forumTags.isNotEmpty()) add(MangaTagGroup("Forums", forumTags))
-            if (prefixTags.isNotEmpty()) add(MangaTagGroup("Prefixes", prefixTags))
-            if (homeLabelTags.isNotEmpty()) add(MangaTagGroup("Home Labels", homeLabelTags))
+            if (forumTags.isNotEmpty()) add(ContentTagGroup("Forums", forumTags))
+            if (prefixTags.isNotEmpty()) add(ContentTagGroup("Prefixes", prefixTags))
+            if (homeLabelTags.isNotEmpty()) add(ContentTagGroup("Home Labels", homeLabelTags))
         }
-        val allTags = LinkedHashSet<MangaTag>(forumTags.size + prefixTags.size + homeLabelTags.size).apply {
+        val allTags = LinkedHashSet<ContentTag>(forumTags.size + prefixTags.size + homeLabelTags.size).apply {
             addAll(forumTags)
             addAll(prefixTags)
             addAll(homeLabelTags)
         }
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             tagGroups = groups,
             availableContentTypes = if (videoOnly) {
@@ -143,7 +143,7 @@ internal abstract class SimpcityBaseParser(
             ?: "SimpCity User"
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         if (!filter.query.isNullOrBlank()) {
             return searchThreads(page, filter.query)
         }
@@ -235,14 +235,14 @@ internal abstract class SimpcityBaseParser(
         return safeNodeRows
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val threadUrl = manga.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(threadUrl, getRequestHeaders()).parseHtml()
         if (isLoginPage(doc)) throw AuthRequiredException(source)
         val titleElement = doc.selectFirst("h1.p-title-value")
         titleElement?.select(".label")?.remove()
         val title = titleElement?.text()?.trim().orEmpty().ifBlank { manga.title }
-        val tags = LinkedHashSet<MangaTag>().apply {
+        val tags = LinkedHashSet<ContentTag>().apply {
             addAll(manga.tags)
             addAll(parseTags(doc))
         }
@@ -269,7 +269,7 @@ internal abstract class SimpcityBaseParser(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val isVideoUrl = chapter.url.startsWith(VIDEO_TOKEN_PREFIX)
         val replyPostId = chapter.url.substringAfter(REPLY_CHAPTER_MARKER, "")
             .trim()
@@ -290,7 +290,7 @@ internal abstract class SimpcityBaseParser(
             
             return media.mapIndexed { index, item ->
                 val videoHeaders = getPlayHeaders(item.url, firstPageUrl)
-                MangaPage(
+                ContentPage(
                     id = generateUid("${chapter.id}#$index:${item.url}"),
                     url = item.url,
                     preview = item.preview,
@@ -348,7 +348,7 @@ internal abstract class SimpcityBaseParser(
         }
 
         return filteredMedia.mapIndexed { index, item ->
-            MangaPage(
+            ContentPage(
                 id = generateUid("${chapter.id}#${index}:${item.url}"),
                 url = item.url,
                 preview = item.preview,
@@ -401,7 +401,7 @@ internal abstract class SimpcityBaseParser(
         return headers
     }
 
-    private suspend fun searchThreads(page: Int, query: String): List<Manga> {
+    private suspend fun searchThreads(page: Int, query: String): List<Content> {
         val searchUrl = buildString {
             append("https://").append(domain)
             append("/search/search?keywords=").append(query.urlEncoded())
@@ -462,10 +462,10 @@ internal abstract class SimpcityBaseParser(
         return if (params.isEmpty()) withPage else "$withPage?${params.joinToString("&")}"
     }
 
-    private fun parseSearchLink(link: Element): Manga? {
+    private fun parseSearchLink(link: Element): Content? {
         val path = normalizeThreadPath(link.attr("href")) ?: return null
         val title = link.text().trim().ifBlank { return null }
-        return Manga(
+        return Content(
             id = generateUid(path),
             title = title,
             altTitles = emptySet(),
@@ -481,12 +481,12 @@ internal abstract class SimpcityBaseParser(
         )
     }
 
-    private fun parseThreadCards(doc: Document): List<Manga> {
+    private fun parseThreadCards(doc: Document): List<Content> {
         val cards = doc.select(".structItem--thread, li.structItem")
         if (cards.isEmpty()) {
             return emptyList()
         }
-        val result = ArrayList<Manga>(cards.size)
+        val result = ArrayList<Content>(cards.size)
         val seen = HashSet<String>(cards.size)
         for (card in cards) {
             val link = card.selectFirst(".structItem-title a[href*='/threads/'], a[data-tp-primary='on'][href*='/threads/'], a[href*='/threads/']")
@@ -502,11 +502,11 @@ internal abstract class SimpcityBaseParser(
             val cover = extractCoverFromContainer(card)
             val tags = card.select(".label--prefix, .labelLink, a[href*='prefix_id']").mapNotNull { item ->
                 val t = item.text().trim()
-                if (t.isBlank()) null else MangaTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
+                if (t.isBlank()) null else ContentTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
             }.toSet()
             val author = card.selectFirst("a.username")?.text()?.trim()
 
-            result += Manga(
+            result += Content(
                 id = generateUid(path),
                 title = finalTitle,
                 altTitles = emptySet(),
@@ -524,7 +524,7 @@ internal abstract class SimpcityBaseParser(
         return result
     }
 
-    private fun parseThreadLinksFlat(doc: Document): List<Manga> {
+    private fun parseThreadLinksFlat(doc: Document): List<Content> {
         val links = doc.select(
             ".structItem-title a[href*='/threads/'], " +
                 "a[data-tp-primary='on'][href*='/threads/'], " +
@@ -533,7 +533,7 @@ internal abstract class SimpcityBaseParser(
                 "a[href*='/threads/'][title]"
         )
         if (links.isEmpty()) return emptyList()
-        val result = ArrayList<Manga>(links.size)
+        val result = ArrayList<Content>(links.size)
         val seen = HashSet<String>(links.size)
         for (link in links) {
             val base = parseSearchLink(link) ?: continue
@@ -591,12 +591,12 @@ internal abstract class SimpcityBaseParser(
         return absUrl
     }
 
-    private fun parseTagsFromContainer(container: Element?, link: Element): Set<MangaTag> {
+    private fun parseTagsFromContainer(container: Element?, link: Element): Set<ContentTag> {
         val scope = container ?: link
         return scope.select(".label--prefix, .labelLink .label, .label, a[href*='prefix_id']")
             .mapNotNull { item ->
                 val t = item.text().trim()
-                if (t.isBlank()) null else MangaTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
+                if (t.isBlank()) null else ContentTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
             }
             .toSet()
     }
@@ -685,10 +685,10 @@ internal abstract class SimpcityBaseParser(
         return result.toList()
     }
 
-    private fun parseWhatsNewRows(doc: Document): List<Manga> {
+    private fun parseWhatsNewRows(doc: Document): List<Content> {
         val rows = doc.select("li.block-row .contentRow, .contentRow")
         if (rows.isEmpty()) return emptyList()
-        val result = ArrayList<Manga>(rows.size)
+        val result = ArrayList<Content>(rows.size)
         val seen = HashSet<String>(rows.size)
         for (row in rows) {
             val link = row.selectFirst(".contentRow-title a[href*='/threads/'], .contentRow-main > a[href*='/threads/'], .contentRow-main a[href*='/threads/']") ?: continue
@@ -700,10 +700,10 @@ internal abstract class SimpcityBaseParser(
             val cover = extractCoverFromContainer(row)
             val tags = row.select(".label").mapNotNull { item ->
                 val t = item.text().trim()
-                if (t.isBlank()) null else MangaTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
+                if (t.isBlank()) null else ContentTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
             }.toSet()
             val author = row.selectFirst("a.username")?.text()?.trim()
-            result += Manga(
+            result += Content(
                 id = generateUid(path),
                 title = title,
                 altTitles = emptySet(),
@@ -721,10 +721,10 @@ internal abstract class SimpcityBaseParser(
         return result
     }
 
-    private fun parseNodeExtraRows(doc: Document): List<Manga> {
+    private fun parseNodeExtraRows(doc: Document): List<Content> {
         val links = doc.select(".node-extra-title[href*='/threads/'], a.node-extra-title[href*='/threads/']")
         if (links.isEmpty()) return emptyList()
-        val result = ArrayList<Manga>(links.size)
+        val result = ArrayList<Content>(links.size)
         val seen = HashSet<String>(links.size)
         for (link in links) {
             val path = normalizeThreadPath(link.attr("href")) ?: continue
@@ -733,9 +733,9 @@ internal abstract class SimpcityBaseParser(
             val cover = extractCoverFromContainer(link.closest(".node-extra-row"))
             val tags = link.select(".label").mapNotNull { item ->
                 val t = item.text().trim()
-                if (t.isBlank()) null else MangaTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
+                if (t.isBlank()) null else ContentTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
             }.toSet()
-            result += Manga(
+            result += Content(
                 id = generateUid(path),
                 title = title,
                 altTitles = emptySet(),
@@ -753,20 +753,20 @@ internal abstract class SimpcityBaseParser(
         return result
     }
 
-    private fun parseTags(doc: Document): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun parseTags(doc: Document): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         doc.select("a.tagItem, a.labelLink, a[href*='/tags/'], .label--prefix, h1.p-title-value .label").forEach { a ->
             val title = a.text().trim()
             if (title.isBlank()) return@forEach
             val rawKey = a.attr("href").substringAfterLast('/').substringBefore('?').ifBlank {
                 title.lowercase(Locale.ROOT)
             }
-            tags += MangaTag(title = title, key = rawKey, source = source)
+            tags += ContentTag(title = title, key = rawKey, source = source)
         }
         return tags
     }
 
-    private suspend fun buildChapters(doc: Document, threadPath: String): List<MangaChapter> {
+    private suspend fun buildChapters(doc: Document, threadPath: String): List<ContentChapter> {
         if (videoOnly) {
             return buildVideoChapters(doc, threadPath)
         }
@@ -778,7 +778,7 @@ internal abstract class SimpcityBaseParser(
         
         val pagePaths = collectThreadPageUrls(doc, threadPath)
         return pagePaths.mapIndexed { index, path ->
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("${threadPath}#p${index + 1}"),
                 title = if (pagePaths.size > 1) "Page ${index + 1}" else "Thread",
                 number = (index + 1).toFloat(),
@@ -792,13 +792,13 @@ internal abstract class SimpcityBaseParser(
         }
     }
 
-    private suspend fun buildVideoChapters(firstDoc: Document, threadPath: String): List<MangaChapter> {
+    private suspend fun buildVideoChapters(firstDoc: Document, threadPath: String): List<ContentChapter> {
         val pagePaths = collectThreadPageUrls(
             doc = firstDoc,
             threadPath = threadPath,
         ).take(MAX_VIDEO_AUTO_SCAN_PAGES)
         
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         var videoOrdinal = 1
         
         pagePaths.forEachIndexed { pageIndex, path ->
@@ -817,7 +817,7 @@ internal abstract class SimpcityBaseParser(
                 val media = extractMediaFromBlock(post).filter { it.kind == MediaKind.VIDEO || it.kind == MediaKind.EMBED }
                 
                 media.forEach { item ->
-                    chapters += MangaChapter(
+                    chapters += ContentChapter(
                         id = generateUid("${threadPath}#video:${item.url}"),
                         title = "Video $videoOrdinal - $author ($date)".trim(),
                         number = videoOrdinal.toFloat(),
@@ -835,12 +835,12 @@ internal abstract class SimpcityBaseParser(
         return chapters
     }
 
-    private suspend fun buildReplyChapters(firstDoc: Document, threadPath: String): List<MangaChapter> {
+    private suspend fun buildReplyChapters(firstDoc: Document, threadPath: String): List<ContentChapter> {
         val pagePaths = collectThreadPageUrls(
             doc = firstDoc,
             threadPath = threadPath,
         ).take(MAX_REPLY_CHAPTER_SCAN_PAGES)
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         var ordinal = 1
         pagePaths.forEachIndexed { pageIndex, path ->
             val doc = if (pageIndex == 0) firstDoc else webClient.httpGet(path.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
@@ -851,7 +851,7 @@ internal abstract class SimpcityBaseParser(
                 if (!postContainsMedia(post)) return@forEach
                 val author = post.selectFirst("a.username")?.text()?.trim().orEmpty()
                 val title = if (author.isBlank()) "Reply $ordinal" else "Reply $ordinal - $author"
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = generateUid("${threadPath}#reply:$postId"),
                     title = title,
                     number = ordinal.toFloat(),
@@ -899,7 +899,7 @@ internal abstract class SimpcityBaseParser(
         return finalPaths
     }
 
-    private suspend fun fetchPrefixTags(forumPath: String): Set<MangaTag> {
+    private suspend fun fetchPrefixTags(forumPath: String): Set<ContentTag> {
         val now = System.currentTimeMillis()
         cachedPrefixTags[forumPath]?.takeIf { (now - lastCacheTime) < CACHE_TTL }?.let { return it }
 
@@ -907,10 +907,10 @@ internal abstract class SimpcityBaseParser(
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         logDocShape("fetchPrefixTags", doc)
         if (isLoginPage(doc)) throw AuthRequiredException(source)
-        val tags = LinkedHashSet<MangaTag>()
+        val tags = LinkedHashSet<ContentTag>()
         doc.select("a[href*='prefix_id'], input[name*='prefix_id'], select[name*='prefix_id'] option[value]").forEach { el ->
             val pair = parsePrefixIdAndTitle(el) ?: return@forEach
-            tags += MangaTag(
+            tags += ContentTag(
                 title = pair.second,
                 key = "$PREFIX_KEY_PREFIX${pair.first}",
                 source = source,
@@ -920,12 +920,12 @@ internal abstract class SimpcityBaseParser(
         return tags
     }
 
-    private fun parseForumTags(doc: Document): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun parseForumTags(doc: Document): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         doc.select("a[href*='/forums/'], .node-title a[href*='/forums/']").forEach { a ->
             val path = normalizeForumPath(a.attr("href")) ?: return@forEach
             val title = a.text().trim().ifBlank { return@forEach }
-            tags += MangaTag(
+            tags += ContentTag(
                 title = title,
                 key = "$FORUM_KEY_PREFIX$path",
                 source = source,
@@ -934,12 +934,12 @@ internal abstract class SimpcityBaseParser(
         return tags
     }
 
-    private fun parseHomeLabelTags(doc: Document): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun parseHomeLabelTags(doc: Document): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         doc.select(".node-extra-title .label, .structItem-title .label, .label").forEach { el ->
             val title = el.text().trim()
             if (title.isBlank()) return@forEach
-            tags += MangaTag(
+            tags += ContentTag(
                 title = title,
                 key = "$LABEL_KEY_PREFIX$title",
                 source = source,
@@ -965,11 +965,11 @@ internal abstract class SimpcityBaseParser(
         return id to title
     }
 
-    private fun selectedForumPath(filter: MangaListFilter): String? {
+    private fun selectedForumPath(filter: ContentListFilter): String? {
         return filter.tags.firstOrNull { it.key.startsWith(FORUM_KEY_PREFIX) }?.key?.substringAfter(FORUM_KEY_PREFIX)
     }
 
-    private fun selectedPrefixIds(filter: MangaListFilter): List<String> {
+    private fun selectedPrefixIds(filter: ContentListFilter): List<String> {
         return filter.tags
             .asSequence()
             .mapNotNull { tag ->
@@ -980,7 +980,7 @@ internal abstract class SimpcityBaseParser(
             .toList()
     }
 
-    private fun selectedLabelTitles(filter: MangaListFilter): List<String> {
+    private fun selectedLabelTitles(filter: ContentListFilter): List<String> {
         return filter.tags
             .asSequence()
             .mapNotNull { tag ->
@@ -992,7 +992,7 @@ internal abstract class SimpcityBaseParser(
             .toList()
     }
 
-    private suspend fun resolveSelectedPrefixIds(filter: MangaListFilter, forumPath: String): List<String> {
+    private suspend fun resolveSelectedPrefixIds(filter: ContentListFilter, forumPath: String): List<String> {
         val explicit = selectedPrefixIds(filter).toMutableSet()
         val labelTitles = selectedLabelTitles(filter)
         if (labelTitles.isEmpty()) return explicit.toList()
@@ -1085,7 +1085,7 @@ internal abstract class SimpcityBaseParser(
 
     private fun selectMediaByMode(all: List<MediaItem>): List<MediaItem> {
         if (!videoOnly) {
-            // Manga mode: strictly only images to prevent errors in reader
+            // Content mode: strictly only images to prevent errors in reader
             return all.filter { it.kind == MediaKind.IMAGE }
         }
         val hostDirect = all.filter { it.kind == MediaKind.VIDEO && isExternalVideoHostUrl(it.url) }
@@ -1460,9 +1460,9 @@ internal abstract class SimpcityBaseParser(
         private const val MAX_REPLY_CHAPTER_SCAN_PAGES = 20
         private const val MAX_REPLY_CHAPTER_COUNT = 500
 
-        private var cachedForumTags: Set<MangaTag>? = null
-        private var cachedHomeLabelTags: Set<MangaTag>? = null
-        private val cachedPrefixTags = HashMap<String, Set<MangaTag>>()
+        private var cachedForumTags: Set<ContentTag>? = null
+        private var cachedHomeLabelTags: Set<ContentTag>? = null
+        private val cachedPrefixTags = HashMap<String, Set<ContentTag>>()
         private var lastCacheTime = 0L
         private const val CACHE_TTL = 3600_000L // 1 hour
     }

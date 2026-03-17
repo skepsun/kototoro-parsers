@@ -5,25 +5,25 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.Demographic
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaState
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentState
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.YEAR_UNKNOWN
@@ -48,11 +48,11 @@ import org.skepsun.kototoro.parsers.util.getCookies
 import java.util.EnumSet
 import java.util.Locale
 
-@MangaSourceParser("MANHUAGUI", "漫画柜", "zh")
-internal class ManhuaguiParser(context: MangaLoaderContext) :
-	PagedMangaParser(context, MangaParserSource.MANHUAGUI, pageSize = 42),
-	MangaParserAuthProvider,
-	MangaParserCredentialsAuthProvider,
+@ContentSourceParser("MANHUAGUI", "漫画柜", "zh")
+internal class ManhuaguiParser(context: ContentLoaderContext) :
+	PagedContentParser(context, ContentParserSource.MANHUAGUI, pageSize = 42),
+	ContentParserAuthProvider,
+	ContentParserCredentialsAuthProvider,
     FavoritesProvider,
     FavoritesSyncProvider {
 
@@ -88,8 +88,8 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 			SortOrder.RATING, // 评分最高
 		)
 
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
+	override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities(
 			isSearchSupported = true,
 			isYearSupported = true,
 			isOriginalLocaleSupported = true,
@@ -97,14 +97,14 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 
     	private val fetchedTags = suspendLazy(initializer = ::fetchAvailableTags)
 
-    	override suspend fun getFilterOptions() = MangaListFilterOptions(
+    	override suspend fun getFilterOptions() = ContentListFilterOptions(
 		availableLocales = setOf(
 			Locale.JAPAN, Locale.TRADITIONAL_CHINESE, Locale.ROOT,
 			Locale.US, Locale.SIMPLIFIED_CHINESE, Locale.KOREA,
 		),
 		availableTags = fetchedTags.get(),
 		availableDemographics = EnumSet.complementOf(EnumSet.of(Demographic.JOSEI)),
-		availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+		availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
 	)
 
 	private val listUrl = "/list"
@@ -126,7 +126,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 			else -> null
 		}
 
-		is MangaTag -> key
+		is ContentTag -> key
 
 		is Demographic -> when (this) {
 			Demographic.SHOUJO -> "shaonv" // 少女
@@ -147,9 +147,9 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 			else -> null
 		}
 
-		is MangaState -> when (this) {
-			MangaState.ONGOING -> "lianzai" // 连载
-			MangaState.FINISHED -> "wanjie" // 完结
+		is ContentState -> when (this) {
+			ContentState.ONGOING -> "lianzai" // 连载
+			ContentState.FINISHED -> "wanjie" // 完结
 			else -> null
 		}
 
@@ -170,8 +170,8 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 	override suspend fun getListPage(
 		page: Int,
 		order: SortOrder,
-		filter: MangaListFilter,
-	): List<Manga> {
+		filter: ContentListFilter,
+	): List<Content> {
         
         // Flag of whether there is title query param
 		var flagHasTitleQuery = false 
@@ -221,7 +221,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 					li.selectFirst(if (flagHasTitleQuery) "div.book-score > p:first-child > strong" else "span.updateon > em")
 				val href = a.attrOrThrow("href")
 				val rating = em?.text()?.toFloat()?.div(10) ?: RATING_UNKNOWN
-				Manga(
+				Content(
 					id = generateUid(href),
 					title = a.attr("title"),
 					altTitles = emptySet(),
@@ -238,7 +238,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 			}
 	}
 
-	override suspend fun getDetails(manga: Manga): Manga {
+	override suspend fun getDetails(manga: Content): Content {
 		val doc = webClient.httpGet(manga.publicUrl).parseHtml()
 
 		val altTitles = doc.select(".book-title h2").eachText().toSet()
@@ -249,7 +249,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 			}
 		}
 		val tags = doc.select("ul.detail-list > li:nth-child(2) > span:first-child > a").mapToSet { e ->
-			MangaTag(
+			ContentTag(
 				title = e.text(),
 				key = e.attr("href").removePrefix(listUrl).removeSurrounding("/"),
 				source = source,
@@ -257,8 +257,8 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 		}
 		val state = doc.selectFirst("li.status > span > span")?.className()?.let { className ->
 			when (className) {
-				"red" -> MangaState.ONGOING
-				"dgreen" -> MangaState.FINISHED
+				"red" -> ContentState.ONGOING
+				"dgreen" -> ContentState.FINISHED
 				else -> null
 			}
 		}
@@ -277,7 +277,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 		)
 	}
 
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val chapUrl = chapter.url.toAbsoluteUrl(domain)
 		val doc = webClient.httpGet(chapUrl).parseHtml()
 		val regex = Regex("""^.*\}\('(.*)',(\d*),(\d*),'([\w\+/=]*)'.*${'$'}""", RegexOption.MULTILINE)
@@ -294,7 +294,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 
 		return files.asTypedList<String>().map { it ->
 			val fullUrl = (semiFullUrl + it).addQueryParameters(signature)
-			MangaPage(
+			ContentPage(
 				id = generateUid(fullUrl),
 				url = fullUrl,
 				preview = fullUrl,
@@ -305,13 +305,13 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 
     	// private funs
 
-    	private suspend fun fetchAvailableTags(): Set<MangaTag> {
+    	private suspend fun fetchAvailableTags(): Set<ContentTag> {
 		val doc = webClient.httpGet(listUrl.toAbsoluteUrl(domain)).parseHtml()
 		val tags = doc.selectOrThrow("div.filter-nav > .filter.genre > ul > li > a").drop(1)
 		return tags.mapToSet { a ->
 			val title = a.text()
 			val key = a.attr("href").removePrefix(listUrl).removeSurrounding("/")
-			MangaTag(
+			ContentTag(
 				title = title,
 				key = key,
 				source = source,
@@ -319,7 +319,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 		}
 	}
 
-	private fun parseChapters(doc: Document, url: String? = null): List<MangaChapter> {
+	private fun parseChapters(doc: Document, url: String? = null): List<ContentChapter> {
 		val (sectionTitles, sectionChapters) = doc.selectFirst("#__VIEWSTATE").let {
 			if (it != null) {
 				val viewStateStr = decompressLZStringFromBase64(it.attrOrThrow("value"))
@@ -345,7 +345,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 					it.select("li a").asReversed()
 				}
 				chaps.mapChapters { chapIdx, chap ->
-					MangaChapter(
+					ContentChapter(
 						url = chap.attrOrThrow("href"),
 						id = generateUid(chap.attrOrThrow("href")),
 						title = chap.attrOrThrow("title"),
@@ -498,12 +498,12 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 		return isAuthorized()
 	}
 
-	override suspend fun fetchFavorites(): List<Manga> {
+	override suspend fun fetchFavorites(): List<Content> {
 		if (!isAuthorized()) throw AuthRequiredException(source)
 		val headers = getRequestHeaders().newBuilder()
 			.add("Cookie", context.cookieJar.getCookies(domain).joinToString("; ") { "${it.name}=${it.value}" })
 			.build()
-		val result = mutableListOf<Manga>()
+		val result = mutableListOf<Content>()
 		var page = 1
 		while (true) {
 			val url = "https://$domain/user/book/shelf/$page"
@@ -524,7 +524,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 				val hrefRel = "/comic/$id/"
 				if (id.isNotEmpty()) {
 					result.add(
-						Manga(
+						Content(
 							id = generateUid(hrefRel),
 							url = hrefRel,
 							publicUrl = "https://$domain$hrefRel",
@@ -548,7 +548,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 		return result
 	}
 
-	override suspend fun addFavorite(manga: Manga): Boolean {
+	override suspend fun addFavorite(manga: Content): Boolean {
 		if (!isAuthorized()) throw AuthRequiredException(source)
 		val headers = getRequestHeaders().newBuilder()
 			.add("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
@@ -564,7 +564,7 @@ internal class ManhuaguiParser(context: MangaLoaderContext) :
 		return resp.isSuccessful
 	}
 
-	override suspend fun removeFavorite(manga: Manga): Boolean {
+	override suspend fun removeFavorite(manga: Content): Boolean {
 		throw ParseException("漫画柜暂不支持取消收藏", "https://$domain/")
 	}
 }

@@ -7,18 +7,18 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseJsonObject
@@ -30,9 +30,9 @@ import java.util.EnumSet
  * 参考 venera-configs/comic_walker.js
  */
 @Broken
-@MangaSourceParser("COMIC_WALKER", "カドコミ", "ja")
-internal class ComicWalkerParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.COMIC_WALKER, pageSize = 20) {
+@ContentSourceParser("COMIC_WALKER", "カドコミ", "ja")
+internal class ComicWalkerParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.COMIC_WALKER, pageSize = 20) {
 
     override val configKeyDomain = ConfigKey.Domain("mobileapp.comic-walker.com")
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
@@ -44,15 +44,15 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
     @Volatile
     private var token: String? = null
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions =
-        MangaListFilterOptions(availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE))
+    override suspend fun getFilterOptions(): ContentListFilterOptions =
+        ContentListFilterOptions(availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE))
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("User-Agent", "BookWalkerApp/$appVersion (Android 13)")
@@ -61,7 +61,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         .add("Content-Type", "application/json")
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page)
         }
@@ -81,7 +81,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         }
 
         val seen = HashSet<String>()
-        val comics = mutableListOf<Manga>()
+        val comics = mutableListOf<Content>()
         sections.forEach { arr ->
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
@@ -90,7 +90,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
                 if (id.isNotEmpty() && title.isNotEmpty() && seen.add(id)) {
                     val cover = obj.optString("thumbnail_1x1").ifEmpty { obj.optString("image_url") }
                     comics.add(
-                        Manga(
+                        Content(
                             id = generateUid(id),
                             url = id,
                             publicUrl = "",
@@ -111,11 +111,11 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         return comics
     }
 
-    private suspend fun search(keyword: String, page: Int): List<Manga> {
+    private suspend fun search(keyword: String, page: Int): List<Content> {
         val offset = (page - 1) * pageSize
         val res = request("$apiBase/v1/search/comics?keyword=${keyword.urlEncoded()}&limit=$pageSize&offset=$offset")
         val arr = res.optJSONArray("resources") ?: return emptyList()
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
             val id = obj.optString("id")
@@ -123,7 +123,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
             if (id.isEmpty() || title.isEmpty()) continue
             val cover = obj.optString("thumbnail_1x1")
             result.add(
-                Manga(
+                Content(
                     id = generateUid(id),
                     url = id,
                     publicUrl = "",
@@ -142,7 +142,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         return result
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val detailRes = request("$apiBase/v2/screens/comics/${manga.url}")
         val detail = detailRes.optJSONObject("resources")?.optJSONObject("detail") ?: return manga
         val title = detail.optString("title").ifEmpty { manga.title }
@@ -170,7 +170,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         }
 
         val chapters = fetchChapters(manga.url)
-        val tags = tagSet.map { org.skepsun.kototoro.parsers.model.MangaTag(it, it, source) }.toSet()
+        val tags = tagSet.map { org.skepsun.kototoro.parsers.model.ContentTag(it, it, source) }.toSet()
 
         return manga.copy(
             title = title,
@@ -182,8 +182,8 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun fetchChapters(comicId: String): List<MangaChapter> {
-        val all = mutableListOf<MangaChapter>()
+    private suspend fun fetchChapters(comicId: String): List<ContentChapter> {
+        val all = mutableListOf<ContentChapter>()
         var offset = 0
         while (true) {
             val res = request("$apiBase/v1/comics/$comicId/episodes?offset=$offset&limit=100&sort=asc")
@@ -206,7 +206,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
                 if (id.isNotEmpty()) {
                     val number = (i + 1 + offset).toFloat()
                     all.add(
-                        MangaChapter(
+                        ContentChapter(
                             id = generateUid("$id-$comicId"),
                             url = "$comicId@$id",
                             title = displayTitle.ifEmpty { "Ch $number" },
@@ -226,14 +226,14 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         return all
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val parts = chapter.url.split("@")
         if (parts.size < 2) return emptyList()
         val comicId = parts[0]
         val epId = parts[1]
         val res = request("$apiBase/v1/screens/comics/$comicId/episodes/$epId/viewer")
         val manuscripts = res.optJSONObject("resources")?.optJSONArray("manuscripts") ?: return emptyList()
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         for (i in 0 until manuscripts.length()) {
             val obj = manuscripts.optJSONObject(i) ?: continue
             val url = obj.optString("drm_image_url")
@@ -241,7 +241,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
             val finalUrl = if (url.isNotEmpty() && hash.isNotEmpty()) "$url&drm_hash=$hash" else url
             if (finalUrl.isNotEmpty()) {
                 pages.add(
-                    MangaPage(
+                    ContentPage(
                         id = generateUid("$finalUrl-$i"),
                         url = finalUrl,
                         preview = finalUrl,
@@ -253,7 +253,7 @@ internal class ComicWalkerParser(context: MangaLoaderContext) :
         return pages
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     private suspend fun request(url: String): JSONObject {
         ensureToken()

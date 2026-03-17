@@ -3,10 +3,10 @@ package org.skepsun.kototoro.parsers.site.zh
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
@@ -57,9 +57,9 @@ import java.util.EnumSet
  * - 视频 URL 可能有时效性
  */
 // @Broken("Requires manual Cloudflare Challenge completion on first access")
-@MangaSourceParser("MISSAV", "MissAV", type = ContentType.HENTAI_VIDEO)
-internal class MissAV(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.MISSAV, pageSize = 24) {
+@ContentSourceParser("MISSAV", "MissAV", type = ContentType.HENTAI_VIDEO)
+internal class MissAV(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.MISSAV, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("missav.ai")
 
@@ -68,14 +68,14 @@ internal class MissAV(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
         )
     }
@@ -102,11 +102,11 @@ internal class MissAV(context: MangaLoaderContext) :
         .add("Upgrade-Insecure-Requests", "1")
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, order, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
         val doc = response.parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
         
         // 选择器: div.thumbnail.group
@@ -137,7 +137,7 @@ internal class MissAV(context: MangaLoaderContext) :
             val duration = durationElem?.text()?.trim() ?: ""
             
             items.add(
-                Manga(
+                Content(
                     id = generateUid(videoId),
                     url = "/$videoId",
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -160,7 +160,7 @@ internal class MissAV(context: MangaLoaderContext) :
         return items
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
         val doc = response.parseHtml()
         
@@ -203,7 +203,7 @@ internal class MissAV(context: MangaLoaderContext) :
         val tags = doc.select("a[href*='/genres/']").mapNotNullToSet { elem ->
             val tagName = elem.text().trim()
             if (tagName.isNotEmpty()) {
-                MangaTag(
+                ContentTag(
                     key = elem.attr("href").substringAfterLast('/'),
                     title = tagName,
                     source = source,
@@ -220,7 +220,7 @@ internal class MissAV(context: MangaLoaderContext) :
         val coverUrl = doc.selectFirst("video.player")?.attr("data-poster") ?: manga.coverUrl
         
         // 创建单个章节（视频）
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -242,11 +242,11 @@ internal class MissAV(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         // 如果 chapter.url 已经是视频 URL，直接返回
         if (chapter.url.contains(".m3u8") || chapter.url.contains(".mp4")) {
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid(chapter.url),
                     url = chapter.url,
                     preview = null,
@@ -265,7 +265,7 @@ internal class MissAV(context: MangaLoaderContext) :
         val poster = doc.selectFirst("video.player")?.attr("data-poster")
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = poster,
@@ -274,7 +274,7 @@ internal class MissAV(context: MangaLoaderContext) :
         )
     }
     
-    private fun buildListUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
         
         if (!filter.query.isNullOrBlank()) {

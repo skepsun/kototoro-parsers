@@ -4,21 +4,21 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertTrue
 import kotlin.time.Duration.Companion.minutes
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 
 class WnacgReadTest {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
 
     @Test
     fun pages_specific_album() = runTest(timeout = 2.minutes) {
-        val parser = context.newParserInstance(MangaParserSource.WNACG)
+        val parser = context.newParserInstance(ContentParserSource.WNACG)
         val domain = parser.domain
         val aid = "327407"
-        val seed = Manga(
+        val seed = Content(
             id = aid.hashCode().toLong(),
             title = "aid-$aid",
             altTitles = emptySet(),
@@ -32,7 +32,7 @@ class WnacgReadTest {
             authors = emptySet(),
             description = null,
             chapters = null,
-            source = MangaParserSource.WNACG,
+            source = ContentParserSource.WNACG,
         )
         val detailed = parser.getDetails(seed)
         val chapter = detailed.chapters?.firstOrNull() ?: error("未解析到章节：aid=$aid")

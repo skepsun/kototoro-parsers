@@ -4,10 +4,10 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import org.skepsun.kototoro.parsers.util.*
@@ -64,9 +64,9 @@ import java.util.EnumSet
  * - 视频 URL 包含 verify 参数，可能有时效性
  */
 // @Broken("Requires manual Cloudflare Challenge completion on first access")
-@MangaSourceParser("COSXPLAY", "Cosxplay", "en", type = ContentType.HENTAI_VIDEO)
-internal class Cosxplay(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.COSXPLAY, pageSize = 24) {
+@ContentSourceParser("COSXPLAY", "Cosxplay", "en", type = ContentType.HENTAI_VIDEO)
+internal class Cosxplay(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.COSXPLAY, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("cosxplay.com")
 
@@ -77,8 +77,8 @@ internal class Cosxplay(context: MangaLoaderContext) :
         SortOrder.ALPHABETICAL, // Longest (longest)
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
         )
@@ -90,65 +90,65 @@ internal class Cosxplay(context: MangaLoaderContext) :
             .build()
     }
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = setOf(
-            MangaTag(title = "2B", key = "7841-nier-automata", source = source),
-            MangaTag(title = "ASMR", key = "18231-18321-asmr", source = source),
-            MangaTag(title = "Ahegao", key = "4063-ahegao", source = source),
-            MangaTag(title = "Anal", key = "11104-anal", source = source),
-            MangaTag(title = "Anime", key = "12814-anime", source = source),
-            MangaTag(title = "BBW", key = "19001-bbw", source = source),
-            MangaTag(title = "Big boobs", key = "11117-big-boobs", source = source),
-            MangaTag(title = "Bondage", key = "10570-bondage", source = source),
-            MangaTag(title = "Bunny", key = "8103-bunnies", source = source),
-            MangaTag(title = "Creampie", key = "11113-creampie", source = source),
-            MangaTag(title = "D.va", key = "95-overwatch", source = source),
-            MangaTag(title = "Dildo", key = "11118-dildo", source = source),
-            MangaTag(title = "Feet", key = "17809-feet", source = source),
-            MangaTag(title = "Femboy", key = "71061-femboy", source = source),
-            MangaTag(title = "Furry", key = "16652-furry", source = source),
-            MangaTag(title = "Genshin", key = "70946-genshin-impact", source = source),
-            MangaTag(title = "Halloween", key = "17220-halloween", source = source),
-            MangaTag(title = "Harley Quinn", key = "7776-harley-quinn", source = source),
-            MangaTag(title = "Hinata", key = "7828-naruto/12508-hinata", source = source),
-            MangaTag(title = "JOI", key = "11121-joi", source = source),
-            MangaTag(title = "Japanese", key = "11115-asian/12547-japanese", source = source),
-            MangaTag(title = "Jinx", key = "61118-jinx", source = source),
-            MangaTag(title = "Kigurumi", key = "5231-kigurumi", source = source),
-            MangaTag(title = "Latex", key = "5230-latex", source = source),
-            MangaTag(title = "Lesbian", key = "11114-lesbian", source = source),
-            MangaTag(title = "Maid", key = "19621-uniform/13908-maid", source = source),
-            MangaTag(title = "Makima", key = "73136-makima", source = source),
-            MangaTag(title = "Masturbation", key = "17807-masturbation", source = source),
-            MangaTag(title = "Naruto", key = "7828-naruto", source = source),
-            MangaTag(title = "Neko", key = "11101-neko-porn", source = source),
-            MangaTag(title = "Nezuko", key = "12814-anime/59215-nezuko", source = source),
-            MangaTag(title = "Nun", key = "17862-nun", source = source),
-            MangaTag(title = "Nurse", key = "19621-uniform/13154-nurse", source = source),
-            MangaTag(title = "One Piece", key = "12814-anime/70920-one-piece", source = source),
-            MangaTag(title = "POV", key = "11119-pov", source = source),
-            MangaTag(title = "Poison Ivy", key = "7881-poison-ivy", source = source),
-            MangaTag(title = "Pokemon", key = "2166-pokemon", source = source),
-            MangaTag(title = "Public", key = "17216-public", source = source),
-            MangaTag(title = "Rem", key = "20911-rem-ram", source = source),
-            MangaTag(title = "Sakura", key = "7828-naruto/21040-sakura-haruno", source = source),
-            MangaTag(title = "Solo", key = "16982-solo", source = source),
-            MangaTag(title = "Succubus", key = "7837-creatures/7833-succubus", source = source),
-            MangaTag(title = "Supergirl", key = "2101-supergirl", source = source),
-            MangaTag(title = "Superheroines", key = "17328-superheroines", source = source),
-            MangaTag(title = "Teen", key = "11120-teen", source = source),
-            MangaTag(title = "Tsunade", key = "61046-tsunade", source = source),
-            MangaTag(title = "Velma", key = "7832-films/7835-scooby-doo/11125-velma", source = source),
-            MangaTag(title = "Wonder Woman", key = "922-wonderwoman", source = source),
+            ContentTag(title = "2B", key = "7841-nier-automata", source = source),
+            ContentTag(title = "ASMR", key = "18231-18321-asmr", source = source),
+            ContentTag(title = "Ahegao", key = "4063-ahegao", source = source),
+            ContentTag(title = "Anal", key = "11104-anal", source = source),
+            ContentTag(title = "Anime", key = "12814-anime", source = source),
+            ContentTag(title = "BBW", key = "19001-bbw", source = source),
+            ContentTag(title = "Big boobs", key = "11117-big-boobs", source = source),
+            ContentTag(title = "Bondage", key = "10570-bondage", source = source),
+            ContentTag(title = "Bunny", key = "8103-bunnies", source = source),
+            ContentTag(title = "Creampie", key = "11113-creampie", source = source),
+            ContentTag(title = "D.va", key = "95-overwatch", source = source),
+            ContentTag(title = "Dildo", key = "11118-dildo", source = source),
+            ContentTag(title = "Feet", key = "17809-feet", source = source),
+            ContentTag(title = "Femboy", key = "71061-femboy", source = source),
+            ContentTag(title = "Furry", key = "16652-furry", source = source),
+            ContentTag(title = "Genshin", key = "70946-genshin-impact", source = source),
+            ContentTag(title = "Halloween", key = "17220-halloween", source = source),
+            ContentTag(title = "Harley Quinn", key = "7776-harley-quinn", source = source),
+            ContentTag(title = "Hinata", key = "7828-naruto/12508-hinata", source = source),
+            ContentTag(title = "JOI", key = "11121-joi", source = source),
+            ContentTag(title = "Japanese", key = "11115-asian/12547-japanese", source = source),
+            ContentTag(title = "Jinx", key = "61118-jinx", source = source),
+            ContentTag(title = "Kigurumi", key = "5231-kigurumi", source = source),
+            ContentTag(title = "Latex", key = "5230-latex", source = source),
+            ContentTag(title = "Lesbian", key = "11114-lesbian", source = source),
+            ContentTag(title = "Maid", key = "19621-uniform/13908-maid", source = source),
+            ContentTag(title = "Makima", key = "73136-makima", source = source),
+            ContentTag(title = "Masturbation", key = "17807-masturbation", source = source),
+            ContentTag(title = "Naruto", key = "7828-naruto", source = source),
+            ContentTag(title = "Neko", key = "11101-neko-porn", source = source),
+            ContentTag(title = "Nezuko", key = "12814-anime/59215-nezuko", source = source),
+            ContentTag(title = "Nun", key = "17862-nun", source = source),
+            ContentTag(title = "Nurse", key = "19621-uniform/13154-nurse", source = source),
+            ContentTag(title = "One Piece", key = "12814-anime/70920-one-piece", source = source),
+            ContentTag(title = "POV", key = "11119-pov", source = source),
+            ContentTag(title = "Poison Ivy", key = "7881-poison-ivy", source = source),
+            ContentTag(title = "Pokemon", key = "2166-pokemon", source = source),
+            ContentTag(title = "Public", key = "17216-public", source = source),
+            ContentTag(title = "Rem", key = "20911-rem-ram", source = source),
+            ContentTag(title = "Sakura", key = "7828-naruto/21040-sakura-haruno", source = source),
+            ContentTag(title = "Solo", key = "16982-solo", source = source),
+            ContentTag(title = "Succubus", key = "7837-creatures/7833-succubus", source = source),
+            ContentTag(title = "Supergirl", key = "2101-supergirl", source = source),
+            ContentTag(title = "Superheroines", key = "17328-superheroines", source = source),
+            ContentTag(title = "Teen", key = "11120-teen", source = source),
+            ContentTag(title = "Tsunade", key = "61046-tsunade", source = source),
+            ContentTag(title = "Velma", key = "7832-films/7835-scooby-doo/11125-velma", source = source),
+            ContentTag(title = "Wonder Woman", key = "922-wonderwoman", source = source),
         )
         
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, order, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
         
@@ -160,7 +160,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         }
         
         val doc = response.parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
         
         // 解析视频列表
@@ -180,7 +180,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
             val duration = block.selectFirst(".duration")?.text()?.trim()
             
             items.add(
-                Manga(
+                Content(
                     id = generateUid(postId),
                     url = href,
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -204,7 +204,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         return items
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
         
         // 检查 Cloudflare 保护
@@ -226,7 +226,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         val tags = doc.select(".tags-list a").mapNotNull { tag ->
             val tagText = tag.text().trim()
             if (tagText.isNotBlank()) {
-                MangaTag(
+                ContentTag(
                     title = tagText,
                     key = tagText.lowercase().replace(" ", "-"),
                     source = source,
@@ -235,7 +235,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         }.toSet()
         
         // 创建单个章节（视频）
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -256,7 +256,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val response = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders())
         val protection = CloudFlareHelper.checkResponseForProtection(response)
         if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
@@ -268,7 +268,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
         val poster = doc.selectFirst("video")?.attr("poster")
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = poster,
@@ -279,7 +279,7 @@ internal class Cosxplay(context: MangaLoaderContext) :
     
 
     
-    private fun buildListUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
         
         // 处理搜索

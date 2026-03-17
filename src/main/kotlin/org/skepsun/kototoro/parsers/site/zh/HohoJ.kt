@@ -1,10 +1,10 @@
 package org.skepsun.kototoro.parsers.site.en
 
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
@@ -46,9 +46,9 @@ import java.util.EnumSet
  * - ✅ 分类支持
  * - ✅ 多种排序
  */
-@MangaSourceParser("HOHOJ", "HohoJ", "zh", type = ContentType.HENTAI_VIDEO)
-internal class HohoJ(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.HOHOJ, pageSize = 24) {
+@ContentSourceParser("HOHOJ", "HohoJ", "zh", type = ContentType.HENTAI_VIDEO)
+internal class HohoJ(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.HOHOJ, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("hohoj.tv")
 
@@ -58,31 +58,31 @@ internal class HohoJ(context: MangaLoaderContext) :
         SortOrder.RATING,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableTags = setOf(
-                MangaTag(key = "all", title = "全部", source = source),
-                MangaTag(key = "censored", title = "有码", source = source),
-                MangaTag(key = "chinese", title = "中文字幕", source = source),
-                MangaTag(key = "uncensored", title = "无码", source = source),
-                MangaTag(key = "europe", title = "欧美", source = source),
+                ContentTag(key = "all", title = "全部", source = source),
+                ContentTag(key = "censored", title = "有码", source = source),
+                ContentTag(key = "chinese", title = "中文字幕", source = source),
+                ContentTag(key = "uncensored", title = "无码", source = source),
+                ContentTag(key = "europe", title = "欧美", source = source),
             ),
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, order, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
         val doc = response.parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
         
         // 选择器: div.video-item
@@ -106,7 +106,7 @@ internal class HohoJ(context: MangaLoaderContext) :
             val title = img?.attr("alt") ?: item.selectFirst("div.video-item-title")?.text()?.trim() ?: videoId
             
             items.add(
-                Manga(
+                Content(
                     id = generateUid(videoId),
                     url = "/embed?id=$videoId",
                     publicUrl = "https://$domain/video?id=$videoId",
@@ -129,7 +129,7 @@ internal class HohoJ(context: MangaLoaderContext) :
         return items
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val videoId = manga.url.substringAfter("id=")
         val detailUrl = "https://$domain/video?id=$videoId"
         val response = webClient.httpGet(detailUrl, getRequestHeaders())
@@ -151,7 +151,7 @@ internal class HohoJ(context: MangaLoaderContext) :
         val tags = doc.select("a[href*=/tag/], a[href*=/category/]").mapNotNullToSet { elem ->
             val tagName = elem.text().trim()
             if (tagName.isNotEmpty()) {
-                MangaTag(
+                ContentTag(
                     key = elem.attr("href").substringAfterLast('/'),
                     title = tagName,
                     source = source,
@@ -160,7 +160,7 @@ internal class HohoJ(context: MangaLoaderContext) :
         }
         
         // 创建单个章节
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -180,10 +180,10 @@ internal class HohoJ(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         if (chapter.url.contains(".m3u8")) {
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid(chapter.url),
                     url = chapter.url,
                     preview = null,
@@ -205,7 +205,7 @@ internal class HohoJ(context: MangaLoaderContext) :
         val videoUrl = extractVideoUrl(doc) ?: return emptyList()
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = null,
@@ -214,7 +214,7 @@ internal class HohoJ(context: MangaLoaderContext) :
         )
     }
     
-    private fun buildListUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
         
         if (!filter.query.isNullOrBlank()) {

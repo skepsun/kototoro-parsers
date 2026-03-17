@@ -8,10 +8,10 @@ import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.minutes
 import org.skepsun.kototoro.parsers.CommonHeadersInterceptor
 import org.skepsun.kototoro.parsers.InMemoryCookieJar
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaPage
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.network.OkHttpWebClient
 import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.parseHtml
@@ -37,11 +37,11 @@ class WnacgReadFlowTest {
 
     @Test
     fun read_flow_head_then_get_images_no_handshake_error() = runTest(timeout = 2.minutes) {
-        val context = MangaLoaderContextMock
-        val parser = context.newParserInstance(MangaParserSource.WNACG)
+        val context = ContentLoaderContextMock
+        val parser = context.newParserInstance(ContentParserSource.WNACG)
         val domain = parser.domain
         val aid = "327407"
-        val seed = org.skepsun.kototoro.parsers.model.Manga(
+        val seed = org.skepsun.kototoro.parsers.model.Content(
             id = aid.hashCode().toLong(),
             title = "aid-$aid",
             altTitles = emptySet(),
@@ -55,7 +55,7 @@ class WnacgReadFlowTest {
             authors = emptySet(),
             description = null,
             chapters = null,
-            source = MangaParserSource.WNACG,
+            source = ContentParserSource.WNACG,
         )
         val detailed = parser.getDetails(seed)
         val chapter = detailed.chapters?.firstOrNull() ?: error("未解析到章节：aid=$aid")
@@ -84,7 +84,7 @@ class WnacgReadFlowTest {
                 .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(20, TimeUnit.SECONDS)
                 .build()
-            val web = OkHttpWebClient(strictClient, MangaParserSource.WNACG)
+            val web = OkHttpWebClient(strictClient, ContentParserSource.WNACG)
 
             val headResp = web.httpHead(page.url)
             headResp.close()
@@ -99,7 +99,7 @@ class WnacgReadFlowTest {
         }
     }
 
-    private fun assertDistinctByUrl(pages: List<MangaPage>) {
+    private fun assertDistinctByUrl(pages: List<ContentPage>) {
         val seen = HashSet<String>(pages.size)
         val dup = pages.map { it.url }.any { !seen.add(it) }
         assertTrue(!dup, "图片 URL 存在重复")

@@ -2,19 +2,19 @@ package org.skepsun.kototoro.parsers.site.ja
 
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 
 class WelomaTest {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
     private val parser = Weloma(context)
 
     @Test
     fun testGetListPage() = runBlocking {
         // Test basic list (latest)
-        val mangaList = parser.getListPage(1, SortOrder.UPDATED, MangaListFilter())
+        val mangaList = parser.getListPage(1, SortOrder.UPDATED, ContentListFilter())
         println("Fetched ${mangaList.size} manga from latest")
         mangaList.take(5).forEach { manga ->
             println("Title: ${manga.title}, URL: ${manga.url}")
@@ -26,7 +26,7 @@ class WelomaTest {
     @Test
     fun testSearch() = runBlocking {
         val query = "Blue Lock"
-        val searchFilter = MangaListFilter(query = query)
+        val searchFilter = ContentListFilter(query = query)
         val searchResults = parser.getListPage(1, SortOrder.POPULARITY, searchFilter)
         println("Searched for '$query', found ${searchResults.size} results")
         searchResults.take(10).forEach { manga ->
@@ -44,7 +44,7 @@ class WelomaTest {
     fun testGetDetails() = runBlocking {
         // Use Blue Lock for detail test (ID 579)
         val testUrl = "https://weloma.ru/title/ru579"
-        val testManga = Manga(
+        val testContent = Content(
             id = 579L,
             title = "ブルーロック",
             altTitles = emptySet(),
@@ -59,20 +59,20 @@ class WelomaTest {
             source = parser.source,
         )
         
-        val detailedManga = parser.getDetails(testManga)
-        println("Manga Details: ${detailedManga.title}")
-        println("Authors: ${detailedManga.authors}")
-        println("Tags: ${detailedManga.tags.map { it.title }}")
-        println("Description: ${detailedManga.description?.take(100)}...")
-        println("Chapters: ${detailedManga.chapters?.size ?: 0}")
+        val detailedContent = parser.getDetails(testContent)
+        println("Content Details: ${detailedContent.title}")
+        println("Authors: ${detailedContent.authors}")
+        println("Tags: ${detailedContent.tags.map { it.title }}")
+        println("Description: ${detailedContent.description?.take(100)}...")
+        println("Chapters: ${detailedContent.chapters?.size ?: 0}")
         
-        assert(detailedManga.title.isNotBlank())
-        assert(detailedManga.chapters?.isNotEmpty() ?: false)
-        assert(detailedManga.tags.isNotEmpty())
-        assert(detailedManga.authors.isNotEmpty())
+        assert(detailedContent.title.isNotBlank())
+        assert(detailedContent.chapters?.isNotEmpty() ?: false)
+        assert(detailedContent.tags.isNotEmpty())
+        assert(detailedContent.authors.isNotEmpty())
 
         // Refinement Check: Chapter Ordering (Ascending)
-        val chapters = detailedManga.chapters!!
+        val chapters = detailedContent.chapters!!
         if (chapters.size > 1) {
             assert(chapters[0].number < chapters.last().number) { "Chapters should be in ascending order" }
         }
@@ -84,7 +84,7 @@ class WelomaTest {
     @Test
     fun testGetPages() = runBlocking {
         val testUrl = "https://weloma.ru/title/ru579"
-        val testManga = Manga(
+        val testContent = Content(
             id = 579L,
             title = "ブルーロック",
             altTitles = emptySet(),
@@ -98,8 +98,8 @@ class WelomaTest {
             authors = emptySet(),
             source = parser.source,
         )
-        val detailedManga = parser.getDetails(testManga)
-        val firstChapter = detailedManga.chapters?.firstOrNull()
+        val detailedContent = parser.getDetails(testContent)
+        val firstChapter = detailedContent.chapters?.firstOrNull()
         
         assert(firstChapter != null) { "Should find at least one chapter" }
         println("Testing chapter: ${firstChapter!!.number}, URL: ${firstChapter.url}")

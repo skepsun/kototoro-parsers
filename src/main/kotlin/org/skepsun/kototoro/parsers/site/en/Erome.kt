@@ -1,20 +1,20 @@
 package org.skepsun.kototoro.parsers.site.en
 
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -35,9 +35,9 @@ import okhttp3.Headers
  * - 探索: /explore?page=n
  * - 详情页提取视频 source/og:video
  */
-@MangaSourceParser("EROME", "Erome", "en", type = ContentType.HENTAI_VIDEO)
-internal class Erome(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.EROME, pageSize = 24) {
+@ContentSourceParser("EROME", "Erome", "en", type = ContentType.HENTAI_VIDEO)
+internal class Erome(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.EROME, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("www.erome.com")
 
@@ -46,19 +46,19 @@ internal class Erome(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, filter)
         logDebug("Erome list url=$url page=$page query=${filter.query}")
         val response = webClient.httpGet(url, getRequestHeaders())
@@ -66,7 +66,7 @@ internal class Erome(context: MangaLoaderContext) :
         return parseList(doc)
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         logDebug("Erome details url=${manga.publicUrl}")
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
         val doc = response.parseHtml()
@@ -87,19 +87,19 @@ internal class Erome(context: MangaLoaderContext) :
         val tags = doc.select("a.album-tag").mapNotNull {
             val text = it.text().trim().removePrefix("#").trim()
             val key = it.attr("href").substringAfter("search?q=").substringBefore("&").trim()
-            if (text.isNotEmpty() && key.isNotEmpty()) MangaTag(text, key, source) else null
+            if (text.isNotEmpty() && key.isNotEmpty()) ContentTag(text, key, source) else null
         }.toSet()
 
         val mediaItems = extractMedia(doc)
         val videoItems = mediaItems.filter { it.url.endsWith(".mp4", ignoreCase = true) || it.url.contains("video", ignoreCase = true) }
         val imageItems = mediaItems.filterNot { it.url.endsWith(".mp4", ignoreCase = true) || it.url.contains("video", ignoreCase = true) || it.url == it.preview }
 
-        val chapters = mutableListOf<MangaChapter>()
+        val chapters = mutableListOf<ContentChapter>()
 
         if (videoItems.isNotEmpty()) {
             videoItems.forEachIndexed { index, media ->
                 chapters.add(
-                    MangaChapter(
+                    ContentChapter(
                         id = generateUid("${manga.url}#video$index:${media.url}"),
                         url = "media:${media.url}",
                         title = "Video ${index + 1}",
@@ -116,7 +116,7 @@ internal class Erome(context: MangaLoaderContext) :
         
         if (imageItems.isNotEmpty()) {
             chapters.add(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("${manga.url}#images"),
                     url = "images:${manga.url}",
                     title = "Images (${imageItems.size})",
@@ -132,7 +132,7 @@ internal class Erome(context: MangaLoaderContext) :
 
         if (chapters.isEmpty()) {
             chapters.add(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("${manga.url}|video"),
                     url = manga.url,
                     title = "Watch",
@@ -157,11 +157,11 @@ internal class Erome(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         if (chapter.url.startsWith("media:")) {
             val mediaUrl = chapter.url.removePrefix("media:")
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid("page:${mediaUrl}"),
                     url = mediaUrl,
                     preview = null,
@@ -177,7 +177,7 @@ internal class Erome(context: MangaLoaderContext) :
             val doc = response.parseHtml()
             val media = extractMedia(doc).filterNot { it.url.endsWith(".mp4", ignoreCase = true) || it.url.contains("video", ignoreCase = true) || it.url == it.preview }
             return media.mapIndexed { index, mediaItem ->
-                MangaPage(
+                ContentPage(
                     id = generateUid("${chapterUrl}#img${index}"),
                     url = mediaItem.url,
                     preview = mediaItem.preview,
@@ -196,7 +196,7 @@ internal class Erome(context: MangaLoaderContext) :
             return emptyList()
         }
         return media.mapIndexed { index, mediaItem ->
-            MangaPage(
+            ContentPage(
                 id = generateUid("${chapterUrl}#${index}"),
                 url = mediaItem.url,
                 preview = mediaItem.preview,
@@ -210,7 +210,7 @@ internal class Erome(context: MangaLoaderContext) :
         .add("User-Agent", context.getDefaultUserAgent())
         .build()
 
-    private fun buildListUrl(page: Int, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, filter: ContentListFilter): String {
         return if (!filter.query.isNullOrBlank()) {
             val q = filter.query.urlEncoded()
             "https://$domain/search?q=$q&page=$page"
@@ -219,8 +219,8 @@ internal class Erome(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseList(doc: Document): List<Manga> {
-        val items = ArrayList<Manga>()
+    private fun parseList(doc: Document): List<Content> {
+        val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
 
         // 相册卡片：a.album-card 或 .album-thumbnail 的父级链接，href 包含 /a/{id}
@@ -246,7 +246,7 @@ internal class Erome(context: MangaLoaderContext) :
             }
 
             items.add(
-                Manga(
+                Content(
                     id = generateUid(absoluteUrl),
                     url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
                     publicUrl = absoluteUrl,

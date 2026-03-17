@@ -1,19 +1,19 @@
 package org.skepsun.kototoro.parsers
 
-import org.skepsun.kototoro.parsers.model.Manga
+import org.skepsun.kototoro.parsers.model.Content
 
 public interface CategorizedFavoritesProvider : FavoritesProvider {
 
-    public suspend fun fetchFavoriteFolders(): List<MangaFavoriteFolder>
+    public suspend fun fetchFavoriteFolders(): List<ContentFavoriteFolder>
 
-    public suspend fun fetchFavorites(folderId: String): List<Manga>
+    public suspend fun fetchFavorites(folderId: String): List<Content>
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         return fetchFavoriteFolders().flatMap { fetchFavorites(it.id) }.distinctBy { it.url }
     }
 }
 
-public data class MangaFavoriteFolder(
+public data class ContentFavoriteFolder(
     val id: String,
     val title: String,
     val count: Int? = null,

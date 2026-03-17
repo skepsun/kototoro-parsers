@@ -2,19 +2,19 @@ package org.skepsun.kototoro.parsers.site.ja
 
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 
 class Klz9Test {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
     private val parser = Klz9(context)
 
     @Test
     fun testGetListPage() = runBlocking {
         // Test basic list
-        val mangaList = parser.getListPage(1, SortOrder.POPULARITY, MangaListFilter())
+        val mangaList = parser.getListPage(1, SortOrder.POPULARITY, ContentListFilter())
         println("Fetched ${mangaList.size} manga")
         mangaList.take(5).forEach { manga ->
             println("Title: ${manga.title}, URL: ${manga.url}")
@@ -26,7 +26,7 @@ class Klz9Test {
     fun testSearch() = runBlocking {
         // Test search (which uses /api/manga/all)
         val query = "One Piece"
-        val searchFilter = MangaListFilter(query = query)
+        val searchFilter = ContentListFilter(query = query)
         val searchResults = parser.getListPage(1, SortOrder.POPULARITY, searchFilter)
         println("Searched for '$query', found ${searchResults.size} results")
         searchResults.take(10).forEach { manga ->
@@ -40,7 +40,7 @@ class Klz9Test {
     fun testSearchPagination() = runBlocking {
         // Test search pagination
         val query = "a" // Frequent letter to get many results
-        val searchFilter = MangaListFilter(query = query)
+        val searchFilter = ContentListFilter(query = query)
         
         val page1 = parser.getListPage(1, SortOrder.POPULARITY, searchFilter)
         val page2 = parser.getListPage(2, SortOrder.POPULARITY, searchFilter)
@@ -59,7 +59,7 @@ class Klz9Test {
     fun testGetDetails() = runBlocking {
         // Use One Piece for detail test
         val testUrl = "/manga/one-piece-raw"
-        val testManga = Manga(
+        val testContent = Content(
             id = parser.generateUid(testUrl),
             title = "One Piece",
             altTitles = emptySet(),
@@ -74,20 +74,20 @@ class Klz9Test {
             source = parser.source,
         )
         
-        val detailedManga = parser.getDetails(testManga)
-        println("Manga Details: ${detailedManga.title}")
-        println("Description: ${detailedManga.description?.take(100)}...")
-        println("Chapters: ${detailedManga.chapters?.size ?: 0}")
+        val detailedContent = parser.getDetails(testContent)
+        println("Content Details: ${detailedContent.title}")
+        println("Description: ${detailedContent.description?.take(100)}...")
+        println("Chapters: ${detailedContent.chapters?.size ?: 0}")
         
-        assert(detailedManga.title.isNotBlank())
-        assert(detailedManga.chapters?.isNotEmpty() ?: false)
+        assert(detailedContent.title.isNotBlank())
+        assert(detailedContent.chapters?.isNotEmpty() ?: false)
     }
 
     @Test
     fun testGetPages() = runBlocking {
         // Get details first to find a chapter
         val testUrl = "/manga/one-piece-raw"
-        val testManga = Manga(
+        val testContent = Content(
             id = parser.generateUid(testUrl),
             title = "One Piece",
             altTitles = emptySet(),
@@ -101,8 +101,8 @@ class Klz9Test {
             authors = emptySet(),
             source = parser.source,
         )
-        val detailedManga = parser.getDetails(testManga)
-        val firstChapter = detailedManga.chapters?.firstOrNull()
+        val detailedContent = parser.getDetails(testContent)
+        val firstChapter = detailedContent.chapters?.firstOrNull()
         
         assert(firstChapter != null) { "Should find at least one chapter" }
         

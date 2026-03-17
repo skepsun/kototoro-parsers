@@ -9,12 +9,12 @@ import okhttp3.Response
 import okhttp3.internal.closeQuietly
 import org.jsoup.internal.StringUtil
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.bitmap.Rect
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.TooManyRequestExceptions
 import org.skepsun.kototoro.parsers.model.*
@@ -29,10 +29,10 @@ private const val DOMAIN_AUTHORIZED = "exhentai.org"
 private val TAG_PREFIXES = arrayOf("male:", "female:", "other:")
 private const val BANNED_RESPONSE_LENGTH = 256L
 
-@MangaSourceParser("EXHENTAI", "ExHentai", type = ContentType.HENTAI_MANGA)
+@ContentSourceParser("EXHENTAI", "ExHentai", type = ContentType.HENTAI_MANGA)
 internal class ExHentaiParser(
-    context: MangaLoaderContext,
-) : PagedMangaParser(context, MangaParserSource.EXHENTAI, pageSize = 25), MangaParserAuthProvider, Interceptor {
+    context: ContentLoaderContext,
+) : PagedContentParser(context, ContentParserSource.EXHENTAI, pageSize = 25), ContentParserAuthProvider, Interceptor {
 
     override val availableSortOrders: Set<SortOrder> = setOf(SortOrder.NEWEST)
 
@@ -55,8 +55,8 @@ internal class ExHentaiParser(
     private val suspiciousContentKey = ConfigKey.ShowSuspiciousContent(false)
     private val nextPages = MutableIntObjectMap<MutableIntLongMap>()
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isMultipleTagsSupported = true,
             isTagsExclusionSupported = true,
             isSearchSupported = true,
@@ -73,7 +73,7 @@ internal class ExHentaiParser(
         searchPaginator.firstPage = 0
     }
 
-    override suspend fun getFilterOptions() = MangaListFilterOptions(
+    override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableTags = mapTags(),
         tagGroups = cachedTagGroups,
         availableContentTypes = EnumSet.of(
@@ -104,16 +104,16 @@ internal class ExHentaiParser(
         ),
     )
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         return getListPage(page, order, filter, updateDm = false)
     }
 
     private suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
+        filter: ContentListFilter,
         updateDm: Boolean,
-    ): List<Manga> {
+    ): List<Content> {
         val next = synchronized(nextPages) {
             nextPages[filter.hashCode()]?.getOrDefault(page, 0L) ?: 0L
         }
@@ -169,7 +169,7 @@ internal class ExHentaiParser(
             val rawTitle = gLink.text()
             val author = tagsDiv.getElementsContainingOwnText("artist:").first()
                 ?.nextElementSibling()?.textOrNull()
-            Manga(
+            Content(
                 id = generateUid(href),
                 title = rawTitle.cleanupTitle(),
                 altTitles = emptySet(),
@@ -180,7 +180,7 @@ internal class ExHentaiParser(
                 coverUrl = td1.selectFirst("img")?.attrAsAbsoluteUrlOrNull("src"),
                 tags = tagsDiv.parseTags(),
                 state = when {
-                    rawTitle.contains("(ongoing)", ignoreCase = true) -> MangaState.ONGOING
+                    rawTitle.contains("(ongoing)", ignoreCase = true) -> ContentState.ONGOING
                     else -> null
                 },
                 authors = setOfNotNull(author),
@@ -189,7 +189,7 @@ internal class ExHentaiParser(
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         val root = doc.body().selectFirstOrThrow("div.gm")
         val cover = root.getElementById("gd1")?.children()?.first()
@@ -232,7 +232,7 @@ internal class ExHentaiParser(
                 val chapters = ChaptersListBuilder(count)
                 for (i in 1..count) {
                     val url = "${manga.url}?p=${i - 1}"
-                    chapters += MangaChapter(
+                    chapters += ContentChapter(
                         id = generateUid(url),
                         title = null,
                         number = i.toFloat(),
@@ -249,12 +249,12 @@ internal class ExHentaiParser(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
         val root = doc.body().requireElementById("gdt")
         return root.select("a").map { a ->
             val url = a.attrAsRelativeUrl("href")
-            MangaPage(
+            ContentPage(
                 id = generateUid(url),
                 url = url,
                 preview = a.children().firstOrNull()?.extractPreview(),
@@ -263,7 +263,7 @@ internal class ExHentaiParser(
         }
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String {
+    override suspend fun getPageUrl(page: ContentPage): String {
         val doc = webClient.httpGet(page.url.toAbsoluteUrl(domain)).parseHtml()
         return doc.body().requireElementById("img").attrAsAbsoluteUrl("src")
     }
@@ -621,13 +621,13 @@ internal class ExHentaiParser(
         }
     }
 
-    private fun buildTagMap(): Map<String, MangaTag> {
+    private fun buildTagMap(): Map<String, ContentTag> {
         val tagElements = tags.split(",")
-        val result = LinkedHashMap<String, MangaTag>(tagElements.size)
+        val result = LinkedHashMap<String, ContentTag>(tagElements.size)
         for (tag in tagElements) {
             val el = tag.trim()
             if (el.isEmpty()) continue
-            result[el] = MangaTag(
+            result[el] = ContentTag(
                 title = displayTagTitle(el),
                 key = el,
                 source = source,
@@ -636,8 +636,8 @@ internal class ExHentaiParser(
         return result
     }
 
-    private val cachedTagMap: Map<String, MangaTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { buildTagMap() }
-    private val cachedTagsSet: Set<MangaTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { cachedTagMap.values.toSet() }
+    private val cachedTagMap: Map<String, ContentTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { buildTagMap() }
+    private val cachedTagsSet: Set<ContentTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { cachedTagMap.values.toSet() }
     private val tagKeyToGroup: Map<String, String> by lazy(LazyThreadSafetyMode.PUBLICATION) {
         buildMap {
             groupedTagKeys.forEach { (group, keys) ->
@@ -646,28 +646,28 @@ internal class ExHentaiParser(
         }
     }
 
-    private fun mapTags(): Set<MangaTag> = cachedTagsSet
+    private fun mapTags(): Set<ContentTag> = cachedTagsSet
 
-    private fun mapTagGroups(): List<MangaTagGroup> {
+    private fun mapTagGroups(): List<ContentTagGroup> {
         val tagMap = cachedTagMap
         val used = HashSet<String>(tagMap.size)
-        val groups = mutableListOf<MangaTagGroup>()
+        val groups = mutableListOf<ContentTagGroup>()
         groupedTagKeys.forEach { (name, keys) ->
             val list = keys.mapNotNull { key ->
                 tagMap[key]?.also { used += key }
             }
             if (list.isNotEmpty()) {
-                groups += MangaTagGroup(groupTitle(name), list.toSet())
+                groups += ContentTagGroup(groupTitle(name), list.toSet())
             }
         }
         val remaining = tagMap.filterKeys { it !in used }.values.toSet()
         if (remaining.isNotEmpty()) {
-            groups += MangaTagGroup(groupTitle(if (isChineseLocale) "其他" else "Others"), remaining)
+            groups += ContentTagGroup(groupTitle(if (isChineseLocale) "其他" else "Others"), remaining)
         }
         return groups
     }
 
-    private val cachedTagGroups: List<MangaTagGroup> by lazy(LazyThreadSafetyMode.PUBLICATION) { mapTagGroups() }
+    private val cachedTagGroups: List<ContentTagGroup> by lazy(LazyThreadSafetyMode.PUBLICATION) { mapTagGroups() }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
@@ -729,12 +729,12 @@ internal class ExHentaiParser(
         keys.add(suspiciousContentKey)
     }
 
-    override suspend fun getRelatedManga(seed: Manga): List<Manga> {
+    override suspend fun getRelatedContent(seed: Content): List<Content> {
         val query = seed.title
         return getListPage(
             page = 0,
             order = defaultSortOrder,
-            filter = MangaListFilter(query = query),
+            filter = ContentListFilter(query = query),
         )
     }
 
@@ -761,14 +761,14 @@ internal class ExHentaiParser(
             .replace(spacesCleanupPattern, "")
     }
 
-    private fun Element.parseTags(): Set<MangaTag> {
+    private fun Element.parseTags(): Set<ContentTag> {
 
         fun Element.parseTag() = textOrNull()?.let {
             // 优先复用已缓存的 Tag，避免重复创建与翻译
-            cachedTagMap[it] ?: MangaTag(title = displayTagTitle(it), key = it, source = source)
+            cachedTagMap[it] ?: ContentTag(title = displayTagTitle(it), key = it, source = source)
         }
 
-        val result = ArraySet<MangaTag>()
+        val result = ArraySet<ContentTag>()
         for (prefix in TAG_PREFIXES) {
             getElementsByAttributeValueStarting("id", "ta_$prefix").mapNotNullTo(result, Element::parseTag)
             getElementsByAttributeValueStarting("title", prefix).mapNotNullTo(result, Element::parseTag)
@@ -800,7 +800,7 @@ internal class ExHentaiParser(
             ?.toLongOrNull() ?: 1
     }
 
-    private fun MangaListFilter.toSearchQuery(): String? {
+    private fun ContentListFilter.toSearchQuery(): String? {
         if (isEmpty()) {
             return null
         }

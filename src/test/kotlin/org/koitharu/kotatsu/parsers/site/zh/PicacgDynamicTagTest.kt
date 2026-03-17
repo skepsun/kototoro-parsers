@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import kotlin.time.Duration.Companion.minutes
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.SortOrder
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQuery
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQuery
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria.Include
 import org.skepsun.kototoro.parsers.model.search.SearchableField.TAG
@@ -24,7 +24,7 @@ import java.io.File
  */
 class PicacgDynamicTagTest {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
 
     @Test
     fun dynamic_tag_search_should_not_return_500() = runTest(timeout = 2.minutes) {
@@ -48,7 +48,7 @@ class PicacgDynamicTagTest {
             }
         }.onFailure { /* ignore */ }
 
-        val parser = context.newParserInstance(MangaParserSource.PICACG)
+        val parser = context.newParserInstance(ContentParserSource.PICACG)
         val domain = parser.domain
         
         // 检查是否预置了token
@@ -63,7 +63,7 @@ class PicacgDynamicTagTest {
         // 测试动态标签搜索 - 使用"巨乳"标签
         try {
             val result = parser.getList(
-            MangaSearchQuery.Builder()
+            ContentSearchQuery.Builder()
                 .criterion(Include(TAG, setOf("巨乳")))
                 .order(SortOrder.NEWEST)
                 .build()
@@ -104,7 +104,7 @@ class PicacgDynamicTagTest {
             }
         }.onFailure { /* ignore */ }
 
-        val parser = context.newParserInstance(MangaParserSource.PICACG)
+        val parser = context.newParserInstance(ContentParserSource.PICACG)
         val domain = parser.domain
         
         val tokenPreset = context.cookieJar.getCookies(domain).any { c ->
@@ -125,7 +125,7 @@ class PicacgDynamicTagTest {
         for (sortOrder in sortOrders) {
             try {
                 val result = parser.getList(
-            MangaSearchQuery.Builder()
+            ContentSearchQuery.Builder()
                 .criterion(Include(TAG, setOf("巨乳")))
                 .order(sortOrder)
                 .build()

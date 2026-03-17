@@ -7,20 +7,20 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.SortOrder
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseJsonObject
 import org.skepsun.kototoro.parsers.util.urlEncoded
@@ -32,9 +32,9 @@ import kotlin.random.Random
  * 参考 venera-configs/shonen_jump_plus.js
  */
 @Broken()
-@MangaSourceParser("SHONEN_JUMP_PLUS", "少年ジャンプ＋", "ja")
-internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.SHONEN_JUMP_PLUS, pageSize = 20) {
+@ContentSourceParser("SHONEN_JUMP_PLUS", "少年ジャンプ＋", "ja")
+internal class ShonenJumpPlusParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.SHONEN_JUMP_PLUS, pageSize = 20) {
 
     override val configKeyDomain = ConfigKey.Domain("shonenjumpplus.com")
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
@@ -45,15 +45,15 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
     private var deviceId: String = generateDeviceId()
     private val appVersion = "4.0.24"
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions =
-        MangaListFilterOptions(availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE))
+    override suspend fun getFilterOptions(): ContentListFilterOptions =
+        ContentListFilterOptions(availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE))
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Origin", "https://${config[configKeyDomain]}")
@@ -62,7 +62,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         .add("User-Agent", "ShonenJumpPlus-Android/$appVersion")
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page)
         }
@@ -95,7 +95,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         }
 
         val seen = HashSet<String>()
-        val comics = mutableListOf<Manga>()
+        val comics = mutableListOf<Content>()
         rankingItems.forEach { item ->
             val rank = item.optJSONObject("label")?.optInt("rank")
             val viewCount = item.optJSONObject("label")?.optString("viewCount")
@@ -108,7 +108,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
                 .ifEmpty { series.optString("horizontalThumbnailUriTemplate") }
             val cover = replaceCoverUrl(coverTemplate, 500)
             comics.add(
-                Manga(
+                Content(
                     id = generateUid(id),
                     url = id,
                     publicUrl = "",
@@ -128,7 +128,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         return comics
     }
 
-    private suspend fun search(keyword: String, page: Int): List<Manga> {
+    private suspend fun search(keyword: String, page: Int): List<Content> {
         ensureAuth()
         val payload = JSONObject().apply {
             put("after", JSONObject.NULL)
@@ -138,7 +138,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         val edges = res.optJSONObject("data")
             ?.optJSONObject("search")
             ?.optJSONArray("edges") ?: return emptyList()
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         for (i in 0 until edges.length()) {
             val node = edges.optJSONObject(i)?.optJSONObject("node") ?: continue
             val type = node.optString("__typename")
@@ -155,7 +155,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
             val authors = node.optJSONObject("author")?.optString("name")
                 ?.split(Regex("\\s*/\\s*"))?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
             result.add(
-                Manga(
+                Content(
                     id = generateUid(id),
                     url = id,
                     publicUrl = "",
@@ -163,7 +163,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
                     title = title,
                     altTitles = emptySet(),
                     rating = org.skepsun.kototoro.parsers.model.RATING_UNKNOWN,
-                    tags = authors.map { MangaTag(it, it, source) }.toSet(),
+                    tags = authors.map { ContentTag(it, it, source) }.toSet(),
                     authors = authors,
                     state = null,
                     source = source,
@@ -175,14 +175,14 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         return result
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         ensureAuth()
         val series = fetchSeriesDetail(manga.url) ?: return manga
         val episodes = fetchEpisodes(manga.url)
         val chapters = episodes.mapIndexedNotNull { index, ep ->
             val epId = ep.optString("databaseId")
             val title = ep.optString("title")
-            if (epId.isEmpty()) null else MangaChapter(
+            if (epId.isEmpty()) null else ContentChapter(
                 id = generateUid("$epId-${manga.id}"),
                 url = "${manga.url}@$epId",
                 title = title.ifEmpty { "Ch ${index + 1}" },
@@ -199,7 +199,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
             ?.split(Regex("\\s*/\\s*"))?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
         val cover = replaceCoverUrl(series.optString("thumbnailUriTemplate"), 1500)
         val description = series.optString("description")
-        val tags = authors.map { MangaTag(it, it, source) }.toSet()
+        val tags = authors.map { ContentTag(it, it, source) }.toSet()
 
         val openAt = series.optString("openAt")
         val latestPublishAt = episodes.maxOfOrNull { it.optString("publishedAt") ?: "" } ?: ""
@@ -215,13 +215,13 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
             contentRating = manga.contentRating ?: ContentRating.SAFE,
         ).let { updated ->
             if (updateDate.isNotEmpty()) {
-                val withTag = updated.tags + MangaTag("Update $updateDate", "Update $updateDate", source)
+                val withTag = updated.tags + ContentTag("Update $updateDate", "Update $updateDate", source)
                 updated.copy(tags = withTag)
             } else updated
         }
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         ensureAuth()
         val parts = chapter.url.split("@")
         if (parts.size < 2) return emptyList()
@@ -245,14 +245,14 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         val token = episodeData.optString("pageImageToken")
         val edges = episodeData.optJSONObject("pageImages")
             ?.optJSONArray("edges") ?: return emptyList()
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         for (i in 0 until edges.length()) {
             val edge = edges.optJSONObject(i) ?: continue
             val src = edge.optJSONObject("node")?.optString("src").orEmpty()
             if (src.isNotEmpty() && token.isNotEmpty()) {
                 val url = "$src?token=$token"
                 pages.add(
-                    MangaPage(
+                    ContentPage(
                         id = generateUid("$url-$i"),
                         url = url,
                         preview = url,
@@ -264,7 +264,7 @@ internal class ShonenJumpPlusParser(context: MangaLoaderContext) :
         return pages
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     private fun replaceCoverUrl(template: String?, size: Int): String {
         if (template.isNullOrEmpty()) return ""

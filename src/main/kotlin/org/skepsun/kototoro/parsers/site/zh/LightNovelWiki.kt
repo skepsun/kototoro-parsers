@@ -1,10 +1,10 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.model.NovelChapterContent
 import org.skepsun.kototoro.parsers.util.*
@@ -15,9 +15,9 @@ import java.util.LinkedHashSet
 /**
  * 轻小说百科 - 基于 HTML 解析
  */
-@MangaSourceParser("LIGHTNOVEL_WIKI", "轻小说百科", "zh", type = ContentType.NOVEL)
-internal class LightNovelWiki(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.LIGHTNOVEL_WIKI, pageSize = 20) {
+@ContentSourceParser("LIGHTNOVEL_WIKI", "轻小说百科", "zh", type = ContentType.NOVEL)
+internal class LightNovelWiki(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.LIGHTNOVEL_WIKI, pageSize = 20) {
 
     override val configKeyDomain = ConfigKey.Domain(
         "lnovel.org",
@@ -37,25 +37,25 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val genreTags = buildGenreTags()
         val statusTags = buildStatusTags()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = (genreTags + statusTags).toSet(),
             tagGroups = listOf(
-                MangaTagGroup("类别", genreTags),
-                MangaTagGroup("状态", statusTags),
+                ContentTagGroup("类别", genreTags),
+                ContentTagGroup("状态", statusTags),
             ),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val baseUrl = buildString {
             if (!filter.query.isNullOrBlank()) {
                 append("https://$domain/books?page=$page&q%5Bname_cont%5D=${filter.query!!.urlEncoded()}")
@@ -71,7 +71,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         var response = webClient.httpGet(baseUrl)
         var code = response.code
         var doc = response.parseHtml()
-        var list = parseMangaList(doc)
+        var list = parseContentList(doc)
         println("LightNovelWiki list/search: url=$baseUrl code=$code page=$page query=${filter.query.orEmpty()} results=${list.size}")
 
         // 当带查询仍返回与无查询相同的数量时，尝试另一查询参数 name_or_other_names_cont
@@ -80,14 +80,14 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
             response = webClient.httpGet(altUrl)
             code = response.code
             doc = response.parseHtml()
-            list = parseMangaList(doc)
+            list = parseContentList(doc)
             println("LightNovelWiki search fallback: url=$altUrl code=$code page=$page query=${filter.query.orEmpty()} results=${list.size}")
         }
         return list
     }
 
-    private fun parseMangaList(doc: Document): List<Manga> {
-        val list = mutableListOf<Manga>()
+    private fun parseContentList(doc: Document): List<Content> {
+        val list = mutableListOf<Content>()
         // 页面结构可能变动，放宽选择器：带图片的卡片链接均尝试解析
         val items = doc.select("a.col-6.col-md-4.col-md-3.col-lg-6.col-xl-4, a.card, .card a[href], .book-card a[href], .book-list a[href]")
             .filter { it.selectFirst("img") != null }
@@ -100,7 +100,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
             val cover = item.selectFirst("img")?.attr("src")?.toAbsoluteUrl(domain)
 
             list.add(
-                Manga(
+                Content(
                     id = generateUid(href),
                     title = title,
                     altTitles = emptySet(),
@@ -119,7 +119,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         return list
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val url = manga.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(url).parseHtml()
         
@@ -129,16 +129,16 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         val intro = doc.selectFirst(".card-body")?.select("p")?.text()?.trim()
         
         // Tags
-        val tagsSet = LinkedHashSet<MangaTag>()
+        val tagsSet = LinkedHashSet<ContentTag>()
         doc.select("dd a").forEach { tagElement ->
             val tagName = tagElement.text().trim()
             if (tagName.isNotEmpty()) {
-                tagsSet.add(MangaTag(tagName, tagName, source))
+                tagsSet.add(ContentTag(tagName, tagName, source))
             }
         }
 
         // Chapters
-        val allChapters = mutableListOf<MangaChapter>()
+        val allChapters = mutableListOf<ContentChapter>()
         val accordionItems = doc.select(".accordion-item").sortedBy { item ->
             val target = item.selectFirst(".accordion-button")?.attr("data-bs-target")
                 ?: item.selectFirst(".accordion-collapse")?.id()
@@ -165,7 +165,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
                     val matchingSubChapter = chapterLinks.find { it.attr("href").toRelativeUrl(domain) == volumeUrl }
                     val finalTitle = matchingSubChapter?.text()?.trim() ?: volumeName
                     
-                    allChapters.add(MangaChapter(
+                    allChapters.add(ContentChapter(
                         id = generateUid(volumeUrl),
                         title = finalTitle,
                         number = allChapters.size + 1f,
@@ -184,7 +184,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
                     val cUrl = element.attr("href").toRelativeUrl(domain)
                     if (cUrl !in addedUrls) {
                         val cTitle = element.text().trim()
-                        allChapters.add(MangaChapter(
+                        allChapters.add(ContentChapter(
                             id = generateUid(cUrl),
                             title = cTitle,
                             number = allChapters.size + 1f,
@@ -206,7 +206,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
                 val cUrl = element.attr("href").toRelativeUrl(domain)
                 if (cUrl !in addedUrls) {
                     val cTitle = element.text().trim()
-                    allChapters.add(MangaChapter(
+                    allChapters.add(ContentChapter(
                         id = generateUid(cUrl),
                         title = cTitle,
                         number = allChapters.size + 1f,
@@ -232,10 +232,10 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val content = getChapterContent(chapter) ?: return emptyList()
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = content.html.toDataUrl(),
                 preview = null,
@@ -244,7 +244,7 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getChapterContent(chapter: MangaChapter): NovelChapterContent? {
+    override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         val url = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(url).parseHtml()
         
@@ -318,34 +318,34 @@ internal class LightNovelWiki(context: MangaLoaderContext) :
         return "data:text/html;charset=utf-8;base64,$encoded"
     }
 
-    private fun buildGenreTags(): Set<MangaTag> = linkedSetOf(
-        MangaTag("校园", "genre:3", source),
-        MangaTag("爱情", "genre:1", source),
-        MangaTag("冒险", "genre:6", source),
-        MangaTag("搞笑", "genre:10", source),
-        MangaTag("奇幻", "genre:15", source),
-        MangaTag("魔法", "genre:2", source),
-        MangaTag("异界", "genre:17", source),
-        MangaTag("侦探", "genre:8", source),
-        MangaTag("穿越", "genre:18", source),
-        MangaTag("科幻", "genre:4", source),
-        MangaTag("神鬼", "genre:5", source),
-        MangaTag("后宫", "genre:12", source),
-        MangaTag("格斗", "genre:11", source),
-        MangaTag("恐怖", "genre:7", source),
-        MangaTag("战争", "genre:16", source),
-        MangaTag("百合", "genre:20", source),
-        MangaTag("异能", "genre:14", source),
-        MangaTag("治愈", "genre:21", source),
-        MangaTag("机战", "genre:19", source),
-        MangaTag("励志", "genre:23", source),
-        MangaTag("都市", "genre:13", source),
-        MangaTag("历史", "genre:22", source),
-        MangaTag("纯爱", "genre:24", source),
+    private fun buildGenreTags(): Set<ContentTag> = linkedSetOf(
+        ContentTag("校园", "genre:3", source),
+        ContentTag("爱情", "genre:1", source),
+        ContentTag("冒险", "genre:6", source),
+        ContentTag("搞笑", "genre:10", source),
+        ContentTag("奇幻", "genre:15", source),
+        ContentTag("魔法", "genre:2", source),
+        ContentTag("异界", "genre:17", source),
+        ContentTag("侦探", "genre:8", source),
+        ContentTag("穿越", "genre:18", source),
+        ContentTag("科幻", "genre:4", source),
+        ContentTag("神鬼", "genre:5", source),
+        ContentTag("后宫", "genre:12", source),
+        ContentTag("格斗", "genre:11", source),
+        ContentTag("恐怖", "genre:7", source),
+        ContentTag("战争", "genre:16", source),
+        ContentTag("百合", "genre:20", source),
+        ContentTag("异能", "genre:14", source),
+        ContentTag("治愈", "genre:21", source),
+        ContentTag("机战", "genre:19", source),
+        ContentTag("励志", "genre:23", source),
+        ContentTag("都市", "genre:13", source),
+        ContentTag("历史", "genre:22", source),
+        ContentTag("纯爱", "genre:24", source),
     )
 
-    private fun buildStatusTags(): Set<MangaTag> = linkedSetOf(
-        MangaTag("连载中", "status:ongoing", source),
-        MangaTag("已完结", "status:completed", source),
+    private fun buildStatusTags(): Set<ContentTag> = linkedSetOf(
+        ContentTag("连载中", "status:ongoing", source),
+        ContentTag("已完结", "status:completed", source),
     )
 }

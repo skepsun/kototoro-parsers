@@ -6,21 +6,21 @@ import okhttp3.Headers
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaSource
-import org.skepsun.kototoro.parsers.model.MangaState
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentSource
+import org.skepsun.kototoro.parsers.model.ContentState
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.config.ConfigKey
@@ -33,9 +33,9 @@ import java.util.EnumSet
  * 百合会（baihehui / yamibo）
  * 参考 venera-configs/baihehui.js
  */
-@MangaSourceParser("BAIHEHUI", "百合会", "zh")
-internal class Baihehui(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.BAIHEHUI, pageSize = 50) {
+@ContentSourceParser("BAIHEHUI", "百合会", "zh")
+internal class Baihehui(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.BAIHEHUI, pageSize = 50) {
 
     override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("www.yamibo.com")
 
@@ -64,29 +64,29 @@ internal class Baihehui(context: MangaLoaderContext) :
     override val availableSortOrders: Set<SortOrder> =
         EnumSet.of(SortOrder.UPDATED)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = false,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = buildList {
             addAll(categoryTypes.map { (title, entry) -> entry.toTag(title, source) })
             addAll(articleTypes.map { (title, entry) -> entry.toTag(title, source) })
             addAll(relateTypes.map { (title, entry) -> entry.toTag(title, source) })
         }.toSet()
         val groups = listOf(
-            MangaTagGroup("分类", categoryTypes.map { (title, entry) -> entry.toTag(title, source) }.toSet()),
-            MangaTagGroup("作品类型（需要登陆）", articleTypes.map { (title, entry) -> entry.toTag(title, source) }.toSet()),
-            MangaTagGroup("更多推荐", relateTypes.map { (title, entry) -> entry.toTag(title, source) }.toSet()),
+            ContentTagGroup("分类", categoryTypes.map { (title, entry) -> entry.toTag(title, source) }.toSet()),
+            ContentTagGroup("作品类型（需要登陆）", articleTypes.map { (title, entry) -> entry.toTag(title, source) }.toSet()),
+            ContentTagGroup("更多推荐", relateTypes.map { (title, entry) -> entry.toTag(title, source) }.toSet()),
         )
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = groups,
-            availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
         )
     }
@@ -96,7 +96,7 @@ internal class Baihehui(context: MangaLoaderContext) :
         .add("Referer", "https://${domain}/")
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // Search takes precedence
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page)
@@ -115,16 +115,16 @@ internal class Baihehui(context: MangaLoaderContext) :
 
     private fun buildCoverUrl(id: String): String = "https://${domain}/coverm/000/000/${padCoverId(id)}.jpg"
 
-    private fun parseListRows(doc: Document, tagExtractor: (Element) -> List<String>): List<Manga> {
+    private fun parseListRows(doc: Document, tagExtractor: (Element) -> List<String>): List<Content> {
         val rows = doc.select("tr[data-key]")
         return rows.mapNotNull { row ->
             val href = row.selectFirst("a")?.attr("href") ?: return@mapNotNull null
             val id = href.substringAfterLast("/manga/").takeWhile { it.isDigit() }.ifEmpty { return@mapNotNull null }
             val title = row.selectFirst("a")?.text()?.trim().orEmpty()
             val author = row.select("td").getOrNull(2)?.text()?.trim().orEmpty()
-            val tags = tagExtractor(row).filter { it.isNotBlank() }.map { MangaTag(it, it, source) }.toSet()
+            val tags = tagExtractor(row).filter { it.isNotBlank() }.map { ContentTag(it, it, source) }.toSet()
             val desc = row.select("td").lastOrNull()?.text()?.trim().orEmpty()
-            Manga(
+            Content(
                 id = generateUid(id),
                 url = id,
                 publicUrl = "https://${domain}/manga/$id",
@@ -142,7 +142,7 @@ internal class Baihehui(context: MangaLoaderContext) :
         }
     }
 
-    private suspend fun loadCategory(entry: FilterEntry, page: Int): List<Manga> {
+    private suspend fun loadCategory(entry: FilterEntry, page: Int): List<Content> {
         val url = when (entry.type) {
             'a' -> "https://${domain}/${entry.path}${entry.suffix}sort=updated_at&page=$page&per-page=$pageSize"
             'b' -> "https://${domain}/${entry.path}${entry.suffix.urlEncoded()}&sort=updated_at&page=$page&per-page=$pageSize"
@@ -170,7 +170,7 @@ internal class Baihehui(context: MangaLoaderContext) :
         }
     }
 
-    private suspend fun search(query: String, page: Int): List<Manga> {
+    private suspend fun search(query: String, page: Int): List<Content> {
         val url = "https://${domain}/search/manga?SearchForm%5Bkeyword%5D=${query.urlEncoded()}&page=$page"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
@@ -178,7 +178,7 @@ internal class Baihehui(context: MangaLoaderContext) :
         return parseListRows(doc) { emptyList() }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val resp = webClient.httpGet("https://${domain}/manga/${manga.url}", getRequestHeaders())
         if (!resp.isSuccessful) return manga
         val doc = resp.parseHtml()
@@ -193,7 +193,7 @@ internal class Baihehui(context: MangaLoaderContext) :
         val chapters = doc.select("div[data-key]").mapIndexed { index, el ->
             val key = el.attr("data-key")
             val name = el.selectFirst("a")?.text()?.trim().orEmpty().ifEmpty { "Chapter $key" }
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("$key-${manga.id}"),
                 title = name,
                 number = (index + 1).toFloat(),
@@ -209,16 +209,16 @@ internal class Baihehui(context: MangaLoaderContext) :
         return manga.copy(
             title = title,
             authors = if (author.isNotEmpty()) setOf(author) else manga.authors,
-            tags = if (tags.isNotEmpty()) tags.map { MangaTag(it, it, source) }.toSet() else manga.tags,
+            tags = if (tags.isNotEmpty()) tags.map { ContentTag(it, it, source) }.toSet() else manga.tags,
             chapters = chapters,
             description = manga.description,
             contentRating = manga.contentRating ?: ContentRating.SAFE,
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val baseUrl = "https://${domain}/manga/view-chapter?id=${chapter.url}"
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
 
         suspend fun loadPage(pageIndex: Int): Pair<String?, Int?> {
             val url = "$baseUrl&page=$pageIndex"
@@ -232,29 +232,29 @@ internal class Baihehui(context: MangaLoaderContext) :
 
         val (firstImg, maxPage) = loadPage(1)
         if (firstImg != null) {
-            pages.add(MangaPage(id = generateUid("$firstImg-0"), url = firstImg, preview = firstImg, source = source))
+            pages.add(ContentPage(id = generateUid("$firstImg-0"), url = firstImg, preview = firstImg, source = source))
         }
         val total = maxPage ?: 1
         if (total > 1) {
             for (i in 2..total) {
                 val (img, _) = loadPage(i)
                 if (img != null) {
-                    pages.add(MangaPage(id = generateUid("$img-$i"), url = img, preview = img, source = source))
+                    pages.add(ContentPage(id = generateUid("$img-$i"), url = img, preview = img, source = source))
                 }
             }
         }
         return pages
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     private data class FilterEntry(
         val path: String,
         val type: Char,
         val suffix: String,
     ) {
-        fun toTag(title: String, source: MangaSource): MangaTag =
-            MangaTag(title = title, key = toKey(), source = source)
+        fun toTag(title: String, source: ContentSource): ContentTag =
+            ContentTag(title = title, key = toKey(), source = source)
 
         fun toKey(): String = "$path@$type@$suffix"
 

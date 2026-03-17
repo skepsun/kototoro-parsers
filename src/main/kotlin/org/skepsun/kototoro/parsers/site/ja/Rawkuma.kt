@@ -10,10 +10,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
@@ -25,9 +25,9 @@ import java.util.Locale
  * Rawkuma - Japanese RAW manga site
  * URL: https://rawkuma.net/
  */
-@MangaSourceParser("RAWKUMA", "Rawkuma", "ja")
-internal class Rawkuma(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.RAWKUMA, pageSize = 24) {
+@ContentSourceParser("RAWKUMA", "Rawkuma", "ja")
+internal class Rawkuma(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.RAWKUMA, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("rawkuma.net")
 
@@ -38,7 +38,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         SortOrder.ALPHABETICAL,
     )
 
-    override val filterCapabilities get() = MangaListFilterCapabilities(
+    override val filterCapabilities get() = ContentListFilterCapabilities(
         isSearchSupported = true,
         isMultipleTagsSupported = true,
         isTagsExclusionSupported = false,
@@ -53,52 +53,52 @@ internal class Rawkuma(context: MangaLoaderContext) :
 
     // 完整的 genre 列表
     private val defaultGenres = setOf(
-        MangaTag("Action", "action", source),
-        MangaTag("Adaptions", "adaptions", source),
-        MangaTag("Adult", "adult", source),
-        MangaTag("Adventure", "adventure", source),
-        MangaTag("Animals", "animals", source),
-        MangaTag("Comedy", "comedy", source),
-        MangaTag("Crime", "crime", source),
-        MangaTag("Demons", "demons", source),
-        MangaTag("Drama", "drama", source),
-        MangaTag("Ecchi", "ecchi", source),
-        MangaTag("Fantasy", "fantasy", source),
-        MangaTag("Game", "game", source),
-        MangaTag("Gender Bender", "gender-bender", source),
-        MangaTag("Girls' Love", "girls-love", source),
-        MangaTag("Harem", "harem", source),
-        MangaTag("Hentai", "hentai", source),
-        MangaTag("Historical", "historical", source),
-        MangaTag("Horror", "horror", source),
-        MangaTag("Isekai", "isekai", source),
-        MangaTag("Josei", "josei", source),
-        MangaTag("Lolicon", "lolicon", source),
-        MangaTag("Magic", "magic", source),
-        MangaTag("Martial Arts", "martial-arts", source),
-        MangaTag("Mature", "mature", source),
-        MangaTag("Mecha", "mecha", source),
-        MangaTag("Mystery", "mystery", source),
-        MangaTag("Philosophical", "philosophical", source),
-        MangaTag("Police", "police", source),
-        MangaTag("Psychological", "psychological", source),
-        MangaTag("Romance", "romance", source),
-        MangaTag("School Life", "school-life", source),
-        MangaTag("Sci-fi", "sci-fi", source),
-        MangaTag("Seinen", "seinen", source),
-        MangaTag("Shotacon", "shotacon", source),
-        MangaTag("Shoujo", "shoujo", source),
-        MangaTag("Shoujo Ai", "shoujo-ai", source),
-        MangaTag("Shounen", "shounen", source),
-        MangaTag("Shounen Ai", "shounen-ai", source),
-        MangaTag("Slice of Life", "slice-of-life", source),
-        MangaTag("Smut", "smut", source),
-        MangaTag("Sports", "sports", source),
-        MangaTag("Supernatural", "supernatural", source),
-        MangaTag("Thriller", "thriller", source),
-        MangaTag("Tragedy", "tragedy", source),
-        MangaTag("Yaoi", "yaoi", source),
-        MangaTag("Yuri", "yuri", source),
+        ContentTag("Action", "action", source),
+        ContentTag("Adaptions", "adaptions", source),
+        ContentTag("Adult", "adult", source),
+        ContentTag("Adventure", "adventure", source),
+        ContentTag("Animals", "animals", source),
+        ContentTag("Comedy", "comedy", source),
+        ContentTag("Crime", "crime", source),
+        ContentTag("Demons", "demons", source),
+        ContentTag("Drama", "drama", source),
+        ContentTag("Ecchi", "ecchi", source),
+        ContentTag("Fantasy", "fantasy", source),
+        ContentTag("Game", "game", source),
+        ContentTag("Gender Bender", "gender-bender", source),
+        ContentTag("Girls' Love", "girls-love", source),
+        ContentTag("Harem", "harem", source),
+        ContentTag("Hentai", "hentai", source),
+        ContentTag("Historical", "historical", source),
+        ContentTag("Horror", "horror", source),
+        ContentTag("Isekai", "isekai", source),
+        ContentTag("Josei", "josei", source),
+        ContentTag("Lolicon", "lolicon", source),
+        ContentTag("Magic", "magic", source),
+        ContentTag("Martial Arts", "martial-arts", source),
+        ContentTag("Mature", "mature", source),
+        ContentTag("Mecha", "mecha", source),
+        ContentTag("Mystery", "mystery", source),
+        ContentTag("Philosophical", "philosophical", source),
+        ContentTag("Police", "police", source),
+        ContentTag("Psychological", "psychological", source),
+        ContentTag("Romance", "romance", source),
+        ContentTag("School Life", "school-life", source),
+        ContentTag("Sci-fi", "sci-fi", source),
+        ContentTag("Seinen", "seinen", source),
+        ContentTag("Shotacon", "shotacon", source),
+        ContentTag("Shoujo", "shoujo", source),
+        ContentTag("Shoujo Ai", "shoujo-ai", source),
+        ContentTag("Shounen", "shounen", source),
+        ContentTag("Shounen Ai", "shounen-ai", source),
+        ContentTag("Slice of Life", "slice-of-life", source),
+        ContentTag("Smut", "smut", source),
+        ContentTag("Sports", "sports", source),
+        ContentTag("Supernatural", "supernatural", source),
+        ContentTag("Thriller", "thriller", source),
+        ContentTag("Tragedy", "tragedy", source),
+        ContentTag("Yaoi", "yaoi", source),
+        ContentTag("Yuri", "yuri", source),
     )
 
     private val genreSlugToId = mapOf(
@@ -151,7 +151,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         "yuri" to 626
     )
 
-    override suspend fun getFilterOptions() = MangaListFilterOptions(
+    override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableTags = defaultGenres,
     )
 
@@ -164,7 +164,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         .add("Referer", referer)
         .build()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 优先使用 WordPress REST API
         fetchListViaApi(page, order, filter)?.let { list ->
             logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' api_size=${list.size}")
@@ -180,7 +180,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         // 最后的追溯方案：解析 HTML
         val candidates = listOf(
             buildLibraryUrl(page, order, filter) to "https://$domain/library/",
-            buildMangaPageUrl(page, order, filter) to "https://$domain/manga/",
+            buildContentPageUrl(page, order, filter) to "https://$domain/manga/",
             buildFallbackUrl(page, order, filter) to "https://$domain/manga/"
         )
 
@@ -188,7 +188,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
             val (url, referer) = candidate
             val list = runCatching {
                 val doc = webClient.httpGet(url.toHttpUrl(), headersWithReferer(referer)).parseHtml()
-                parseMangaList(doc)
+                parseContentList(doc)
             }.getOrElse { emptyList() }
             val altSuffix = if (idx > 0) " (alt$idx)" else ""
             logDebug("list page=$page order=$order query='${filter.query.orEmpty()}' tag=${filter.tags.firstOrNull()?.key} size=${list.size} url=$url$altSuffix")
@@ -197,7 +197,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         return emptyList()
     }
 
-    private suspend fun fetchListViaApi(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga>? {
+    private suspend fun fetchListViaApi(page: Int, order: SortOrder, filter: ContentListFilter): List<Content>? {
         // API 方式需要分类 ID。如果存在无法映射为 ID 的 slug，回退到 Ajax/Web 方式以保证过滤生效。
         if (filter.tags.isNotEmpty() && filter.tags.any { !genreSlugToId.containsKey(it.key.lowercase()) }) {
             return null
@@ -211,17 +211,17 @@ internal class Rawkuma(context: MangaLoaderContext) :
         if (response.code != 200) return null
 
         val jsonArray = runCatching { response.parseJsonArray() }.getOrElse { return null }
-        val mangaList = mutableListOf<Manga>()
+        val mangaList = mutableListOf<Content>()
 
         for (i in 0 until jsonArray.length()) {
             val item = jsonArray.getJSONObject(i)
-            mangaList.add(parseMangaJson(item))
+            mangaList.add(parseContentJson(item))
         }
 
         return mangaList
     }
 
-    private fun parseMangaJson(item: JSONObject): Manga {
+    private fun parseContentJson(item: JSONObject): Content {
         val publicUrl = item.getString("link")
         val relativeUrl = publicUrl.toRelativeUrl(domain)
         val title = item.getJSONObject("title").getString("rendered").unescapeHtml()
@@ -246,11 +246,11 @@ internal class Rawkuma(context: MangaLoaderContext) :
         val terms = parseTerms(item)
         val statusText = item.optString("status")
         val state = when {
-            statusText.contains("publish") -> MangaState.ONGOING
+            statusText.contains("publish") -> ContentState.ONGOING
             else -> null
         }
 
-        return Manga(
+        return Content(
             id = generateUid(relativeUrl),
             url = relativeUrl,
             publicUrl = publicUrl,
@@ -266,10 +266,10 @@ internal class Rawkuma(context: MangaLoaderContext) :
         )
     }
 
-    private data class ParsedTerms(val tags: Set<MangaTag>, val authors: Set<String>)
+    private data class ParsedTerms(val tags: Set<ContentTag>, val authors: Set<String>)
 
     private fun parseTerms(item: JSONObject): ParsedTerms {
-        val tags = mutableSetOf<MangaTag>()
+        val tags = mutableSetOf<ContentTag>()
         val authors = mutableSetOf<String>()
 
         // 1. 从 _embedded 获取 (最全)
@@ -285,7 +285,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
                     val slug = term.getString("slug").lowercase()
                     
                     when (taxonomy) {
-                        "genre" -> tags.add(MangaTag(name, slug, source))
+                        "genre" -> tags.add(ContentTag(name, slug, source))
                         "series-author", "artist" -> authors.add(name)
                     }
                 }
@@ -304,7 +304,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
                     if (name.isBlank()) continue
                     
                     when (taxonomy) {
-                        "genre" -> tags.add(MangaTag(name, slug, source))
+                        "genre" -> tags.add(ContentTag(name, slug, source))
                         "series-author", "artist" -> authors.add(name)
                     }
                 }
@@ -314,7 +314,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         return ParsedTerms(tags, authors)
     }
 
-    private fun buildApiUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+    private fun buildApiUrl(page: Int, order: SortOrder, filter: ContentListFilter): String = buildString {
         append("https://$domain/wp-json/wp/v2/manga?")
         append("page=$page")
         append("&per_page=$pageSize")
@@ -346,7 +346,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
 
     private fun String.unescapeHtml(): String = Jsoup.parse(this).text()
 
-    private suspend fun fetchListViaAjax(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga>? {
+    private suspend fun fetchListViaAjax(page: Int, order: SortOrder, filter: ContentListFilter): List<Content>? {
         val (orderParam, orderBy) = mapOrder(order)
         val form = mapOf(
             "action" to "advanced_search",
@@ -396,20 +396,20 @@ internal class Rawkuma(context: MangaLoaderContext) :
         return emptyList()
     }
 
-    private fun parseAjaxHtml(html: String): List<Manga>? {
+    private fun parseAjaxHtml(html: String): List<Content>? {
         if (html.isBlank() || html.contains("No results", ignoreCase = true)) return emptyList()
         if (html.contains("challenge-platform", ignoreCase = true) || html.contains("cf-chl-bypass", ignoreCase = true)) {
             return null
         }
         val doc = Jsoup.parse(html, "https://$domain/")
-        return parseMangaList(doc)
+        return parseContentList(doc)
     }
 
     private companion object {
         var warmupDone = false
     }
 
-    private fun buildLibraryUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+    private fun buildLibraryUrl(page: Int, order: SortOrder, filter: ContentListFilter): String = buildString {
         append("https://$domain/library/?")
         append("the_page=$page")
         append("&the_genre=${filter.tags.joinToString(",") { it.key }}")
@@ -419,7 +419,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         append("&project=0&order=$orderParam&orderby=$orderBy")
     }
 
-    private fun buildFallbackUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+    private fun buildFallbackUrl(page: Int, order: SortOrder, filter: ContentListFilter): String = buildString {
         append("https://$domain/manga/?page=$page")
 
         if (!filter.query.isNullOrEmpty()) {
@@ -434,7 +434,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         }
     }
 
-    private fun buildMangaPageUrl(page: Int, order: SortOrder, filter: MangaListFilter): String = buildString {
+    private fun buildContentPageUrl(page: Int, order: SortOrder, filter: ContentListFilter): String = buildString {
         append("https://$domain/manga/page/$page/")
 
         if (!filter.query.isNullOrEmpty()) {
@@ -458,7 +458,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         else -> "desc" to "updated"
     }
 
-    private fun parseMangaList(doc: Document): List<Manga> {
+    private fun parseContentList(doc: Document): List<Content> {
         // 网站使用 Tailwind CSS，漫画项在 grid 中
         // 每个项目有 a.w-full.h-full 链接到漫画详情页
         val items = doc.select("a.w-full.h-full, div.bsx a, .listupd .bsx a, article a[href*='/manga/']")
@@ -467,14 +467,14 @@ internal class Rawkuma(context: MangaLoaderContext) :
         
         return items.mapNotNull { element ->
             try {
-                parseMangaItem(element)
+                parseContentItem(element)
             } catch (e: Exception) {
                 null
             }
         }
     }
 
-    private fun parseMangaItem(element: Element): Manga {
+    private fun parseContentItem(element: Element): Content {
         val href = element.attrAsAbsoluteUrl("href")
         val relativeUrl = href.toRelativeUrl(domain)
         
@@ -492,7 +492,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
             ?: img?.attr("alt")?.trim()
             ?: element.text().trim()
         
-        return Manga(
+        return Content(
             id = generateUid(relativeUrl),
             url = relativeUrl,
             publicUrl = href,
@@ -508,11 +508,11 @@ internal class Rawkuma(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val slug = manga.url.removeSuffix("/").substringAfterLast("/")
         val apiUrl = "https://$domain/wp-json/wp/v2/manga?slug=$slug&_embed"
         
-        val apiManga = runCatching {
+        val apiContent = runCatching {
             val response = webClient.httpGet(apiUrl.toHttpUrl(), getRequestHeaders())
             if (response.code == 200) {
                 val array = response.parseJsonArray()
@@ -520,14 +520,14 @@ internal class Rawkuma(context: MangaLoaderContext) :
             } else null
         }.getOrNull()
 
-        if (apiManga != null) {
-            return getDetailsFromApi(manga, apiManga)
+        if (apiContent != null) {
+            return getDetailsFromApi(manga, apiContent)
         }
 
         return getDetailsFromHtml(manga)
     }
 
-    private suspend fun getDetailsFromApi(manga: Manga, item: JSONObject): Manga {
+    private suspend fun getDetailsFromApi(manga: Content, item: JSONObject): Content {
         val title = item.getJSONObject("title").getString("rendered").unescapeHtml()
         val description = item.getJSONObject("content").getString("rendered")
             .let { Jsoup.parse(it).text().trim() }
@@ -561,7 +561,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun getDetailsFromHtml(manga: Manga): Manga {
+    private suspend fun getDetailsFromHtml(manga: Content): Content {
         val url = manga.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val doc = webClient.httpGet(url.toHttpUrl(), getRequestHeaders()).parseHtml()
         
@@ -589,20 +589,20 @@ internal class Rawkuma(context: MangaLoaderContext) :
         val tags = doc.select("a[href*='/genre/']").mapNotNull { 
             val name = it.text().trim()
             val key = it.attr("href").substringAfter("/genre/").removeSuffix("/").lowercase()
-            if (name.isNotEmpty() && key.isNotEmpty()) MangaTag(name, key, source) else null
+            if (name.isNotEmpty() && key.isNotEmpty()) ContentTag(name, key, source) else null
         }.toSet()
         
         val statusText = doc.selectFirst("span:contains(Status) + span, .status, .imptdt:contains(Status)")?.text()?.lowercase()
         val state = when {
-            statusText?.contains("ongoing") == true -> MangaState.ONGOING
-            statusText?.contains("completed") == true -> MangaState.FINISHED
+            statusText?.contains("ongoing") == true -> ContentState.ONGOING
+            statusText?.contains("completed") == true -> ContentState.FINISHED
             else -> manga.state
         }
         
         val mangaId = doc.selectFirst("input#manga_id, input[name=manga_id]")?.attr("value")
             ?: doc.selectFirst("[data-manga-id]")?.attr("data-manga-id")
-            ?: extractMangaIdFromHx(doc)
-            ?: extractMangaIdFromScript(doc)
+            ?: extractContentIdFromHx(doc)
+            ?: extractContentIdFromScript(doc)
         
         val chapters = if (!mangaId.isNullOrEmpty()) {
             fetchChaptersViaAjax(mangaId)
@@ -622,7 +622,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         )
     }
 
-    private fun extractMangaIdFromHx(doc: Document): String? {
+    private fun extractContentIdFromHx(doc: Document): String? {
         val hxAttr = doc.selectFirst("#chapter-list[hx-get], [data-hx-get], [hx-get]")
             ?.attrOrNull("hx-get")
             ?: doc.selectFirst("#chapter-list")?.attrOrNull("data-hx-get")
@@ -632,7 +632,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         return null
     }
 
-    private fun extractMangaIdFromScript(doc: Document): String? {
+    private fun extractContentIdFromScript(doc: Document): String? {
         // 尝试从 JavaScript 中提取 manga_id
         val scripts = doc.select("script").map { it.html() }
         for (script in scripts) {
@@ -644,8 +644,8 @@ internal class Rawkuma(context: MangaLoaderContext) :
         return null
     }
 
-    private suspend fun fetchChaptersViaAjax(mangaId: String): List<MangaChapter> {
-        val chapters = mutableListOf<MangaChapter>()
+    private suspend fun fetchChaptersViaAjax(mangaId: String): List<ContentChapter> {
+        val chapters = mutableListOf<ContentChapter>()
         val seenUrls = mutableSetOf<String>()
         var page = 1
         val maxPages = 50 // 安全限制
@@ -715,7 +715,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         container: Element?,
         fallbackNumber: Float,
         seenUrls: MutableSet<String> = mutableSetOf(),
-    ): MangaChapter? {
+    ): ContentChapter? {
         val href = element.attrOrNull("href")?.toAbsoluteUrl(domain) ?: return null
         if (href.isBlank()) return null
         val relativeUrl = href.toRelativeUrl(domain)
@@ -734,7 +734,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         val slug = href.substringAfter("/chapter-").substringBefore("/")
         logDebug("chapter href=$href rel=$relativeUrl slug=$slug rawTitle='$rawTitle' data-num=$selfDataNum parent-data-num=$parentDataNum number=$chapterNumber title='$title'")
         
-        return MangaChapter(
+        return ContentChapter(
             id = generateUid(relativeUrl),
             title = title,
             number = chapterNumber,
@@ -802,7 +802,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         kotlin.runCatching { println("[Rawkuma] $msg") }
     }
 
-    private fun parseChaptersFromHtml(doc: Document): List<MangaChapter> {
+    private fun parseChaptersFromHtml(doc: Document): List<ContentChapter> {
         // 章节链接格式: /manga/[slug]/chapter-[number].[id]/
         val containers = doc.select("div[data-chapter-number], li[data-chapter-number], article[data-chapter-number]")
         val chapterElements = if (containers.isNotEmpty()) {
@@ -821,7 +821,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         }.sortedBy { it.number } // 升序排列
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val url = chapter.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val doc = webClient.httpGet(url.toHttpUrl(), getRequestHeaders()).parseHtml()
         
@@ -835,7 +835,7 @@ internal class Rawkuma(context: MangaLoaderContext) :
         
         return images.mapIndexed { index, img ->
             val imgUrl = img.attrOrNull("data-src") ?: img.attrOrNull("data-lazy-src") ?: img.attr("src")
-            MangaPage(
+            ContentPage(
                 id = generateUid("${chapter.url}-$index"),
                 url = imgUrl,
                 preview = null,

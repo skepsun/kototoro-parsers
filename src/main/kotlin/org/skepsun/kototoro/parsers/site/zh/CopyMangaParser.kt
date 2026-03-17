@@ -12,16 +12,16 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.TlsVersion
 import org.json.JSONArray
 import org.json.JSONObject
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
 import org.skepsun.kototoro.parsers.network.GZipOptions
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -45,20 +45,20 @@ import java.io.ByteArrayInputStream
 import java.io.InputStreamReader
 import java.util.zip.GZIPInputStream
 
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 
 /**
  * 拷贝漫画（新站）解析器
  * 参考 /Users/sunchuxiong/kototoro_demo/copymanga.js
  */
-@MangaSourceParser("COPYMANGA", "拷贝漫画", "zh")
+@ContentSourceParser("COPYMANGA", "拷贝漫画", "zh")
 @OptIn(InternalParsersApi::class)
 @InternalParsersApi
-internal class CopyMangaParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.COPYMANGA, pageSize = 30),
+internal class CopyContentParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.COPYMANGA, pageSize = 30),
     Interceptor,
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider,
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider,
     FavoritesProvider,
     FavoritesSyncProvider {
     init {
@@ -258,20 +258,20 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         // 2. 在 password 后面紧跟字面量 \\n（两个字符，占 2 字节）
         // 3. 使用 charset=utf-8
         val bodyText = "username=$username&password=$encryptedPassword\n&salt=$salt&authorization=Token+"
-        logAuth("CopyMangaDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
+        logAuth("CopyContentDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
 
         val requestHeaders = getRequestHeaders().newBuilder()
             .add("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
             .build()
         
-        logAuth("CopyMangaDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
-        logAuth("CopyMangaDebug login: request headers (manual + base):")
+        logAuth("CopyContentDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
+        logAuth("CopyContentDebug login: request headers (manual + base):")
         for (i in 0 until requestHeaders.size) {
             logAuth("  [${i}] ${requestHeaders.name(i)}: ${requestHeaders.value(i)}")
         }
 
         val bodyBytes = bodyText.toByteArray(Charsets.UTF_8)
-        logAuth("CopyMangaDebug login: body length=${bodyBytes.size} bytes (expected 79)")
+        logAuth("CopyContentDebug login: body length=${bodyBytes.size} bytes (expected 79)")
         val requestBody = bodyBytes.toRequestBody(null)
         
         // 使用 .tag(GZipOptions(skip = true)) 绕过全局 GZipInterceptor，彻底不发 Content-Encoding 头部
@@ -283,7 +283,7 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
             .build()
 
         val response = try {
-            logAuth("CopyMangaDebug login: sending raw request via httpClient (forcing HTTP/1.1)")
+            logAuth("CopyContentDebug login: sending raw request via httpClient (forcing HTTP/1.1)")
             // 强制使用 HTTP/1.1，因为终端 curl 默认行为更有可能被放行
             val tls12Spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
                 .tlsVersions(TlsVersion.TLS_1_2)
@@ -294,35 +294,35 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
                 .build()
             h1Client.newCall(request).await()
         } catch (e: Exception) {
-            logAuth("CopyMangaDebug login: exception during request: $e")
+            logAuth("CopyContentDebug login: exception during request: $e")
             return false
         }
 
-        logAuth("CopyMangaDebug login: response code=${response.code}")
+        logAuth("CopyContentDebug login: response code=${response.code}")
         val handshake = response.handshake
         if (handshake != null) {
             logAuth(
-                "CopyMangaDebug login: protocol=${response.protocol}, tls=${handshake.tlsVersion}, cipher=${handshake.cipherSuite}"
+                "CopyContentDebug login: protocol=${response.protocol}, tls=${handshake.tlsVersion}, cipher=${handshake.cipherSuite}"
             )
         } else {
-            logAuth("CopyMangaDebug login: protocol=${response.protocol}, tls=unknown")
+            logAuth("CopyContentDebug login: protocol=${response.protocol}, tls=unknown")
         }
         val responsePreview = kotlin.runCatching {
             response.peekBody(1024).string()
         }.getOrNull()
         if (!responsePreview.isNullOrBlank()) {
-            logAuth("CopyMangaDebug login: response preview=${responsePreview.take(200)}")
+            logAuth("CopyContentDebug login: response preview=${responsePreview.take(200)}")
         }
         val json = try {
-            logAuth("CopyMangaDebug login: parsing response JSON")
+            logAuth("CopyContentDebug login: parsing response JSON")
             // 必须手动调用 unzip()，因为直接使用 context.httpClient 会绕过拦截器逻辑
             response.unzip().parseJson()
         } catch (e: Exception) {
-            logAuth("CopyMangaDebug login: JSON parse failed: $e")
+            logAuth("CopyContentDebug login: JSON parse failed: $e")
             return false
         }
         
-        logAuth("CopyMangaDebug login: response JSON=$json")
+        logAuth("CopyContentDebug login: response JSON=$json")
 
         val code = json.optInt("code")
         if (code == 210) {
@@ -335,7 +335,7 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         val token = json.optJSONObject("results")?.optString("token")
         val nickname = json.optJSONObject("results")?.optString("nickname").orEmpty()
         if (!token.isNullOrEmpty()) {
-            logAuth("CopyMangaDebug login: success, token=${maskToken(token)}")
+            logAuth("CopyContentDebug login: success, token=${maskToken(token)}")
             val site = siteDomain()
             // 使用更完整的 Cookie 属性以确保在子域和主域间共享
             val cookieString = "token=$token; Domain=$site; Path=/; HttpOnly"
@@ -344,16 +344,16 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
             // 同时插入默认域以保证 getAuthToken 命中
             context.cookieJar.insertCookies("copy2000.online", "token=$token; Domain=copy2000.online; Path=/")
             
-            logAuth("CopyMangaDebug login: cookies inserted into $site, $base, and copy2000.online")
+            logAuth("CopyContentDebug login: cookies inserted into $site, $base, and copy2000.online")
             
             if (nickname.isNotEmpty()) {
                 nicknameRef.set(nickname)
                 context.cookieJar.insertCookies(site, "copy_nickname=$nickname; Domain=$site; Path=/")
-                logAuth("CopyMangaDebug login: nickname saved: $nickname")
+                logAuth("CopyContentDebug login: nickname saved: $nickname")
             }
             return true
         }
-        logAuth("CopyMangaDebug login: failed (no token in results)")
+        logAuth("CopyContentDebug login: failed (no token in results)")
         return false
     }
 
@@ -366,8 +366,8 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
     )
 
     @OptIn(InternalParsersApi::class)
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isMultipleTagsSupported = false,
             isTagsExclusionSupported = false,
             isSearchSupported = true,
@@ -375,20 +375,20 @@ internal class CopyMangaParser(context: MangaLoaderContext) :
         )
 
     @OptIn(InternalParsersApi::class)
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 将 JS 中的“主题”和“排行”的选择映射为标签组（固定分类）
-        val themeTags: Set<MangaTag> = CATEGORY_PARAM_DICT.entries.map { entry ->
-            MangaTag(title = entry.key, key = entry.value, source = source)
+        val themeTags: Set<ContentTag> = CATEGORY_PARAM_DICT.entries.map { entry ->
+            ContentTag(title = entry.key, key = entry.value, source = source)
         }.toSet()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = themeTags,
             tagGroups = listOf(
-                MangaTagGroup(
+                ContentTagGroup(
                     title = "主题",
                     tags = themeTags,
                 ),
             ),
-            availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
             availableContentRating = emptySet(),
         )
     }
@@ -444,11 +444,11 @@ override fun getRequestHeaders(): Headers {
         return resp.parseJson().optJSONObject("results")?.optJSONObject("comic")?.optString("uuid")
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val headers = getRequestHeaders()
         val api = apiBase()
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         var offset = 0
         val limit = 30
         while (true) {
@@ -470,14 +470,14 @@ override fun getRequestHeaders(): Headers {
                 logDebug("favorites: id=$id title=$title cover=$cover")
                 val tags = (comic.optJSONArray("theme") ?: JSONArray()).mapJSON { t ->
                     val n = t.optString("name")
-                    MangaTag(title = n, key = n, source = source)
+                    ContentTag(title = n, key = n, source = source)
                 }.toSet()
                 val authors = (comic.optJSONArray("author") ?: JSONArray()).mapJSON { a ->
                     a.optString("name")
                 }.toSet()
                 val site = siteDomain()
                 result.add(
-                    Manga(
+                    Content(
                         id = generateUid(id),
                         url = id,
                         publicUrl = "https://$site/comic/$id",
@@ -500,7 +500,7 @@ override fun getRequestHeaders(): Headers {
         return result
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val headers = getRequestHeaders().newBuilder()
             .add("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
@@ -515,7 +515,7 @@ override fun getRequestHeaders(): Headers {
         return resp.isSuccessful
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val headers = getRequestHeaders().newBuilder()
             .add("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
@@ -664,7 +664,7 @@ override fun getRequestHeaders(): Headers {
     }
 
     @OptIn(InternalParsersApi::class)
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val base = refreshAppApi()
         val offset = (page - paginator.firstPage) * pageSize
         val isRanking = filter.tags.any { it.key == "ranking" }
@@ -745,8 +745,8 @@ override fun getRequestHeaders(): Headers {
                 else -> "-datetime_updated"
             }
             val top = when {
-                MangaState.FINISHED in filter.states -> "finish"
-                MangaState.ONGOING in filter.states -> "-全部"
+                ContentState.FINISHED in filter.states -> "finish"
+                ContentState.ONGOING in filter.states -> "-全部"
                 else -> "-全部"
             }
             buildString {
@@ -780,11 +780,11 @@ override fun getRequestHeaders(): Headers {
                 val tagsArray = comic.optJSONArray("theme") ?: JSONArray()
                 val tags = tagsArray.mapJSON { t ->
                     val n = t.optString("name")
-                    MangaTag(title = n, key = n, source = source)
+                    ContentTag(title = n, key = n, source = source)
                 }.toSet()
                 val authors = (comic.optJSONArray("author") ?: JSONArray()).mapJSON { a -> a.optString("name") }.toSet()
                 val site = siteDomain()
-                Manga(
+                Content(
                     id = generateUid(id),
                     url = id,
                     publicUrl = "https://$site/comic/$id",
@@ -805,7 +805,7 @@ override fun getRequestHeaders(): Headers {
     }
 
     @OptIn(InternalParsersApi::class)
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         // 仅使用 API 详情与分组章节批量拉取（含 210 重试与参数回退）
         val base = refreshAppApi()
         val headers = getRequestHeaders()
@@ -844,8 +844,8 @@ override fun getRequestHeaders(): Headers {
         val desc = comic.optString("brief", manga.description).ifBlank { manga.description }
         val stateStr = comic.optString("status", "")
         val state = when (stateStr.lowercase()) {
-            "finished", "end" -> MangaState.FINISHED
-            "ongoing" -> MangaState.ONGOING
+            "finished", "end" -> ContentState.FINISHED
+            "ongoing" -> ContentState.ONGOING
             else -> manga.state
         }
 
@@ -872,7 +872,7 @@ override fun getRequestHeaders(): Headers {
         }
         if (pathList.isEmpty()) pathList += "default"
 
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         val currentBase = baseUrlOverride ?: base
         for (path in pathList) {
             logDebug("chapters: branch=${manga.url} group=$path base=$currentBase")
@@ -888,7 +888,7 @@ override fun getRequestHeaders(): Headers {
                     val idPathWord = c.optString("path_word", "${manga.url}-${offset + j}")
                     val id = if (uuid.isNotBlank()) uuid else idPathWord
                     val number = parseChapterNumber(serial) ?: (offset + j + 1).toFloat()
-                    chapters += MangaChapter(
+                    chapters += ContentChapter(
                         id = generateUid(id),
                         title = serial,
                         number = number,
@@ -956,7 +956,7 @@ override fun getRequestHeaders(): Headers {
     }
 
     @OptIn(InternalParsersApi::class)
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         // 仅使用 API 读取章节内容（含 210 重试与参数回退组合）
         val base = refreshAppApi()
         val headers = getRequestHeaders()
@@ -976,7 +976,7 @@ override fun getRequestHeaders(): Headers {
         return pages
     }
 
-    private suspend fun fetchPagesFromBase(base: String, chapter: MangaChapter, headers: Headers): List<MangaPage> {
+    private suspend fun fetchPagesFromBase(base: String, chapter: ContentChapter, headers: Headers): List<ContentPage> {
         val epBase = "https://$base/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
         val rid = getRequestId()
         val paramCombos = listOf(
@@ -1026,7 +1026,7 @@ override fun getRequestHeaders(): Headers {
                 }
             }
             val ordered = pagesByOrder.mapIndexedNotNull { i, u ->
-                if (u.isEmpty()) null else MangaPage(
+                if (u.isEmpty()) null else ContentPage(
                     id = generateUid("${chapter.url}/$i"),
                     url = u,
                     preview = null,
@@ -1039,7 +1039,7 @@ override fun getRequestHeaders(): Headers {
             if (urls.isNotEmpty()) {
                 // 回退：使用原始顺序（仅当存在内容时）
                 return urls.mapIndexed { i, u ->
-                    MangaPage(
+                    ContentPage(
                         id = generateUid("${chapter.url}/$i"),
                         url = u,
                         preview = null,
@@ -1093,7 +1093,7 @@ override fun getRequestHeaders(): Headers {
                         if (pos in pagesByOrder.indices) pagesByOrder[pos] = altUrls[i]
                     }
                     val ordered = pagesByOrder.mapIndexedNotNull { i, u ->
-                        if (u.isEmpty()) null else MangaPage(
+                        if (u.isEmpty()) null else ContentPage(
                             id = generateUid("${chapter.url}/$i"),
                             url = u,
                             preview = null,
@@ -1103,7 +1103,7 @@ override fun getRequestHeaders(): Headers {
                     if (ordered.isNotEmpty()) return ordered
                     if (altUrls.isNotEmpty()) {
                         return altUrls.mapIndexed { i, u ->
-                            MangaPage(
+                            ContentPage(
                                 id = generateUid("${chapter.url}/$i"),
                                 url = u,
                                 preview = null,
@@ -1275,10 +1275,10 @@ override fun getRequestHeaders(): Headers {
     }
 
     private fun logAuth(msg: String) {
-        kotlin.runCatching { println("[CopyMangaAuth] $msg") }
+        kotlin.runCatching { println("[CopyContentAuth] $msg") }
     }
     private fun logDebug(msg: String) {
-        kotlin.runCatching { println("[CopyMangaDebug] $msg") }
+        kotlin.runCatching { println("[CopyContentDebug] $msg") }
     }
 
     private fun generateDeviceInfo(): String {

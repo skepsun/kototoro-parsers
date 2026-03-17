@@ -6,7 +6,7 @@ import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.model.ContentType.MANGA
 import org.skepsun.kototoro.parsers.model.ContentType.MANHUA
 import org.skepsun.kototoro.parsers.model.Demographic.SEINEN
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQuery
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQuery
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria.*
 import org.skepsun.kototoro.parsers.model.search.SearchableField.*
 import java.util.*
@@ -14,15 +14,15 @@ import java.util.*
 class ListFilterToSearchQueryConverterTest {
 
     @Test
-    fun convertToMangaSearchQueryTest() {
-        val tags = setOf(buildMangaTag("tag1"), buildMangaTag("tag2"))
-        val excludedTags = setOf(buildMangaTag("exclude_tag"))
-        val states = setOf(MangaState.ONGOING)
+    fun convertToContentSearchQueryTest() {
+        val tags = setOf(buildContentTag("tag1"), buildContentTag("tag2"))
+        val excludedTags = setOf(buildContentTag("exclude_tag"))
+        val states = setOf(ContentState.ONGOING)
         val contentRatings = setOf(ContentRating.SAFE)
         val contentTypes = setOf(MANGA, MANHUA)
         val demographics = setOf(SEINEN)
 
-        val filter = MangaListFilter(
+        val filter = ContentListFilter(
             query = "title_name",
             tags = tags,
             tagsExclude = excludedTags,
@@ -37,9 +37,9 @@ class ListFilterToSearchQueryConverterTest {
             yearTo = 2024,
         )
 
-        val searchQuery = convertToMangaSearchQuery(0, SortOrder.NEWEST, filter)
+        val searchQuery = convertToContentSearchQuery(0, SortOrder.NEWEST, filter)
 
-        val expectedQuery = MangaSearchQuery.Builder()
+        val expectedQuery = ContentSearchQuery.Builder()
             .offset(0)
             .order(SortOrder.NEWEST)
             .criterion(Match(TITLE_NAME, "title_name"))
@@ -59,19 +59,19 @@ class ListFilterToSearchQueryConverterTest {
     }
 
     @Test
-    fun convertToMangaSearchQueryWithEmptyFieldsTest() {
-        val filter = MangaListFilter()
+    fun convertToContentSearchQueryWithEmptyFieldsTest() {
+        val filter = ContentListFilter()
 
-        val searchQuery = convertToMangaSearchQuery(0, SortOrder.NEWEST, filter)
+        val searchQuery = convertToContentSearchQuery(0, SortOrder.NEWEST, filter)
 
-        assertEquals(MangaSearchQuery.Builder().offset(0).order(SortOrder.NEWEST).build(), searchQuery)
+        assertEquals(ContentSearchQuery.Builder().offset(0).order(SortOrder.NEWEST).build(), searchQuery)
     }
 
-    private fun buildMangaTag(name: String): MangaTag {
-        return MangaTag(
+    private fun buildContentTag(name: String): ContentTag {
+        return ContentTag(
             key = "${name}Key",
             title = name,
-            source = MangaParserSource.MANGADEX,
+            source = ContentParserSource.MANGADEX,
         )
     }
 }

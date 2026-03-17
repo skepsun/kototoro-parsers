@@ -1,15 +1,15 @@
 package org.skepsun.kototoro.parsers.site.all
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.*
 
-@MangaSourceParser("MISSKON", "MissKon", type = ContentType.HENTAI_MANGA)
-internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, MangaParserSource.MISSKON, 24) {
+@ContentSourceParser("MISSKON", "MissKon", type = ContentType.HENTAI_MANGA)
+internal class Misskon(context: ContentLoaderContext) : PagedContentParser(context, ContentParserSource.MISSKON, 24) {
 
     override val configKeyDomain = ConfigKey.Domain("misskon.com")
 
@@ -23,12 +23,12 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
         SortOrder.POPULARITY
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities( isSearchSupported = true )
+    override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities( isSearchSupported = true )
 
-    override suspend fun getFilterOptions() = MangaListFilterOptions()
+    override suspend fun getFilterOptions() = ContentListFilterOptions()
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildString {
             append("https://")
             append(domain)
@@ -53,7 +53,7 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
             val href = titleEl.selectFirst("a")?.attrAsRelativeUrl("href")
                 ?: article.parseFailed("Cannot find manga link")
             
-            Manga(
+            Content(
                 id = generateUid(href),
                 title = titleEl.text(),
                 altTitles = emptySet(),
@@ -70,20 +70,20 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         val postInnerEl = doc.selectFirst("article > .post-inner")!!
 
         return manga.copy(
             tags = postInnerEl.select(".post-tag > a").mapToSet { a ->
-                MangaTag(
+                ContentTag(
                     key = a.text().lowercase(),
                     title = a.text(),
                     source = source
                 )
             },
             chapters = listOf(
-                MangaChapter(
+                ContentChapter(
                     id = manga.id,
                     title = "Oneshot", // 1 album, idk
                     number = 1f,
@@ -98,12 +98,12 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
         val basePageUrl = doc.selectFirst("link[rel=canonical]")?.absUrl("href")
             ?: chapter.url.toAbsoluteUrl(domain)
 
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         val pageLinks = doc.select("div.post-inner div.page-link:nth-child(1) .post-page-numbers")
         
         if (pageLinks.isEmpty()) {
@@ -111,7 +111,7 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
             return doc.select("div.post-inner > div.entry > p > img")
                 .mapNotNull { img -> img.absUrl("data-src") }
                 .mapIndexed { i, url ->
-                    MangaPage(
+                    ContentPage(
                         id = generateUid(url),
                         url = url,
                         preview = null,
@@ -134,7 +134,7 @@ internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, 
                 pageDoc.select("div.post-inner > div.entry > p > img")
                     .mapNotNull { img -> img.absUrl("data-src") }
                     .map { url ->
-                        MangaPage(
+                        ContentPage(
                             id = generateUid(url),
                             url = url,
                             preview = null,

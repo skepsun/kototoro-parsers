@@ -1,10 +1,10 @@
 package org.skepsun.kototoro.parsers.site.zh
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
@@ -16,14 +16,14 @@ import java.util.*
  * Login is required to view full albums (non-logged-in users are limited to ~10 images).
  * Uses browser-based login via WebView since the site has Cloudflare protection.
  */
-@MangaSourceParser(name = "V2PH", title = "微图坊", locale = "zh", type = ContentType.IMAGE_SET)
+@ContentSourceParser(name = "V2PH", title = "微图坊", locale = "zh", type = ContentType.IMAGE_SET)
 internal class V2ph(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.V2PH,
+    source = ContentParserSource.V2PH,
     pageSize = 20,
-), MangaParserAuthProvider {
+), ContentParserAuthProvider {
 
     override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("www.v2ph.com")
 
@@ -78,14 +78,14 @@ internal class V2ph(
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
         )
 
 @OptIn(org.skepsun.kototoro.parsers.InternalParsersApi::class)
-    override suspend fun getFilterOptions() = MangaListFilterOptions(
+    override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableLocales = setOf(
             Locale.SIMPLIFIED_CHINESE,
             Locale.TRADITIONAL_CHINESE,
@@ -99,54 +99,54 @@ internal class V2ph(
             Locale("ar"),
         ),
         tagGroups = listOf(
-            MangaTagGroup(
+            ContentTagGroup(
                 "标签",
                 setOf(
-                    MangaTag("性感美女", "/category/sexy-girls", source),
-                    MangaTag("女神", "/category/nvshen", source),
-                    MangaTag("短发", "/category/short-hair", source),
-                    MangaTag("清纯", "/category/pure", source),
-                    MangaTag("内衣美女", "/category/underwear-beauty", source),
-                    MangaTag("杂志", "/category/magazine", source),
-                    MangaTag("嫩模", "/category/sexy-model", source),
-                    MangaTag("美腿", "/category/beautiful-legs", source),
-                    MangaTag("日本少女", "/category/japanese-girls", source),
-                    MangaTag("极品", "/category/best-quality", source),
-                    MangaTag("外拍", "/category/outside", source),
-                    MangaTag("比基尼", "/category/bikini-girls", source),
+                    ContentTag("性感美女", "/category/sexy-girls", source),
+                    ContentTag("女神", "/category/nvshen", source),
+                    ContentTag("短发", "/category/short-hair", source),
+                    ContentTag("清纯", "/category/pure", source),
+                    ContentTag("内衣美女", "/category/underwear-beauty", source),
+                    ContentTag("杂志", "/category/magazine", source),
+                    ContentTag("嫩模", "/category/sexy-model", source),
+                    ContentTag("美腿", "/category/beautiful-legs", source),
+                    ContentTag("日本少女", "/category/japanese-girls", source),
+                    ContentTag("极品", "/category/best-quality", source),
+                    ContentTag("外拍", "/category/outside", source),
+                    ContentTag("比基尼", "/category/bikini-girls", source),
                 ),
             ),
-            MangaTagGroup(
+            ContentTagGroup(
                 "国家",
                 setOf(
-                    MangaTag("中国大陆", "/country/china", source),
-                    MangaTag("日本", "/country/japan", source),
-                    MangaTag("韩国", "/country/south-korea", source),
-                    MangaTag("台湾", "/country/taiwan", source),
-                    MangaTag("泰国", "/country/thailand", source),
-                    MangaTag("欧美", "/country/europe", source),
+                    ContentTag("中国大陆", "/country/china", source),
+                    ContentTag("日本", "/country/japan", source),
+                    ContentTag("韩国", "/country/south-korea", source),
+                    ContentTag("台湾", "/country/taiwan", source),
+                    ContentTag("泰国", "/country/thailand", source),
+                    ContentTag("欧美", "/country/europe", source),
                 ),
             ),
-            MangaTagGroup(
+            ContentTagGroup(
                 "写真机构",
                 setOf(
-                    MangaTag("秀人网", "/company/XIUREN", source),
-                    MangaTag("尤蜜荟", "/company/YOUMI", source),
-                    MangaTag("魔范学院", "/company/MFStar", source),
-                    MangaTag("美媛馆", "/company/MyGirl", source),
-                    MangaTag("丝慕", "/company/SiMu", source),
-                    MangaTag("ROSI", "/company/ROSI", source),
-                    MangaTag("Beautyleg", "/company/Beautyleg", source),
-                    MangaTag("艺图语", "/company/YITUYU", source),
-                    MangaTag("物恋传媒", "/company/WLCM", source),
-                    MangaTag("国模", "/company/GM", source),
-                    MangaTag("三禾摄影", "/company/SHSY", source),
-                    MangaTag("袜啵啵", "/company/BoBoSocks", source),
-                    MangaTag("Cosdoki", "/company/Cosdoki", source),
-                    MangaTag("Girlz-High", "/company/Girlz-High", source),
-                    MangaTag("FLASH杂志", "/company/flash", source),
-                    MangaTag("RQ-STAR", "/company/RQ-STAR", source),
-                    MangaTag("喵糖映画", "/company/Micat", source),
+                    ContentTag("秀人网", "/company/XIUREN", source),
+                    ContentTag("尤蜜荟", "/company/YOUMI", source),
+                    ContentTag("魔范学院", "/company/MFStar", source),
+                    ContentTag("美媛馆", "/company/MyGirl", source),
+                    ContentTag("丝慕", "/company/SiMu", source),
+                    ContentTag("ROSI", "/company/ROSI", source),
+                    ContentTag("Beautyleg", "/company/Beautyleg", source),
+                    ContentTag("艺图语", "/company/YITUYU", source),
+                    ContentTag("物恋传媒", "/company/WLCM", source),
+                    ContentTag("国模", "/company/GM", source),
+                    ContentTag("三禾摄影", "/company/SHSY", source),
+                    ContentTag("袜啵啵", "/company/BoBoSocks", source),
+                    ContentTag("Cosdoki", "/company/Cosdoki", source),
+                    ContentTag("Girlz-High", "/company/Girlz-High", source),
+                    ContentTag("FLASH杂志", "/company/flash", source),
+                    ContentTag("RQ-STAR", "/company/RQ-STAR", source),
+                    ContentTag("喵糖映画", "/company/Micat", source),
                 ),
             ),
         ),
@@ -155,8 +155,8 @@ internal class V2ph(
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         val hl = getHl(filter.locale)
         val url = when {
             !filter.query.isNullOrBlank() -> {
@@ -187,19 +187,19 @@ internal class V2ph(
                 it.attrOrNull("data-src", "src")
             }?.toAbsoluteUrl(domain)
 
-            val tags = mutableSetOf<MangaTag>()
+            val tags = mutableSetOf<ContentTag>()
             val metaArea = card.selectFirst(".media-meta")
             metaArea?.select("a[href*='/category/']")?.forEach { 
-                tags.add(MangaTag(it.text(), it.attr("href"), source))
+                tags.add(ContentTag(it.text(), it.attr("href"), source))
             }
             metaArea?.select("a[href*='/company/']")?.forEach { 
-                tags.add(MangaTag("机构:${it.text()}", it.attr("href"), source))
+                tags.add(ContentTag("机构:${it.text()}", it.attr("href"), source))
             }
             metaArea?.select("a[href*='/actor/']")?.forEach { 
-                tags.add(MangaTag("模特:${it.text()}", it.attr("href"), source))
+                tags.add(ContentTag("模特:${it.text()}", it.attr("href"), source))
             }
 
-            Manga(
+            Content(
                 id = generateUid(href),
                 title = titleEl?.text() ?: card.selectFirst("img")?.attr("alt") ?: "Unknown",
                 altTitles = emptySet(),
@@ -230,20 +230,20 @@ internal class V2ph(
         else -> null
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
         
-        val tags = mutableSetOf<MangaTag>()
+        val tags = mutableSetOf<ContentTag>()
         // Scope to the info card in the detail page
         val infoCard = doc.selectFirst(".main-wrap .card .card-body")
         infoCard?.select("a[href*='/category/']")?.forEach { 
-            tags.add(MangaTag(it.text(), it.attr("href"), source))
+            tags.add(ContentTag(it.text(), it.attr("href"), source))
         }
         infoCard?.select("a[href*='/company/']")?.forEach { 
-            tags.add(MangaTag("机构:${it.text()}", it.attr("href"), source))
+            tags.add(ContentTag("机构:${it.text()}", it.attr("href"), source))
         }
         infoCard?.select("a[href*='/actor/']")?.forEach { 
-            tags.add(MangaTag("模特:${it.text()}", it.attr("href"), source))
+            tags.add(ContentTag("模特:${it.text()}", it.attr("href"), source))
         }
 
         val authors = infoCard?.select("a[href*='/actor/']")?.mapToSet { it.text() }.orEmpty()
@@ -254,7 +254,7 @@ internal class V2ph(
             authors = authors,
             description = desc,
             chapters = listOf(
-                MangaChapter(
+                ContentChapter(
                     id = manga.id,
                     title = "Album",
                     number = 1f,
@@ -269,7 +269,7 @@ internal class V2ph(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val firstPageUrl = chapter.url.toAbsoluteUrl(domain)
         
         val doc = try {
@@ -322,7 +322,7 @@ internal class V2ph(
         
         val headers = mutableMapOf("Referer" to firstPageUrl)
         return allImages.distinct().mapIndexed { index, url ->
-            MangaPage(
+            ContentPage(
                 id = generateUid(url + index),
                 url = url,
                 preview = null,

@@ -1,27 +1,27 @@
 package org.skepsun.kototoro.parsers.util
 
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.YEAR_UNKNOWN
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQuery
-import org.skepsun.kototoro.parsers.model.search.MangaSearchQueryCapabilities
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQuery
+import org.skepsun.kototoro.parsers.model.search.ContentSearchQueryCapabilities
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria
 import org.skepsun.kototoro.parsers.model.search.QueryCriteria.*
 import org.skepsun.kototoro.parsers.model.search.SearchCapability
 import org.skepsun.kototoro.parsers.model.search.SearchableField.*
 
 /**
- * Converts a [MangaListFilter] into a [MangaSearchQuery].
+ * Converts a [ContentListFilter] into a [ContentSearchQuery].
  *
- * This function iterates through the filter attributes in [MangaListFilter] and creates corresponding
- * search criteria in a [MangaSearchQuery.Builder].
+ * This function iterates through the filter attributes in [ContentListFilter] and creates corresponding
+ * search criteria in a [ContentSearchQuery.Builder].
  *
- * @param filter The [MangaListFilter] to convert.
- * @return A [MangaSearchQuery] constructed based on the given [filter].
+ * @param filter The [ContentListFilter] to convert.
+ * @return A [ContentSearchQuery] constructed based on the given [filter].
  */
-internal fun convertToMangaSearchQuery(offset: Int, sortOrder: SortOrder, filter: MangaListFilter): MangaSearchQuery {
-	return MangaSearchQuery.Builder().apply {
+internal fun convertToContentSearchQuery(offset: Int, sortOrder: SortOrder, filter: ContentListFilter): ContentSearchQuery {
+	return ContentSearchQuery.Builder().apply {
 		offset(offset)
 		order(sortOrder)
 		if (filter.tags.isNotEmpty()) criterion(Include(TAG, filter.tags))
@@ -49,10 +49,10 @@ internal fun convertToMangaSearchQuery(offset: Int, sortOrder: SortOrder, filter
 }
 
 /**
- * Converts a {@link MangaSearchQuery} into a {@link MangaListFilter}.
+ * Converts a {@link ContentSearchQuery} into a {@link ContentListFilter}.
  * <p>
  * This method iterates through the search criteria defined in the provided {@code searchQuery}
- * and applies them to a {@link MangaListFilter.Builder}. The criteria are processed based on
+ * and applies them to a {@link ContentListFilter.Builder}. The criteria are processed based on
  * their types, such as inclusion, exclusion, equality checks, range filtering, and pattern matching.
  * </p>
  * <p>
@@ -69,12 +69,12 @@ internal fun convertToMangaSearchQuery(offset: Int, sortOrder: SortOrder, filter
  * If an unsupported field is encountered, an {@link UnsupportedOperationException} is thrown.
  * </p>
  *
- * @param searchQuery The {@link MangaSearchQuery} to convert.
- * @return A {@link MangaListFilter} constructed based on the given {@code searchQuery}.
+ * @param searchQuery The {@link ContentSearchQuery} to convert.
+ * @return A {@link ContentListFilter} constructed based on the given {@code searchQuery}.
  * @throws UnsupportedOperationException If the search criteria contain unsupported fields.
  */
-internal fun convertToMangaListFilter(searchQuery: MangaSearchQuery): MangaListFilter {
-	return MangaListFilter.Builder().apply {
+internal fun convertToContentListFilter(searchQuery: ContentSearchQuery): ContentListFilter {
+	return ContentListFilter.Builder().apply {
 		for (criterion in searchQuery.criteria) {
 			when (criterion) {
 				is Include<*> -> handleInclude(this, criterion)
@@ -86,7 +86,7 @@ internal fun convertToMangaListFilter(searchQuery: MangaSearchQuery): MangaListF
 	}.build()
 }
 
-internal fun MangaSearchQueryCapabilities.toMangaListFilterCapabilities() = MangaListFilterCapabilities(
+internal fun ContentSearchQueryCapabilities.toContentListFilterCapabilities() = ContentListFilterCapabilities(
 	isMultipleTagsSupported = capabilities.any { x -> x.field == TAG && x.isMultiple },
 	isTagsExclusionSupported = capabilities.any { x -> x.field == TAG && x.criteriaTypes.contains(Exclude::class) },
 	isSearchSupported = capabilities.any { x -> x.field == TITLE_NAME },
@@ -97,8 +97,8 @@ internal fun MangaSearchQueryCapabilities.toMangaListFilterCapabilities() = Mang
 	isAuthorSearchSupported = capabilities.any { x -> x.field == AUTHOR },
 )
 
-internal fun MangaListFilterCapabilities.toMangaSearchQueryCapabilities(): MangaSearchQueryCapabilities =
-	MangaSearchQueryCapabilities(
+internal fun ContentListFilterCapabilities.toContentSearchQueryCapabilities(): ContentSearchQueryCapabilities =
+	ContentSearchQueryCapabilities(
 		capabilities = setOfNotNull(
 			isMultipleTagsSupported.takeIf { it }?.let {
 				SearchCapability(
@@ -176,7 +176,7 @@ internal fun MangaListFilterCapabilities.toMangaSearchQueryCapabilities(): Manga
 		),
 	)
 
-private fun handleInclude(builder: MangaListFilter.Builder, criterion: Include<*>) {
+private fun handleInclude(builder: ContentListFilter.Builder, criterion: Include<*>) {
 	val type = criterion.field.type
 
 	when (criterion.field) {
@@ -191,7 +191,7 @@ private fun handleInclude(builder: MangaListFilter.Builder, criterion: Include<*
 	}
 }
 
-private fun handleExclude(builder: MangaListFilter.Builder, criterion: Exclude<*>) {
+private fun handleExclude(builder: ContentListFilter.Builder, criterion: Exclude<*>) {
 	val type = criterion.field.type
 
 	when (criterion.field) {
@@ -200,7 +200,7 @@ private fun handleExclude(builder: MangaListFilter.Builder, criterion: Exclude<*
 	}
 }
 
-private fun handleBetween(builder: MangaListFilter.Builder, criterion: Range<*>) {
+private fun handleBetween(builder: ContentListFilter.Builder, criterion: Range<*>) {
 	val type = criterion.field.type
 
 	when (criterion.field) {
@@ -213,7 +213,7 @@ private fun handleBetween(builder: MangaListFilter.Builder, criterion: Range<*>)
 	}
 }
 
-private fun handleMatch(builder: MangaListFilter.Builder, criterion: Match<*>) {
+private fun handleMatch(builder: ContentListFilter.Builder, criterion: Match<*>) {
 	val type = criterion.field.type
 
 	when (criterion.field) {

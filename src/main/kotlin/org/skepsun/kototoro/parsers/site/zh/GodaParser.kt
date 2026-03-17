@@ -6,19 +6,19 @@ import okhttp3.Headers
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -32,9 +32,9 @@ import java.util.EnumSet
  * GoDa 漫画（godamh.com）
  * 参考 venera-configs/goda.js
  */
-@MangaSourceParser("GODA", "GoDa漫画", "zh")
-internal class GodaParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.GODA, pageSize = 20) {
+@ContentSourceParser("GODA", "GoDa漫画", "zh")
+internal class GodaParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.GODA, pageSize = 20) {
 
     override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("godamh.com")
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
@@ -42,7 +42,7 @@ internal class GodaParser(context: MangaLoaderContext) :
     private val apiDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("api-get-v3.mgsearcher.com")
     private val imgDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("t40-1-4.g-mh.online")
 
-    private val typeTags: List<MangaTag> = listOf(
+    private val typeTags: List<ContentTag> = listOf(
         "全部" to "/manga",
         "韩漫" to "/manga-genre/kr",
         "热门漫画" to "/manga-genre/hots",
@@ -50,9 +50,9 @@ internal class GodaParser(context: MangaLoaderContext) :
         "其他" to "/manga-genre/qita",
         "日漫" to "/manga-genre/jp",
         "欧美" to "/manga-genre/ou-mei",
-    ).map { (t, path) -> MangaTag(t, path, source) }
+    ).map { (t, path) -> ContentTag(t, path, source) }
 
-    private val tagTags: List<MangaTag> = listOf(
+    private val tagTags: List<ContentTag> = listOf(
         "复仇" to "/manga-tag/fuchou",
         "古风" to "/manga-tag/gufeng",
         "奇幻" to "/manga-tag/qihuan",
@@ -83,21 +83,21 @@ internal class GodaParser(context: MangaLoaderContext) :
         "悬疑" to "/manga-tag/xuanyi",
         "修仙" to "/manga-tag/xiuxian",
         "战斗" to "/manga-tag/zhandou",
-    ).map { (t, path) -> MangaTag(t, path, source) }
+    ).map { (t, path) -> ContentTag(t, path, source) }
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions =
-        MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions =
+        ContentListFilterOptions(
             availableTags = (typeTags + tagTags).toSet(),
             tagGroups = listOf(
-                MangaTagGroup("类型", typeTags.toSet()),
-                MangaTagGroup("标签", tagTags.toSet()),
+                ContentTagGroup("类型", typeTags.toSet()),
+                ContentTagGroup("标签", tagTags.toSet()),
             ),
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
         )
@@ -110,7 +110,7 @@ internal class GodaParser(context: MangaLoaderContext) :
     private fun apiBase(): String = "https://${config[apiDomain]}/api"
     private fun imageBase(): String = "https://${config[imgDomain]}"
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // Prefer search if query present
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page)
@@ -124,14 +124,14 @@ internal class GodaParser(context: MangaLoaderContext) :
         return parseComicCards(doc)
     }
 
-    private suspend fun search(keyword: String, page: Int): List<Manga> {
+    private suspend fun search(keyword: String, page: Int): List<Content> {
         val url = "https://${domain}/s/${keyword.urlEncoded()}?page=$page"
         val resp = webClient.httpGet(url, headers())
         if (!resp.isSuccessful) return emptyList()
         return parseComicCards(resp.parseHtml())
     }
 
-    private fun parseComicCards(doc: Document): List<Manga> {
+    private fun parseComicCards(doc: Document): List<Content> {
         val cards = doc.select("div.pb-2")
         return cards.mapNotNull { card ->
             val anchor = card.selectFirst("a") ?: return@mapNotNull null
@@ -139,7 +139,7 @@ internal class GodaParser(context: MangaLoaderContext) :
             val title = card.selectFirst("h3")?.text()?.trim().orEmpty()
             val cover = card.selectFirst("img")?.attr("src")
             if (href.isEmpty() || title.isEmpty()) return@mapNotNull null
-            Manga(
+            Content(
                 id = generateUid(href),
                 url = href,
                 publicUrl = "https://${domain}$href",
@@ -156,7 +156,7 @@ internal class GodaParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val resp = webClient.httpGet("https://${domain}${manga.url}", headers())
         if (!resp.isSuccessful) return manga
         val doc = resp.parseHtml()
@@ -187,7 +187,7 @@ internal class GodaParser(context: MangaLoaderContext) :
             fetchChapters(mangaId)
         } else emptyList()
 
-        val tagsCombined = tagsMap.values.flatten().map { MangaTag(it, it, source) }.toSet()
+        val tagsCombined = tagsMap.values.flatten().map { ContentTag(it, it, source) }.toSet()
 
         return manga.copy(
             title = if (title.isNotEmpty()) title else manga.title,
@@ -199,7 +199,7 @@ internal class GodaParser(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun fetchChapters(mid: String): List<MangaChapter> {
+    private suspend fun fetchChapters(mid: String): List<ContentChapter> {
         val url = "${apiBase()}/manga/get?mid=$mid&mode=all&t=${System.currentTimeMillis()}"
         val res = webClient.httpGet(url, headers())
         if (!res.isSuccessful) return emptyList()
@@ -210,7 +210,7 @@ internal class GodaParser(context: MangaLoaderContext) :
             val id = ch.optString("id")
             val title = ch.optJSONObject("attributes")?.optString("title").orEmpty()
             val urlId = "$mid@$id"
-            MangaChapter(
+            ContentChapter(
                 id = generateUid(urlId),
                 url = urlId,
                 title = title.ifEmpty { "Ch ${index + 1}" },
@@ -224,7 +224,7 @@ internal class GodaParser(context: MangaLoaderContext) :
         }.filterNotNull()
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val ids = chapter.url.split("@")
         if (ids.size < 2) return emptyList()
         val mid = ids[0]
@@ -242,7 +242,7 @@ internal class GodaParser(context: MangaLoaderContext) :
             val path = obj.optString("url")
             if (path.isEmpty()) return@mapJSONIndexed null
             val full = imageBase() + path
-            MangaPage(
+            ContentPage(
                 id = generateUid("$full-$index"),
                 url = full,
                 preview = full,
@@ -251,5 +251,5 @@ internal class GodaParser(context: MangaLoaderContext) :
         }.filterNotNull()
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 }

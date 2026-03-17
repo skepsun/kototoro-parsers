@@ -1,10 +1,10 @@
 package org.skepsun.kototoro.parsers.site.en
 
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import org.skepsun.kototoro.parsers.util.*
@@ -37,9 +37,9 @@ import java.util.EnumSet
  * - ✅ 视频URL提取和解码
  * - ✅ 分类过滤器（6个分类）
  */
-@MangaSourceParser("KANAV", "KanAV", "zh", type = ContentType.HENTAI_VIDEO)
-internal class KanAV(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.KANAV, pageSize = 24) {
+@ContentSourceParser("KANAV", "KanAV", "zh", type = ContentType.HENTAI_VIDEO)
+internal class KanAV(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.KANAV, pageSize = 24) {
 
     override val configKeyDomain = ConfigKey.Domain("kanav.ad")
 
@@ -47,35 +47,35 @@ internal class KanAV(context: MangaLoaderContext) :
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
             availableTags = setOf(
-                MangaTag("中文字幕", "1", source),
-                MangaTag("日韩有码", "2", source),
-                MangaTag("日韩无码", "3", source),
-                MangaTag("国产AV", "4", source),
-                MangaTag("流出自拍", "22", source),
-                MangaTag("自拍泄密", "30", source),
-                MangaTag("探花约炮", "31", source),
-                MangaTag("主播泄密", "32", source),
-                MangaTag("动漫番剧", "20", source),
-                MangaTag("里番", "25", source),
-                MangaTag("泡面番", "26", source),
-                MangaTag("Motion Anime", "27", source),
-                MangaTag("3D动画", "28", source),
-                MangaTag("同人作品", "29", source),
+                ContentTag("中文字幕", "1", source),
+                ContentTag("日韩有码", "2", source),
+                ContentTag("日韩无码", "3", source),
+                ContentTag("国产AV", "4", source),
+                ContentTag("流出自拍", "22", source),
+                ContentTag("自拍泄密", "30", source),
+                ContentTag("探花约炮", "31", source),
+                ContentTag("主播泄密", "32", source),
+                ContentTag("动漫番剧", "20", source),
+                ContentTag("里番", "25", source),
+                ContentTag("泡面番", "26", source),
+                ContentTag("Motion Anime", "27", source),
+                ContentTag("3D动画", "28", source),
+                ContentTag("同人作品", "29", source),
             ),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, filter)
         val response = webClient.httpGet(url, getRequestHeaders())
         
@@ -86,7 +86,7 @@ internal class KanAV(context: MangaLoaderContext) :
         }
         
         val doc = response.parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
         
         // 选择器: div.video-item
@@ -111,7 +111,7 @@ internal class KanAV(context: MangaLoaderContext) :
             val title = img?.attr("alt") ?: link.attr("title") ?: videoId
             
             items.add(
-                Manga(
+                Content(
                     id = generateUid(videoId),
                     url = href,
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -134,7 +134,7 @@ internal class KanAV(context: MangaLoaderContext) :
         return items
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
         
         // 检查 Cloudflare 保护
@@ -161,7 +161,7 @@ internal class KanAV(context: MangaLoaderContext) :
         val tags = doc.select("a[href*=/vod/type/], a[href*=/tag/]").mapNotNullToSet { elem ->
             val tagName = elem.text().trim()
             if (tagName.isNotEmpty()) {
-                MangaTag(
+                ContentTag(
                     key = elem.attr("href").substringAfterLast('/'),
                     title = tagName,
                     source = source,
@@ -173,7 +173,7 @@ internal class KanAV(context: MangaLoaderContext) :
         val coverUrl = doc.selectFirst("meta[property=og:image]")?.attr("content") ?: manga.coverUrl
         
         // 创建单个章节
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -194,10 +194,10 @@ internal class KanAV(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         if (chapter.url.contains(".m3u8")) {
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid(chapter.url),
                     url = chapter.url,
                     preview = null,
@@ -219,7 +219,7 @@ internal class KanAV(context: MangaLoaderContext) :
         val videoUrl = extractVideoUrl(doc) ?: return emptyList()
         
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = null,
@@ -228,7 +228,7 @@ internal class KanAV(context: MangaLoaderContext) :
         )
     }
     
-    private fun buildListUrl(page: Int, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
         
         if (!filter.query.isNullOrBlank()) {

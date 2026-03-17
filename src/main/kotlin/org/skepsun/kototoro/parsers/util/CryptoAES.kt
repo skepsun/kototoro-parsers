@@ -1,7 +1,7 @@
 package org.skepsun.kototoro.parsers.util
 
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
+import org.skepsun.kototoro.parsers.ContentLoaderContext
 import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -16,7 +16,7 @@ private const val KDF_DIGEST = "MD5"
  */
 @InternalParsersApi
 public class CryptoAES(
-	private val context: MangaLoaderContext,
+	private val context: ContentLoaderContext,
 ) {
 
 	/**

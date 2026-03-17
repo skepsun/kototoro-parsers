@@ -4,12 +4,12 @@ import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
@@ -28,11 +28,11 @@ import org.skepsun.kototoro.parsers.util.insertCookies
  * 注意：这是一个SPA网站，需要通过API获取数据
  * 当前实现为基础框架，需要根据实际API调整
  */
-@MangaSourceParser("NOVELIA", "轻小说机翻机器人", "zh", type = ContentType.HENTAI_NOVEL)
-internal class Novelia(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.NOVELIA, pageSize = 20),
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider {
+@ContentSourceParser("NOVELIA", "轻小说机翻机器人", "zh", type = ContentType.HENTAI_NOVEL)
+internal class Novelia(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.NOVELIA, pageSize = 20),
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("n.novelia.cc")
     private val authDomain = "auth.novelia.cc"
@@ -143,8 +143,8 @@ internal class Novelia(context: MangaLoaderContext) :
         SortOrder.RELEVANCE,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = true,
             isTagsExclusionSupported = false,
@@ -165,50 +165,50 @@ internal class Novelia(context: MangaLoaderContext) :
             .build()
     }
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tagGroups = buildFilterTagGroups()
         val allTags = tagGroups.flatMapTo(LinkedHashSet()) { it.tags }
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             tagGroups = tagGroups,
         )
     }
 
-    private fun buildFilterTagGroups(): List<MangaTagGroup> {
+    private fun buildFilterTagGroups(): List<ContentTagGroup> {
         val providerTags = linkedSetOf(
-            MangaTag("来源: 全部", "provider:", source),
-            MangaTag("来源: Syosetu", "provider:syosetu", source),
-            MangaTag("来源: Kakuyomu", "provider:kakuyomu", source),
-            MangaTag("来源: Hameln", "provider:hameln", source),
-            MangaTag("来源: Pixiv", "provider:pixiv", source),
-            MangaTag("来源: Novelup", "provider:novelup", source),
-            MangaTag("来源: Alphapolis", "provider:alphapolis", source),
+            ContentTag("来源: 全部", "provider:", source),
+            ContentTag("来源: Syosetu", "provider:syosetu", source),
+            ContentTag("来源: Kakuyomu", "provider:kakuyomu", source),
+            ContentTag("来源: Hameln", "provider:hameln", source),
+            ContentTag("来源: Pixiv", "provider:pixiv", source),
+            ContentTag("来源: Novelup", "provider:novelup", source),
+            ContentTag("来源: Alphapolis", "provider:alphapolis", source),
         )
 
         val typeTags = linkedSetOf(
-            MangaTag("类型: 全部", "type:0", source),
-            MangaTag("类型: 连载中", "type:1", source),
-            MangaTag("类型: 短篇", "type:2", source),
-            MangaTag("类型: 完结", "type:3", source),
+            ContentTag("类型: 全部", "type:0", source),
+            ContentTag("类型: 连载中", "type:1", source),
+            ContentTag("类型: 短篇", "type:2", source),
+            ContentTag("类型: 完结", "type:3", source),
         )
 
         val levelTags = linkedSetOf(
-            MangaTag("等级: 全部", "level:0", source),
-            MangaTag("等级: 一般向", "level:1", source),
-            MangaTag("等级: R18", "level:2", source),
+            ContentTag("等级: 全部", "level:0", source),
+            ContentTag("等级: 一般向", "level:1", source),
+            ContentTag("等级: R18", "level:2", source),
         )
 
         val translateTags = linkedSetOf(
-            MangaTag("翻译: 全部", "translate:0", source),
-            MangaTag("翻译: 已翻译", "translate:1", source),
-            MangaTag("翻译: 未翻译", "translate:2", source),
+            ContentTag("翻译: 全部", "translate:0", source),
+            ContentTag("翻译: 已翻译", "translate:1", source),
+            ContentTag("翻译: 未翻译", "translate:2", source),
         )
 
         return listOf(
-            MangaTagGroup("来源", providerTags),
-            MangaTagGroup("类型", typeTags),
-            MangaTagGroup("等级", levelTags),
-            MangaTagGroup("翻译", translateTags),
+            ContentTagGroup("来源", providerTags),
+            ContentTagGroup("类型", typeTags),
+            ContentTagGroup("等级", levelTags),
+            ContentTagGroup("翻译", translateTags),
         )
     }
 
@@ -226,7 +226,7 @@ internal class Novelia(context: MangaLoaderContext) :
      * - translate: 翻译状态（0=全部, 1=已翻译, 2=未翻译）
      * - sort: 排序方式（0=最新更新，1=点击，2=相关）
      */
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 构建API URL
         val apiPage = page - 1  // API使用0-based页码
         
@@ -275,7 +275,7 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 解析来源站点过滤器
      */
-    private fun parseProviderFilter(filter: MangaListFilter): String {
+    private fun parseProviderFilter(filter: ContentListFilter): String {
         val providerTag = filter.tags.firstOrNull { it.key.startsWith("provider:") }
         return if (providerTag != null) {
             val provider = providerTag.key.substringAfter("provider:")
@@ -294,7 +294,7 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 解析类型过滤器
      */
-    private fun parseTypeFilter(filter: MangaListFilter): Int {
+    private fun parseTypeFilter(filter: ContentListFilter): Int {
         val typeTag = filter.tags.firstOrNull { it.key.startsWith("type:") }
         return if (typeTag != null) {
             typeTag.key.substringAfter("type:").toIntOrNull() ?: 0
@@ -306,7 +306,7 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 解析等级过滤器
      */
-    private fun parseLevelFilter(filter: MangaListFilter): Int {
+    private fun parseLevelFilter(filter: ContentListFilter): Int {
         val levelTag = filter.tags.firstOrNull { it.key.startsWith("level:") }
         return if (levelTag != null) {
             levelTag.key.substringAfter("level:").toIntOrNull() ?: 0
@@ -318,7 +318,7 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 解析翻译状态过滤器
      */
-    private fun parseTranslateFilter(filter: MangaListFilter): Int {
+    private fun parseTranslateFilter(filter: ContentListFilter): Int {
         val translateTag = filter.tags.firstOrNull { it.key.startsWith("translate:") }
         return if (translateTag != null) {
             translateTag.key.substringAfter("translate:").toIntOrNull() ?: 0
@@ -330,8 +330,8 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 解析小说列表JSON
      */
-    private fun parseNovelList(json: JSONObject): List<Manga> {
-        val result = ArrayList<Manga>()
+    private fun parseNovelList(json: JSONObject): List<Content> {
+        val result = ArrayList<Content>()
         
         // API返回格式：{ items: [...], pageNumber: 500 }
         val items = json.optJSONArray("items") ?: return result
@@ -355,13 +355,13 @@ internal class Novelia(context: MangaLoaderContext) :
             // 类型（连载中/短篇/完结等）
             val type = novel.optString("type", "")
             val state = when {
-                type.contains("完结", ignoreCase = true) || type.contains("完成", ignoreCase = true) -> MangaState.FINISHED
-                type.contains("连载", ignoreCase = true) -> MangaState.ONGOING
-                type.contains("短篇", ignoreCase = true) -> MangaState.FINISHED
+                type.contains("完结", ignoreCase = true) || type.contains("完成", ignoreCase = true) -> ContentState.FINISHED
+                type.contains("连载", ignoreCase = true) -> ContentState.ONGOING
+                type.contains("短篇", ignoreCase = true) -> ContentState.FINISHED
                 else -> null
             }
             
-            result += Manga(
+            result += Content(
                 id = generateUid(url),
                 url = url,
                 publicUrl = url.toAbsoluteUrl(domain),
@@ -385,7 +385,7 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 获取小说详情
      */
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         // 从URL中提取provider和novelId
         // URL格式: /novel/hameln/232822
         val parts = manga.url.split("/")
@@ -414,7 +414,7 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 解析小说详情JSON
      */
-    private fun parseNovelDetail(manga: Manga, json: JSONObject, provider: String, novelId: String, availableBranches: List<String>): Manga {
+    private fun parseNovelDetail(manga: Content, json: JSONObject, provider: String, novelId: String, availableBranches: List<String>): Content {
         // 标题
         val titleZh = json.optString("titleZh", "")
         val titleJp = json.optString("titleJp", "")
@@ -444,19 +444,19 @@ internal class Novelia(context: MangaLoaderContext) :
         // 状态
         val type = json.optString("type", "")
         val state = when {
-            type.contains("完结", ignoreCase = true) || type.contains("完成", ignoreCase = true) -> MangaState.FINISHED
-            type.contains("连载", ignoreCase = true) -> MangaState.ONGOING
+            type.contains("完结", ignoreCase = true) || type.contains("完成", ignoreCase = true) -> ContentState.FINISHED
+            type.contains("连载", ignoreCase = true) -> ContentState.ONGOING
             else -> null
         }
         
         // 标签
         val keywordsArray = json.optJSONArray("keywords")
         val tags = if (keywordsArray != null && keywordsArray.length() > 0) {
-            val tagsList = mutableSetOf<MangaTag>()
+            val tagsList = mutableSetOf<ContentTag>()
             for (i in 0 until keywordsArray.length()) {
                 val keyword = keywordsArray.optString(i, "")
                 if (keyword.isNotEmpty()) {
-                    tagsList.add(MangaTag(keyword, keyword, source))
+                    tagsList.add(ContentTag(keyword, keyword, source))
                 }
             }
             tagsList
@@ -467,7 +467,7 @@ internal class Novelia(context: MangaLoaderContext) :
         // 解析章节列表 (toc = Table of Contents)
         // Novelia提供多个翻译版本，使用branch来区分
         val tocArray = json.optJSONArray("toc") ?: JSONArray()
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         
         // 只为可用的翻译版本创建章节列表
         for (branch in availableBranches) {
@@ -492,7 +492,7 @@ internal class Novelia(context: MangaLoaderContext) :
                     // 在URL中编码翻译版本
                     val chapterUrl = "/novel/$provider/$novelId/$chapterId?branch=$branch"
                     
-                    chapters += MangaChapter(
+                    chapters += ContentChapter(
                         id = generateUid(chapterUrl),
                         title = chapterTitle,
                         number = chapterNumber++,
@@ -576,11 +576,11 @@ internal class Novelia(context: MangaLoaderContext) :
     /**
      * 获取章节内容
      */
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val content = getChapterContent(chapter) ?: return listOf(createErrorPage("内容为空"))
         val dataUrl = content.html.toDataUrl()
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = dataUrl,
                 preview = null,
@@ -589,7 +589,7 @@ internal class Novelia(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getChapterContent(chapter: MangaChapter): NovelChapterContent? {
+    override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         // 从 URL 中提取信息
         // URL格式: /novel/hameln/389053/1?branch=GPT翻译
         val urlParts = chapter.url.split("?")
@@ -658,7 +658,7 @@ internal class Novelia(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String {
+    override suspend fun getPageUrl(page: ContentPage): String {
         return page.url
     }
 
@@ -716,9 +716,9 @@ internal class Novelia(context: MangaLoaderContext) :
         </head><body><h1>错误</h1><p>$message</p></body></html>
     """.trimIndent()
 
-    private fun createErrorPage(message: String): MangaPage {
+    private fun createErrorPage(message: String): ContentPage {
         val html = buildErrorHtml(message)
-        return MangaPage(
+        return ContentPage(
             id = generateUid(message),
             url = html.toDataUrl(),
             preview = null,

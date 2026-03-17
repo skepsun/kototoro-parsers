@@ -6,19 +6,19 @@ import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.mapToSet
@@ -29,9 +29,9 @@ import java.util.EnumSet
  * Lanraragi (self-hosted)
  * 基于公开 API，需用户提供 API 地址与 APIKEY。
  */
-@MangaSourceParser("LANRARAGI", "Lanraragi", "en")
-internal class LanraragiParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.LANRARAGI, pageSize = 50) {
+@ContentSourceParser("LANRARAGI", "Lanraragi", "en")
+internal class LanraragiParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.LANRARAGI, pageSize = 50) {
 
     private val apiKeyConfig = ConfigKey.Text(
         key = "lanraragi_api_key",
@@ -49,20 +49,20 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         keys.add(apiKeyConfig)
     }
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 拉取 categories 作为可选标签
         val categories = runCatching { fetchCategories() }.getOrDefault(emptyList())
-        val tags = categories.map { MangaTag(it.second, it.first, source) }
-        return MangaListFilterOptions(
+        val tags = categories.map { ContentTag(it.second, it.first, source) }
+        return ContentListFilterOptions(
             availableTags = tags.toSet(),
-            tagGroups = if (tags.isNotEmpty()) listOf(org.skepsun.kototoro.parsers.model.MangaTagGroup("分类", tags.toSet())) else emptyList(),
+            tagGroups = if (tags.isNotEmpty()) listOf(org.skepsun.kototoro.parsers.model.ContentTagGroup("分类", tags.toSet())) else emptyList(),
             availableContentRating = EnumSet.of(ContentRating.SAFE, ContentRating.SUGGESTIVE, ContentRating.ADULT),
         )
     }
@@ -94,14 +94,14 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // All archives, client-side slice
         val res = webClient.httpGet("${baseUrl()}/api/archives", headers())
         if (!res.isSuccessful) return emptyList()
         val arr = runCatching { JSONArray(res.body.string()) }.getOrNull() ?: return emptyList()
         val list = (0 until arr.length()).mapNotNull { i ->
             val item = arr.optJSONObject(i) ?: return@mapNotNull null
-            toManga(item)
+            toContent(item)
         }
 
         val filtered = if (filter.tags.isNotEmpty()) {
@@ -115,7 +115,7 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         return if (from >= filtered.size) emptyList() else filtered.subList(from, minOf(from + pageSize, filtered.size))
     }
 
-    private fun toManga(item: JSONObject): Manga {
+    private fun toContent(item: JSONObject): Content {
         val arcid = item.optString("arcid").ifEmpty { item.optString("id") }
         val title = item.optString("title").ifEmpty { item.optString("filename").ifEmpty { arcid } }
         val base = baseUrl().removeSuffix("/")
@@ -124,9 +124,9 @@ internal class LanraragiParser(context: MangaLoaderContext) :
             .split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .map { MangaTag(it, it, source) }
+            .map { ContentTag(it, it, source) }
             .toSet()
-        return Manga(
+        return Content(
             id = generateUid(arcid),
             url = arcid,
             publicUrl = "$base/api/archives/$arcid",
@@ -143,7 +143,7 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val base = baseUrl().removeSuffix("/")
         val res = webClient.httpGet("$base/api/archives/${manga.url}/metadata", headers())
         if (!res.isSuccessful) return manga
@@ -153,7 +153,7 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         val rating = tagsList.firstOrNull { it.startsWith("rating:") }
         tagsList = tagsList.filterNot { it.startsWith("rating:") }
         val chapters = listOf(
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("${manga.url}-chapter"),
                 url = manga.url,
                 title = data.optString("title", manga.title),
@@ -165,9 +165,9 @@ internal class LanraragiParser(context: MangaLoaderContext) :
                 source = source,
             )
         )
-        val tags = tagsList.map { MangaTag(it, it, source) }.toMutableSet()
+        val tags = tagsList.map { ContentTag(it, it, source) }.toMutableSet()
         if (rating != null) {
-            tags.add(MangaTag(rating.removePrefix("rating:"), rating, source))
+            tags.add(ContentTag(rating.removePrefix("rating:"), rating, source))
         }
         return manga.copy(
             title = data.optString("title", manga.title).ifEmpty { manga.title },
@@ -179,13 +179,13 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val base = baseUrl().removeSuffix("/")
         val res = webClient.httpGet("$base/api/archives/${chapter.url}/files?force=false", headers())
         if (!res.isSuccessful) return emptyList()
         val data = res.parseJsonObject()
         val pages = data.optJSONArray("pages") ?: return emptyList()
-        val result = ArrayList<MangaPage>(pages.length())
+        val result = ArrayList<ContentPage>(pages.length())
         for (i in 0 until pages.length()) {
             try {
                 val raw = pages.opt(i)
@@ -200,7 +200,7 @@ internal class LanraragiParser(context: MangaLoaderContext) :
                     "$base${if (path.startsWith("/")) path else "/$path"}"
                 }
                 result.add(
-                    MangaPage(
+                    ContentPage(
                         id = generateUid("$full-$i"),
                         url = full,
                         preview = full,
@@ -214,5 +214,5 @@ internal class LanraragiParser(context: MangaLoaderContext) :
         return result
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 }

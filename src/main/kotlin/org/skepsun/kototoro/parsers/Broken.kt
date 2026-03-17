@@ -1,7 +1,7 @@
 package org.skepsun.kototoro.parsers
 
 /**
- * Annotate [MangaParser] implementation to mark this parser as broken instead of removing it
+ * Annotate [ContentParser] implementation to mark this parser as broken instead of removing it
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.SOURCE)

@@ -8,14 +8,14 @@ import org.jsoup.HttpStatusException
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.GraphQLException
 import org.skepsun.kototoro.parsers.exception.NotFoundException
-import org.skepsun.kototoro.parsers.model.MangaSource
+import org.skepsun.kototoro.parsers.model.ContentSource
 import org.skepsun.kototoro.parsers.util.await
 import org.skepsun.kototoro.parsers.util.parseJson
 import java.net.HttpURLConnection
 
 public class OkHttpWebClient(
 	private val httpClient: OkHttpClient,
-	private val mangaSource: MangaSource,
+	private val mangaSource: ContentSource,
 ) : WebClient {
 
 	override suspend fun httpGet(url: HttpUrl, extraHeaders: Headers?): Response {
@@ -99,7 +99,7 @@ public class OkHttpWebClient(
 	}
 
 	private fun Request.Builder.addTags(): Request.Builder {
-		tag(MangaSource::class.java, mangaSource)
+		tag(ContentSource::class.java, mangaSource)
 		return this
 	}
 
@@ -126,7 +126,7 @@ public class OkHttpWebClient(
 
         val exception: Exception? = when (code) { // Catch some error codes, not all
             HttpURLConnection.HTTP_NOT_FOUND -> NotFoundException(message, request.url.toString())
-            HttpURLConnection.HTTP_UNAUTHORIZED -> request.tag(MangaSource::class.java)?.let {
+            HttpURLConnection.HTTP_UNAUTHORIZED -> request.tag(ContentSource::class.java)?.let {
                 AuthRequiredException(it)
             } ?: HttpStatusException(message, code, request.url.toString())
 

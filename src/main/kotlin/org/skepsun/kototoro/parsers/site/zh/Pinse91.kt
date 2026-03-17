@@ -1,22 +1,22 @@
 package org.skepsun.kototoro.parsers.site.zh
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import java.net.URLEncoder
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.attrAsAbsoluteUrlOrNull
@@ -29,14 +29,14 @@ import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.EnumSet
 
-@MangaSourceParser(name = "PINSE91", title = "91Pinse", locale = "zh", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser(name = "PINSE91", title = "91Pinse", locale = "zh", type = ContentType.HENTAI_VIDEO)
 internal class Pinse91(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.PINSE91,
+    source = ContentParserSource.PINSE91,
     pageSize = 24,
-), MangaParserAuthProvider {
+), ContentParserAuthProvider {
 
     override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("91pinse.com")
 
@@ -57,28 +57,28 @@ internal class Pinse91(
         SortOrder.RATING,      // 收藏次数
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        val tags = LinkedHashSet<MangaTag>()
-        val tagGroups = ArrayList<MangaTagGroup>()
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val tags = LinkedHashSet<ContentTag>()
+        val tagGroups = ArrayList<ContentTagGroup>()
 
-        val listTags = LinkedHashSet<MangaTag>().apply {
-            add(MangaTag("热门视频", "path:/v/hot/", source))
-            add(MangaTag("当前最热", "path:/rank/current-hot", source))
-            add(MangaTag("月度趋势", "path:/rank/month-hot", source))
-            add(MangaTag("月度收藏", "path:/rank/month-favorite", source))
-            add(MangaTag("精选视频", "path:/rank/recently-featured", source))
+        val listTags = LinkedHashSet<ContentTag>().apply {
+            add(ContentTag("热门视频", "path:/v/hot/", source))
+            add(ContentTag("当前最热", "path:/rank/current-hot", source))
+            add(ContentTag("月度趋势", "path:/rank/month-hot", source))
+            add(ContentTag("月度收藏", "path:/rank/month-favorite", source))
+            add(ContentTag("精选视频", "path:/rank/recently-featured", source))
         }
         tags.addAll(listTags)
-        tagGroups.add(MangaTagGroup("榜单/频道", listTags))
+        tagGroups.add(ContentTagGroup("榜单/频道", listTags))
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = tagGroups,
         )
@@ -87,12 +87,12 @@ internal class Pinse91(
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         val url = buildUrl(page, order, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         
-        val mangaMap = LinkedHashMap<String, Manga>()
+        val mangaMap = LinkedHashMap<String, Content>()
         val elements = doc.select(".video-grid a[href*='/v/']").takeIf { it.isNotEmpty() }
             ?: doc.select("a[href*='/v/']")
         val durationRegex = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
@@ -131,7 +131,7 @@ internal class Pinse91(
                 ?: img?.attrAsAbsoluteUrlOrNull("data-original")
                 ?: existing?.coverUrl
 
-            mangaMap[href] = Manga(
+            mangaMap[href] = Content(
                 id = generateUid(href),
                 url = href,
                 publicUrl = href.toAbsoluteUrl(domain),
@@ -152,7 +152,7 @@ internal class Pinse91(
         return mangaMap.values.toList()
     }
 
-    private fun buildUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         if (!filter.query.isNullOrBlank()) {
             return "https://$domain/v/search?keyword=${java.net.URLEncoder.encode(filter.query!!, "UTF-8")}&page=$page"
         }
@@ -173,20 +173,20 @@ internal class Pinse91(
         return if (base.contains("?")) "$base&page=$page" else "$base?page=$page"
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
 
         val title = doc.selectFirst("h1")?.text() ?: manga.title
         val desc = doc.selectFirst("meta[name=description]")?.attr("content")
             ?: doc.selectFirst("meta[property=og:description]")?.attr("content")
         
-        val tags = LinkedHashSet<MangaTag>()
+        val tags = LinkedHashSet<ContentTag>()
         
         // Strategy 1: Look for on-page tags (usually in 'badge' or specific tag classes)
         doc.select("a.badge, a[href*='/tag/'], a[href*='/search?t=']").forEach { 
             val tagText = it.text().trim()
             if (isValidTag(tagText, title)) {
-                tags.add(MangaTag(title = tagText, key = tagText, source = source))
+                tags.add(ContentTag(title = tagText, key = tagText, source = source))
             }
         }
 
@@ -197,13 +197,13 @@ internal class Pinse91(
                 keywords.split(",").forEach { raw ->
                     val tagText = raw.trim()
                     if (isValidTag(tagText, title)) {
-                        tags.add(MangaTag(title = tagText, key = tagText, source = source))
+                        tags.add(ContentTag(title = tagText, key = tagText, source = source))
                     }
                 }
             }
         }
         
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}_video"),
             url = manga.url,
             title = "Video",
@@ -252,7 +252,7 @@ internal class Pinse91(
         .add("Upgrade-Insecure-Requests", "1")
         .build()
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val baseUrl = chapter.url.toAbsoluteUrl(domain)
         val sources = ArrayList<String>()
         val seenUrls = HashSet<String>()
@@ -317,7 +317,7 @@ internal class Pinse91(
                 }
             }
             
-            MangaPage(
+            ContentPage(
                 id = generateUid(url),
                 url = url,
                 preview = null,

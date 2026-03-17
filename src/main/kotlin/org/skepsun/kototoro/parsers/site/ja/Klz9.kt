@@ -7,10 +7,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.InternalParsersApi
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
@@ -19,9 +19,9 @@ import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.security.MessageDigest
 import java.util.EnumSet
 
-@MangaSourceParser("KLZ9", "Klz9", "ja")
-internal class Klz9(context: MangaLoaderContext) : 
-    PagedMangaParser(context, MangaParserSource.KLZ9, pageSize = 36) {
+@ContentSourceParser("KLZ9", "Klz9", "ja")
+internal class Klz9(context: ContentLoaderContext) : 
+    PagedContentParser(context, ContentParserSource.KLZ9, pageSize = 36) {
 
     override val configKeyDomain = ConfigKey.Domain("klz9.com")
 
@@ -31,33 +31,33 @@ internal class Klz9(context: MangaLoaderContext) :
         SortOrder.ALPHABETICAL,
     )
 
-    override val filterCapabilities get() = MangaListFilterCapabilities(
+    override val filterCapabilities get() = ContentListFilterCapabilities(
         isSearchSupported = true,
         isMultipleTagsSupported = false,
         isTagsExclusionSupported = false,
     )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 从 API 获取实时 genres 列表
         val tags = try {
             val url = "https://$domain/api/genres"
             val response = webClient.httpGet(url.toHttpUrl(), generateSignatureHeaders())
             val genresArray = JSONArray(response.parseRaw())
-            val tagSet = mutableSetOf<MangaTag>()
+            val tagSet = mutableSetOf<ContentTag>()
             for (i in 0 until genresArray.length()) {
                 val genreObj = genresArray.getJSONObject(i)
                 val name = genreObj.optString("name", "")
                 if (name.isNotEmpty()) {
-                    tagSet.add(MangaTag(name, name.lowercase().replace(" ", "-"), source))
+                    tagSet.add(ContentTag(name, name.lowercase().replace(" ", "-"), source))
                 }
             }
             tagSet
         } catch (e: Exception) {
             emptySet()
         }
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
-            availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
         )
     }
 
@@ -81,29 +81,29 @@ internal class Klz9(context: MangaLoaderContext) :
             .build()
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val query = filter.query
         val hasStateFilter = filter.states.isNotEmpty()
         if (!query.isNullOrEmpty() || hasStateFilter) {
-            val allMangaArray = fetchAllManga()
-            val filteredManga = mutableListOf<JSONObject>()
+            val allContentArray = fetchAllContent()
+            val filteredContent = mutableListOf<JSONObject>()
             val queryLower = query?.lowercase().orEmpty()
 
-            for (i in 0 until allMangaArray.length()) {
-                val item = allMangaArray.getJSONObject(i)
+            for (i in 0 until allContentArray.length()) {
+                val item = allContentArray.getJSONObject(i)
                 if (!matchesQuery(item, queryLower)) continue
                 if (!matchesState(item, filter.states)) continue
                 if (!matchesTag(item, filter.tags)) continue
-                filteredManga.add(item)
+                filteredContent.add(item)
             }
 
-            val sorted = filteredManga.sortedWith(jsonComparator(order))
+            val sorted = filteredContent.sortedWith(jsonComparator(order))
 
             val start = (page - 1) * pageSize
             if (start >= sorted.size) return emptyList()
 
             val end = (start + pageSize).coerceAtMost(sorted.size)
-            return sorted.subList(start, end).map { parseMangaFromJson(it) }
+            return sorted.subList(start, end).map { parseContentFromJson(it) }
         }
 
         val sortParam = when (order) {
@@ -120,7 +120,7 @@ internal class Klz9(context: MangaLoaderContext) :
         val json = JSONObject(response.parseRaw())
         
         val items = json.optJSONArray("items") ?: return emptyList()
-        return parseMangaList(items, order)
+        return parseContentList(items, order)
     }
 
     private fun matchesQuery(item: JSONObject, queryLower: String): Boolean {
@@ -130,17 +130,17 @@ internal class Klz9(context: MangaLoaderContext) :
         return name.contains(queryLower) || otherName.contains(queryLower)
     }
 
-    private fun matchesState(item: JSONObject, states: Set<MangaState>): Boolean {
+    private fun matchesState(item: JSONObject, states: Set<ContentState>): Boolean {
         if (states.isEmpty()) return true
         val status = item.optInt("m_status", 0)
         return when {
-            status == 2 -> states.contains(MangaState.ONGOING)
-            status == 1 -> states.contains(MangaState.FINISHED)
+            status == 2 -> states.contains(ContentState.ONGOING)
+            status == 1 -> states.contains(ContentState.FINISHED)
             else -> false
         }
     }
 
-    private fun matchesTag(item: JSONObject, tags: Set<MangaTag>): Boolean {
+    private fun matchesTag(item: JSONObject, tags: Set<ContentTag>): Boolean {
         if (tags.isEmpty()) return true
         val genresStr = item.optString("genres", "")
         if (genresStr.isEmpty()) return false
@@ -160,29 +160,29 @@ internal class Klz9(context: MangaLoaderContext) :
         0L
     }
 
-    private suspend fun fetchAllManga(): JSONArray {
+    private suspend fun fetchAllContent(): JSONArray {
         val url = "https://$domain/api/manga/all"
         val response = webClient.httpGet(url.toHttpUrl(), generateSignatureHeaders())
         return JSONArray(response.parseRaw())
     }
 
-    private fun parseMangaList(items: JSONArray, order: SortOrder): List<Manga> {
+    private fun parseContentList(items: JSONArray, order: SortOrder): List<Content> {
         val list = mutableListOf<JSONObject>()
         for (i in 0 until items.length()) {
             list.add(items.getJSONObject(i))
         }
         list.sortWith(jsonComparator(order))
-        return list.map { parseMangaFromJson(it) }
+        return list.map { parseContentFromJson(it) }
     }
 
-    private fun parseMangaFromJson(json: JSONObject): Manga {
+    private fun parseContentFromJson(json: JSONObject): Content {
         val slug = json.optString("slug", "")
         val href = "/manga/$slug"
         
         val genresStr = json.optString("genres", "")
         val tags = if (genresStr.isNotEmpty()) {
             genresStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }.map { 
-                MangaTag(it, it.lowercase().replace(" ", "-"), source)
+                ContentTag(it, it.lowercase().replace(" ", "-"), source)
             }.toSet()
         } else emptySet()
 
@@ -192,12 +192,12 @@ internal class Klz9(context: MangaLoaderContext) :
         } else emptySet()
 
         val state = when (json.optInt("m_status", 0)) {
-            1 -> MangaState.FINISHED
-            2 -> MangaState.ONGOING
+            1 -> ContentState.FINISHED
+            2 -> ContentState.ONGOING
             else -> null
         }
 
-        return Manga(
+        return Content(
             id = generateUid(href),
             url = href,
             publicUrl = "https://$domain$href",
@@ -213,7 +213,7 @@ internal class Klz9(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         // 从 URL 中获取 slug
         val slug = manga.url.removePrefix("/manga/").removeSuffix("/")
         val url = "https://$domain/api/manga/slug/$slug"
@@ -224,7 +224,7 @@ internal class Klz9(context: MangaLoaderContext) :
         val genresStr = json.optString("genres", "")
         val tags = if (genresStr.isNotEmpty()) {
             genresStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }.map { 
-                MangaTag(it, it.lowercase().replace(" ", "-"), source)
+                ContentTag(it, it.lowercase().replace(" ", "-"), source)
             }.toSet()
         } else manga.tags
 
@@ -234,8 +234,8 @@ internal class Klz9(context: MangaLoaderContext) :
         } else manga.authors
 
         val state = when (json.optInt("m_status", 0)) {
-            1 -> MangaState.FINISHED
-            2 -> MangaState.ONGOING
+            1 -> ContentState.FINISHED
+            2 -> ContentState.ONGOING
             else -> manga.state
         }
 
@@ -254,10 +254,10 @@ internal class Klz9(context: MangaLoaderContext) :
         )
     }
 
-    private fun parseChapters(chaptersArray: JSONArray?): List<MangaChapter> {
+    private fun parseChapters(chaptersArray: JSONArray?): List<ContentChapter> {
         if (chaptersArray == null || chaptersArray.length() == 0) return emptyList()
         
-        val chapters = mutableListOf<MangaChapter>()
+        val chapters = mutableListOf<ContentChapter>()
         for (i in 0 until chaptersArray.length()) {
             val chapterJson = chaptersArray.getJSONObject(i)
             val chapterId = chapterJson.optInt("id", 0)
@@ -282,7 +282,7 @@ internal class Klz9(context: MangaLoaderContext) :
             } catch (e: Exception) { 0L }
             
             chapters.add(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid(href),
                     title = chapterTitle,
                     number = chapterNumber,
@@ -309,7 +309,7 @@ internal class Klz9(context: MangaLoaderContext) :
         return asString.replace(Regex("[^0-9]"), "").toLongOrNull() ?: 0L
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         // 从 URL 中获取 chapter ID
         val chapterId = chapter.url.removePrefix("/chapter/").removeSuffix("/")
         val url = "https://$domain/api/chapter/$chapterId"
@@ -324,7 +324,7 @@ internal class Klz9(context: MangaLoaderContext) :
         val imageUrls = contentStr.split("\n").filter { it.isNotEmpty() }
         
         return imageUrls.mapIndexed { index, pageUrl ->
-            MangaPage(
+            ContentPage(
                 id = generateUid("$chapterId-$index"),
                 url = pageUrl.trim(),
                 preview = null,

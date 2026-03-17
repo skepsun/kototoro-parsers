@@ -12,11 +12,11 @@ import java.util.*
 @Deprecated("Too complex")
 public enum class SearchableField(public val type: Class<*>) {
 	TITLE_NAME(String::class.java),
-	TAG(MangaTag::class.java),
-	AUTHOR(MangaTag::class.java),
+	TAG(ContentTag::class.java),
+	AUTHOR(ContentTag::class.java),
 	LANGUAGE(Locale::class.java),
 	ORIGINAL_LANGUAGE(Locale::class.java),
-	STATE(MangaState::class.java),
+	STATE(ContentState::class.java),
 	CONTENT_TYPE(ContentType::class.java),
 	CONTENT_RATING(ContentRating::class.java),
 	DEMOGRAPHIC(Demographic::class.java),

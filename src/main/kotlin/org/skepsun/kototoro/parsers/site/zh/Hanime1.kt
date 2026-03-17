@@ -3,21 +3,21 @@ package org.skepsun.kototoro.parsers.site.zh
 import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
+import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentRating
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.util.attrOrNull
@@ -37,12 +37,12 @@ import org.skepsun.kototoro.parsers.util.suspendlazy.suspendLazy
  * Hanime video source parser (skeleton). This minimal implementation focuses on structure.
  * It is annotated and registered via KSP and can be iterated on later.
  */
-@MangaSourceParser(name = "HANIME1", title = "Hanime1", locale = "zh", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser(name = "HANIME1", title = "Hanime1", locale = "zh", type = ContentType.HENTAI_VIDEO)
 internal class Hanime1(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.HANIME1,
+    source = ContentParserSource.HANIME1,
     pageSize = 24,
 ) {
 
@@ -67,8 +67,8 @@ internal class Hanime1(
         SortOrder.POPULARITY_YEAR,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
@@ -339,31 +339,31 @@ internal class Hanime1(
 
     private val BROAD_SUPPORTED: Boolean = true
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val (tags, tagGroups) = buildStaticFilterTags()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = tagGroups,
         )
     }
 
-    private fun buildStaticFilterTags(): Pair<Set<MangaTag>, List<MangaTagGroup>> {
-        val tags = LinkedHashSet<MangaTag>()
-        val tagGroups = ArrayList<MangaTagGroup>()
+    private fun buildStaticFilterTags(): Pair<Set<ContentTag>, List<ContentTagGroup>> {
+        val tags = LinkedHashSet<ContentTag>()
+        val tagGroups = ArrayList<ContentTagGroup>()
 
         fun addGroup(
             groupName: String,
             values: Iterable<String>,
             keyBuilder: (String) -> String,
         ) {
-            val groupTags = LinkedHashSet<MangaTag>()
+            val groupTags = LinkedHashSet<ContentTag>()
             values.forEach { value ->
-                val tag = MangaTag(title = value, key = keyBuilder(value), source = source)
+                val tag = ContentTag(title = value, key = keyBuilder(value), source = source)
                 groupTags.add(tag)
                 tags.add(tag)
             }
             if (groupTags.isNotEmpty()) {
-                tagGroups.add(MangaTagGroup(groupName, groupTags))
+                tagGroups.add(ContentTagGroup(groupName, groupTags))
             }
         }
 
@@ -380,9 +380,9 @@ internal class Hanime1(
         }
 
         if (BROAD_SUPPORTED) {
-            val broadTag = MangaTag(title = "广泛配对", key = "broad:on", source = source)
+            val broadTag = ContentTag(title = "广泛配对", key = "broad:on", source = source)
             tags.add(broadTag)
-            tagGroups.add(MangaTagGroup("其他", linkedSetOf(broadTag)))
+            tagGroups.add(ContentTagGroup("其他", linkedSetOf(broadTag)))
         }
 
         return tags to tagGroups
@@ -402,34 +402,34 @@ internal class Hanime1(
 
     
 
-    private fun parseTypeTags(json: JSONObject?): Set<MangaTag> {
+    private fun parseTypeTags(json: JSONObject?): Set<ContentTag> {
         val arr = json?.optJSONArray("type") ?: JSONArray()
         if (arr.length() > 0) {
-            val tags = LinkedHashSet<MangaTag>(arr.length())
+            val tags = LinkedHashSet<ContentTag>(arr.length())
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val value = o.optString("value").takeIf { it.isNotBlank() } ?: continue
                 val label = o.optString("label").takeIf { it.isNotBlank() } ?: value
-                tags.add(MangaTag(title = label, key = "type:$value", source = source))
+                tags.add(ContentTag(title = label, key = "type:$value", source = source))
             }
             return tags
         }
         return emptySet()
     }
 
-    private suspend fun fetchTypeTagsFromNetwork(): Set<MangaTag> {
+    private suspend fun fetchTypeTagsFromNetwork(): Set<ContentTag> {
         val doc = webClient.httpGet("https://$domain/search", getRequestHeaders()).parseHtml()
         val anchors = doc.select("a[href*=type=]")
-        val tags = LinkedHashSet<MangaTag>(maxOf(anchors.size, 1))
+        val tags = LinkedHashSet<ContentTag>(maxOf(anchors.size, 1))
         anchors.forEach { a ->
             val href = a.attrOrNull("href") ?: return@forEach
             val value = queryParam(href, "type") ?: return@forEach
             val label = a.text().takeIf { it.isNotBlank() } ?: value
-            tags.add(MangaTag(title = label, key = "type:$value", source = source))
+            tags.add(ContentTag(title = label, key = "type:$value", source = source))
         }
         if (tags.isEmpty()) {
             val label = doc.selectFirst(".search-type-input")?.text()?.takeIf { it.isNotBlank() } ?: "搜寻作者"
-            tags.add(MangaTag(title = label, key = "type:artist", source = source))
+            tags.add(ContentTag(title = label, key = "type:artist", source = source))
         }
         return tags
     }
@@ -446,13 +446,13 @@ internal class Hanime1(
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         // 構造 search 地址，支持 query、genre、type、date、duration、sort
         val url = buildSearchUrl(page = page, order = order, filter = filter)
 
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>(pageSize * 2)
 
         // Strategy 1: cards with explicit watch links (hanime1.me uses overlay anchor inside card)
@@ -480,7 +480,7 @@ internal class Hanime1(
                 }
 
                 items.add(
-                    Manga(
+                    Content(
                         id = generateUid(href),
                         url = href,
                         publicUrl = href.toAbsoluteUrl(domain),
@@ -515,7 +515,7 @@ internal class Hanime1(
                     ?: img?.attrAsAbsoluteUrlOrNull("data-src")
 
                 items.add(
-                    Manga(
+                    Content(
                         id = generateUid(href),
                         url = href,
                         publicUrl = href.toAbsoluteUrl(domain),
@@ -541,7 +541,7 @@ internal class Hanime1(
 
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
-    private fun buildSearchUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildSearchUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder()
             .append("https://")
             .append(domain)
@@ -614,7 +614,7 @@ internal class Hanime1(
         }
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
 
         // Try to pull description and tags from meta and LD+JSON
@@ -628,13 +628,13 @@ internal class Hanime1(
             keywordsRaw.split(',')
                 .mapNotNull { it.trim().takeIf { t -> t.isNotEmpty() } }
                 .map { kw ->
-                    MangaTag(title = kw.replaceFirstChar { ch -> ch.uppercase() }, key = kw.lowercase(), source = source)
+                    ContentTag(title = kw.replaceFirstChar { ch -> ch.uppercase() }, key = kw.lowercase(), source = source)
                 }
                 .toSet()
         } else emptySet()
 
         // Create a single chapter pointing to the watch page
-        val chapter = MangaChapter(
+        val chapter = ContentChapter(
             id = generateUid("${manga.url}|video"),
             url = manga.url,
             title = "Watch",
@@ -654,7 +654,7 @@ internal class Hanime1(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
 
         // Try multiple strategies to extract streams
@@ -672,7 +672,7 @@ internal class Hanime1(
             ?: doc.selectFirst("meta[property=og:image]")?.attrOrNull("content")
 
         return streams.map { s ->
-            MangaPage(
+            ContentPage(
                 id = generateUid(s.toRelativeUrl(domain)),
                 url = s,
                 preview = poster,

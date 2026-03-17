@@ -13,26 +13,26 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.CategorizedFavoritesProvider
-import org.skepsun.kototoro.parsers.MangaFavoriteFolder
+import org.skepsun.kototoro.parsers.ContentFavoriteFolder
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -47,7 +47,7 @@ import org.skepsun.kototoro.parsers.bitmap.Rect
 import java.util.zip.GZIPInputStream
 import okhttp3.FormBody
 import okhttp3.Request
-import org.skepsun.kototoro.parsers.model.MangaSource
+import org.skepsun.kototoro.parsers.model.ContentSource
 import org.skepsun.kototoro.parsers.network.GZipOptions
 import java.io.ByteArrayInputStream
 
@@ -59,12 +59,12 @@ import java.io.ByteArrayInputStream
  * - data 字段 AES/ECB/PKCS5 解密
  * - 图片需要解扰（按 epId + 文件名计算分块反转）
  */
-@MangaSourceParser("JMCOMIC", "禁漫天堂", "zh", type = ContentType.HENTAI_MANGA)
+@ContentSourceParser("JMCOMIC", "禁漫天堂", "zh", type = ContentType.HENTAI_MANGA)
 internal class JmParser(
-	context: MangaLoaderContext,
-) : PagedMangaParser(context, MangaParserSource.JMCOMIC, pageSize = 80), 
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider,
+	context: ContentLoaderContext,
+) : PagedContentParser(context, ContentParserSource.JMCOMIC, pageSize = 80), 
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider,
     CategorizedFavoritesProvider,
     FavoritesSyncProvider {
 
@@ -145,30 +145,30 @@ internal class JmParser(
         SortOrder.RATING, // 用作「最多喜歡」
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities = ContentListFilterCapabilities(
         isSearchSupported = true,
         isSearchWithFiltersSupported = true,
         isMultipleTagsSupported = true,
     )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val categoryTagObjs = categoryTags.map { (title, param) ->
-            MangaTag(title = title, key = "c:$param", source = source)
+            ContentTag(title = title, key = "c:$param", source = source)
         }.toSet()
         val searchGroups = groupedSearchTags.map { (groupName, tags) ->
             val distinctTags = LinkedHashSet<String>().apply { addAll(tags) }
             val tagObjs = distinctTags.map { title ->
-                MangaTag(title = title, key = "s:$title", source = source)
+                ContentTag(title = title, key = "s:$title", source = source)
             }.toSet()
-            MangaTagGroup(groupName, tagObjs)
+            ContentTagGroup(groupName, tagObjs)
         }
         val allSearchTags = searchGroups.flatMap { it.tags }.toSet()
         val allTags = (categoryTagObjs + allSearchTags).toSet()
         val tagGroups = buildList {
-            add(MangaTagGroup("分類", categoryTagObjs))
+            add(ContentTagGroup("分類", categoryTagObjs))
             addAll(searchGroups)
         }
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             tagGroups = tagGroups,
         )
@@ -194,7 +194,7 @@ internal class JmParser(
 
     override fun getRequestHeaders(): Headers = headersBase
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         ensureDomains()
         val sort = sortParam(order)
         val categoryTag = filter.tags.firstOrNull { it.key.startsWith("c:") }
@@ -210,11 +210,11 @@ internal class JmParser(
         }
     }
 
-    private suspend fun promote(sort: String, page: Int): List<Manga> {
+    private suspend fun promote(sort: String, page: Int): List<Content> {
         // jm.js row 348
         val path = "/promote?page=${page - 1}&o=$sort"
         val jsonText = apiGet(path)
-        val result = ArrayList<Manga>()
+        val result = ArrayList<Content>()
         try {
             val trimmed = jsonText.trim()
             if (trimmed.startsWith("[")) {
@@ -245,7 +245,7 @@ internal class JmParser(
         return result
     }
 
-    private fun buildKeyword(query: String?, searchTags: List<MangaTag>): String? {
+    private fun buildKeyword(query: String?, searchTags: List<ContentTag>): String? {
         val parts = mutableListOf<String>()
         if (!query.isNullOrBlank()) parts += query
         if (searchTags.isNotEmpty()) parts += searchTags.map { it.title.ifBlank { it.key } }
@@ -262,7 +262,7 @@ internal class JmParser(
         else -> "mr" // 最新
     }
 
-    private suspend fun search(keyword: String, page: Int, sort: String): List<Manga> {
+    private suspend fun search(keyword: String, page: Int, sort: String): List<Content> {
         val kw = keyword.trim().urlEncoded().replace("%20", "+")
         val path = buildString {
             append("/search?search_query=")
@@ -273,7 +273,7 @@ internal class JmParser(
         val jsonText = apiGet(path)
         val json = JSONObject(jsonText)
         val content = json.optJSONArray("content") ?: return emptyList()
-        val result = ArrayList<Manga>(content.length())
+        val result = ArrayList<Content>(content.length())
         for (i in 0 until content.length()) {
             val obj = content.optJSONObject(i) ?: continue
             parseComic(obj)?.let { result.add(it) }
@@ -281,12 +281,12 @@ internal class JmParser(
         return result
     }
 
-    private suspend fun categoryList(sort: String, page: Int, category: String?): List<Manga> {
+    private suspend fun categoryList(sort: String, page: Int, category: String?): List<Content> {
         val c = (category ?: "0").trim().urlEncoded()
         val jsonText = apiGet("/categories/filter?o=$sort&c=$c&page=$page")
         val json = JSONObject(jsonText)
         val content = json.optJSONArray("content") ?: return emptyList()
-        val result = ArrayList<Manga>(content.length())
+        val result = ArrayList<Content>(content.length())
         for (i in 0 until content.length()) {
             val obj = content.optJSONObject(i) ?: continue
             parseComic(obj)?.let { result.add(it) }
@@ -294,7 +294,7 @@ internal class JmParser(
         return result
     }
 
-    private fun parseComic(obj: JSONObject): Manga? {
+    private fun parseComic(obj: JSONObject): Content? {
         val id = obj.optString("id").ifEmpty { obj.optString("album_id") }.ifEmpty { return null }
         val title = obj.optString("name").ifEmpty { return null }
         val author = obj.optString("author")
@@ -304,7 +304,7 @@ internal class JmParser(
             obj.optJSONObject("category_sub")?.optString("title")?.takeIf { it.isNotBlank() }?.let { add(it) }
         }
         val cover = "${imageHost}/media/albums/${id}_3x4.jpg"
-        return Manga(
+        return Content(
             id = generateUid("jm:$id"),
             title = title,
             altTitles = emptySet(),
@@ -314,7 +314,7 @@ internal class JmParser(
             contentRating = null,
             coverUrl = cover,
             largeCoverUrl = cover,
-            tags = tags.map { MangaTag(it, it, source) }.toSet(),
+            tags = tags.map { ContentTag(it, it, source) }.toSet(),
             state = null,
             authors = if (author.isNotBlank()) setOf(author) else emptySet(),
             description = desc,
@@ -323,7 +323,7 @@ internal class JmParser(
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         ensureDomains()
         val id = manga.url.substringAfter("id=").substringBefore("&").ifBlank {
             manga.publicUrl.substringAfter("id=").substringBefore("&").ifBlank {
@@ -334,17 +334,17 @@ internal class JmParser(
         val json = JSONObject(jsonText)
         val author = json.optJSONArray("author")?.optString(0).orEmpty()
         val desc = json.optString("description")
-        val tags: Set<MangaTag> = json.optJSONArray("tags")?.let { arr ->
-            val list = mutableListOf<MangaTag>()
+        val tags: Set<ContentTag> = json.optJSONArray("tags")?.let { arr ->
+            val list = mutableListOf<ContentTag>()
             for (idx in 0 until arr.length()) {
                 val t = arr.optString(idx)
-                if (!t.isNullOrBlank()) list.add(MangaTag(t, t, source))
+                if (!t.isNullOrBlank()) list.add(ContentTag(t, t, source))
             }
             list.toSet()
         } ?: emptySet()
         val series = json.optJSONArray("series")
-        val chapters: List<MangaChapter> = if (series != null && series.length() > 0) {
-            val list = mutableListOf<MangaChapter>()
+        val chapters: List<ContentChapter> = if (series != null && series.length() > 0) {
+            val list = mutableListOf<ContentChapter>()
             for (idx in 0 until series.length()) {
                 val obj = series.optJSONObject(idx) ?: continue
                 val cid = obj.optString("id")
@@ -352,7 +352,7 @@ internal class JmParser(
                 val sort = obj.optInt("sort", idx + 1)
                 val name = obj.optString("name").ifBlank { "第${sort}話" }
                 list.add(
-                    MangaChapter(
+                    ContentChapter(
                         id = generateUid("jm_ch:$id-$cid"),
                         title = name,
                         number = sort.toFloat(),
@@ -368,7 +368,7 @@ internal class JmParser(
             list
         } else {
             listOf(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("jm_ch:$id-1"),
                     title = "第1話",
                     number = 1f,
@@ -393,19 +393,19 @@ internal class JmParser(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         ensureDomains()
         val cid = chapter.url.substringAfter("id=").substringBefore("&")
         val jsonText = apiGet("/chapter?id=$cid")
         val json = JSONObject(jsonText)
         val images = json.optJSONArray("images") ?: return emptyList()
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         for (idx in 0 until images.length()) {
             val name = images.optString(idx)
             if (name.isNullOrBlank()) continue
             val imgUrl = "$imageHost/media/photos/$cid/$name"
             pages.add(
-                MangaPage(
+                ContentPage(
                     id = generateUid("jm_img:$cid-$idx"),
                     url = imgUrl,
                     preview = imgUrl,
@@ -416,7 +416,7 @@ internal class JmParser(
         return pages
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
@@ -849,7 +849,7 @@ internal class JmParser(
             .url(url.toHttpUrl())
             .post(formBody)
             .headers(headers)
-            .tag(MangaSource::class.java, source)
+            .tag(ContentSource::class.java, source)
             .tag(GZipOptions::class.java, GZipOptions(skip = true))
             .build()
         val response = context.httpClient.newCall(request).await()
@@ -918,11 +918,11 @@ internal class JmParser(
         }
     }
 
-    override suspend fun fetchFavoriteFolders(): List<MangaFavoriteFolder> {
+    override suspend fun fetchFavoriteFolders(): List<ContentFavoriteFolder> {
         if (!isAuthorized()) throw AuthRequiredException(source)
-        val result = mutableListOf<MangaFavoriteFolder>()
+        val result = mutableListOf<ContentFavoriteFolder>()
         // Always add "All" folder
-        result.add(MangaFavoriteFolder("0", "全部收藏"))
+        result.add(ContentFavoriteFolder("0", "全部收藏"))
         
         runCatching {
             val jsonText = apiGet("/favorite")
@@ -936,7 +936,7 @@ internal class JmParser(
                     val id = obj.optString("FID").ifBlank { obj.optString("id") }
                     val title = obj.optString("name").ifBlank { obj.optString("title") }
                     if (!id.isNullOrBlank() && !title.isNullOrBlank() && id != "0") {
-                        result.add(MangaFavoriteFolder(id, title))
+                        result.add(ContentFavoriteFolder(id, title))
                     }
                 }
             } else {
@@ -949,9 +949,9 @@ internal class JmParser(
         return result
     }
 
-    override suspend fun fetchFavorites(folderId: String): List<Manga> {
+    override suspend fun fetchFavorites(folderId: String): List<Content> {
         if (!isAuthorized()) throw AuthRequiredException(source)
-        val result = mutableListOf<Manga>()
+        val result = mutableListOf<Content>()
         val order = "mr"
         var page = 1
         val pageSize = 20
@@ -982,7 +982,7 @@ internal class JmParser(
         return result
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         if (!isAuthorized()) throw AuthRequiredException(source)
         val aid = manga.url.substringAfter("id=").substringBefore("&").ifBlank { manga.url }
         val time = (System.currentTimeMillis() / 1000).toString()
@@ -992,7 +992,7 @@ internal class JmParser(
         return resp.isSuccessful
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         // JM 使用同一接口切换收藏状态
         return addFavorite(manga)
     }

@@ -1,9 +1,9 @@
 package org.skepsun.kototoro.parsers
 
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.config.MangaSourceConfig
+import org.skepsun.kototoro.parsers.config.ContentSourceConfig
 
-internal class SourceConfigMock : MangaSourceConfig {
+internal class SourceConfigMock : ContentSourceConfig {
 
 	private val configValues = mutableMapOf<String, Any?>()
 

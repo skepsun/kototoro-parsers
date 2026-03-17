@@ -6,22 +6,22 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaState
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentState
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.YEAR_UNKNOWN
@@ -37,9 +37,9 @@ import java.util.EnumSet
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 
-@MangaSourceParser("AGEDM", "AGE动漫", "zh", type = ContentType.VIDEO)
-internal class Age(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.AGEDM, pageSize = 20) {
+@ContentSourceParser("AGEDM", "AGE动漫", "zh", type = ContentType.VIDEO)
+internal class Age(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.AGEDM, pageSize = 20) {
 
     override val configKeyDomain = ConfigKey.Domain("www.agedm.io", "www.age.tv")
 
@@ -50,28 +50,28 @@ internal class Age(context: MangaLoaderContext) :
         SortOrder.POPULARITY,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val (tags, groups) = filterTagBundle
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
             tagGroups = groups,
             availableStates = EnumSet.of(
-                MangaState.ONGOING,
-                MangaState.FINISHED,
-                MangaState.UPCOMING,
+                ContentState.ONGOING,
+                ContentState.FINISHED,
+                ContentState.UPCOMING,
             ),
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val document = if (!filter.query.isNullOrBlank()) {
             val url = buildSearchUrl(page, filter.query!!)
             webClient.httpGet(url).parseHtml()
@@ -82,7 +82,7 @@ internal class Age(context: MangaLoaderContext) :
         return parseCatalog(document)
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val url = manga.url.toAbsoluteUrl(domain)
         val document = webClient.httpGet(url).parseHtml()
         val info = document.extractInfoMap()
@@ -128,7 +128,7 @@ internal class Age(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val playUrl = chapter.url.toAbsoluteUrl(domain)
         val document = webClient.httpGet(playUrl).parseHtml()
         val iframeSrc = document.selectFirst("#iframeForVideo")
@@ -144,7 +144,7 @@ internal class Age(context: MangaLoaderContext) :
         } ?: absoluteIframe
 
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(resolvedVideo),
                 url = resolvedVideo,
                 preview = null,
@@ -153,8 +153,8 @@ internal class Age(context: MangaLoaderContext) :
         )
     }
 
-    private fun parseCatalog(document: Document): List<Manga> {
-        val result = ArrayList<Manga>()
+    private fun parseCatalog(document: Document): List<Content> {
+        val result = ArrayList<Content>()
         val seen = HashSet<Long>()
         val cards = document.select(".card.cata_video_item")
         for (card in cards) {
@@ -180,7 +180,7 @@ internal class Age(context: MangaLoaderContext) :
             val altTitles = buildAltTitles(info["原版名称"], info["其他名称"])
             val state = parseState(info["播放状态"])
 
-            result += Manga(
+            result += Content(
                 id = id,
                 title = title,
                 altTitles = altTitles,
@@ -199,8 +199,8 @@ internal class Age(context: MangaLoaderContext) :
         return result
     }
 
-    private fun parseChapters(document: Document): List<MangaChapter> {
-        val chapters = ArrayList<MangaChapter>()
+    private fun parseChapters(document: Document): List<ContentChapter> {
+        val chapters = ArrayList<ContentChapter>()
         val buttons = document.select(".video_detail_playlist_wrapper button[data-bs-target]")
         if (buttons.isNotEmpty()) {
             for (button in buttons) {
@@ -211,7 +211,7 @@ internal class Age(context: MangaLoaderContext) :
                 for (item in items) {
                     val href = item.attr("href").toRelativeUrl(domain)
                     val title = item.text().trim()
-                    chapters += MangaChapter(
+                    chapters += ContentChapter(
                         id = generateUid("$branch|$href"),
                         title = title,
                         number = title.extractChapterNumber(),
@@ -231,7 +231,7 @@ internal class Age(context: MangaLoaderContext) :
             for (item in items) {
                 val href = item.attr("href").toRelativeUrl(domain)
                 val title = item.text().trim()
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = generateUid(href),
                     title = title,
                     number = title.extractChapterNumber(),
@@ -248,7 +248,7 @@ internal class Age(context: MangaLoaderContext) :
         return chapters
     }
 
-    private fun buildCatalogUrl(page: Int, order: SortOrder, filter: MangaListFilter): String {
+    private fun buildCatalogUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val type = filter.valueFor("type")
         val letter = filter.valueFor("letter")
         val genre = filter.valueFor("genre")
@@ -375,12 +375,12 @@ internal class Age(context: MangaLoaderContext) :
         return map
     }
 
-    private fun buildTags(values: Collection<String>): Set<MangaTag> {
+    private fun buildTags(values: Collection<String>): Set<ContentTag> {
         if (values.isEmpty()) return emptySet()
-        val result = LinkedHashSet<MangaTag>()
+        val result = LinkedHashSet<ContentTag>()
         values.forEach { value ->
             if (value.isNotBlank()) {
-                result += MangaTag(value, value, source)
+                result += ContentTag(value, value, source)
             }
         }
         return result
@@ -403,11 +403,11 @@ internal class Age(context: MangaLoaderContext) :
         return result
     }
 
-    private fun parseState(raw: String?): MangaState? = when {
+    private fun parseState(raw: String?): ContentState? = when {
         raw.isNullOrBlank() -> null
-        raw.contains("连载") -> MangaState.ONGOING
-        raw.contains("完结") -> MangaState.FINISHED
-        raw.contains("未播放") || raw.contains("未开播") -> MangaState.UPCOMING
+        raw.contains("连载") -> ContentState.ONGOING
+        raw.contains("完结") -> ContentState.FINISHED
+        raw.contains("未播放") || raw.contains("未开播") -> ContentState.UPCOMING
         else -> null
     }
 
@@ -445,16 +445,16 @@ internal class Age(context: MangaLoaderContext) :
             .filter { it.isNotEmpty() }
     }
 
-    private fun MangaListFilter.valueFor(prefix: String): String? {
+    private fun ContentListFilter.valueFor(prefix: String): String? {
         return tags.firstOrNull { it.key.startsWith("$prefix:") }
             ?.key
             ?.substringAfter(':')
     }
 
-    private fun stateToSlug(state: MangaState): String? = when (state) {
-        MangaState.ONGOING -> "连载"
-        MangaState.FINISHED -> "完结"
-        MangaState.UPCOMING -> "未播放"
+    private fun stateToSlug(state: ContentState): String? = when (state) {
+        ContentState.ONGOING -> "连载"
+        ContentState.FINISHED -> "完结"
+        ContentState.UPCOMING -> "未播放"
         else -> null
     }
 
@@ -505,19 +505,19 @@ internal class Age(context: MangaLoaderContext) :
         }
     }
 
-    private fun buildFilterTags(): Pair<Set<MangaTag>, List<MangaTagGroup>> {
-        val tags = LinkedHashSet<MangaTag>()
-        val groups = ArrayList<MangaTagGroup>()
+    private fun buildFilterTags(): Pair<Set<ContentTag>, List<ContentTagGroup>> {
+        val tags = LinkedHashSet<ContentTag>()
+        val groups = ArrayList<ContentTagGroup>()
 
         fun addGroup(name: String, entries: Iterable<Pair<String, String>>) {
-            val groupTags = LinkedHashSet<MangaTag>()
+            val groupTags = LinkedHashSet<ContentTag>()
             entries.forEach { (title, key) ->
-                val t = MangaTag(title, key, source)
+                val t = ContentTag(title, key, source)
                 groupTags.add(t)
                 tags.add(t)
             }
             if (groupTags.isNotEmpty()) {
-                groups += MangaTagGroup(name, groupTags)
+                groups += ContentTagGroup(name, groupTags)
             }
         }
 

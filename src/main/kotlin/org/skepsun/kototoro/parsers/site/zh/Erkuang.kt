@@ -1,17 +1,17 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import org.jsoup.nodes.Document
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
-@MangaSourceParser("ERKUANG", "二矿动漫", "zh", type = ContentType.VIDEO)
-internal class Erkuang(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.ERKUANG, pageSize = 20) {
+@ContentSourceParser("ERKUANG", "二矿动漫", "zh", type = ContentType.VIDEO)
+internal class Erkuang(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.ERKUANG, pageSize = 20) {
 
     override val configKeyDomain = ConfigKey.Domain("www.2rk.cc")
 
@@ -19,27 +19,27 @@ internal class Erkuang(context: MangaLoaderContext) :
         SortOrder.UPDATED
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 动漫类型标签
         val genres = listOf(
             "冒险", "奇幻", "战斗", "热血", "悬疑", "血腥", "剧情", "科幻", 
             "动漫", "架空", "治愈", "校园", "恋爱", "搞笑", "运动", "推理"
-        ).map { MangaTag(it, it, source) }
+        ).map { ContentTag(it, it, source) }
 
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = genres.toSet(),
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         return when {
             !filter.query.isNullOrEmpty() -> {
                 // 搜索功能
@@ -54,7 +54,7 @@ internal class Erkuang(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseCategoryList(doc: Document): List<Manga> {
+    private fun parseCategoryList(doc: Document): List<Content> {
         return doc.select("article.z").mapNotNull { article ->
             val link = article.selectFirst("section.ac a[href], h2 a[href]") ?: return@mapNotNull null
             val url = link.attr("href")
@@ -65,7 +65,7 @@ internal class Erkuang(context: MangaLoaderContext) :
                 if (it.startsWith("/")) "https://$domain$it" else it
             }
 
-            Manga(
+            Content(
                 id = generateUid(url),
                 url = url,
                 publicUrl = url.toAbsoluteUrl(domain),
@@ -84,11 +84,11 @@ internal class Erkuang(context: MangaLoaderContext) :
         }
     }
 
-    private fun parseSearchResults(doc: Document): List<Manga> {
+    private fun parseSearchResults(doc: Document): List<Content> {
         return parseCategoryList(doc)
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         
         // 标题在JavaScript的pageData中
@@ -109,7 +109,7 @@ internal class Erkuang(context: MangaLoaderContext) :
             // 从标题中提取集数 (例如: "第01话" -> 1)
             val epNum = Regex("\\d+").find(epTitle)?.value?.toFloatOrNull() ?: 0f
 
-            MangaChapter(
+            ContentChapter(
                 id = generateUid(epUrl),
                 title = epTitle,
                 number = epNum,
@@ -127,7 +127,7 @@ internal class Erkuang(context: MangaLoaderContext) :
             .mapNotNull { tag ->
                 val tagName = tag.text().trim()
                 if (tagName.isNotBlank()) {
-                    MangaTag(tagName, tagName, source)
+                    ContentTag(tagName, tagName, source)
                 } else null
             }.toSet()
 
@@ -141,7 +141,7 @@ internal class Erkuang(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
         
         // 从JavaScript中提取视频URL
@@ -166,7 +166,7 @@ internal class Erkuang(context: MangaLoaderContext) :
         }
 
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = null,

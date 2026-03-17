@@ -1,9 +1,9 @@
 package org.skepsun.kototoro.parsers.util
 
-import org.skepsun.kototoro.parsers.MangaLoaderContext
+import org.skepsun.kototoro.parsers.ContentLoaderContext
 
 public class WebViewHelper(
-	private val context: MangaLoaderContext,
+	private val context: ContentLoaderContext,
 ) {
 
 	public suspend fun getLocalStorageValue(domain: String, key: String): String? {

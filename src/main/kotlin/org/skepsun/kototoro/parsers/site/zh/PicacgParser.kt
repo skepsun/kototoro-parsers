@@ -14,25 +14,25 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.FavoritesProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
-import org.skepsun.kototoro.parsers.MangaLoaderContext
+import org.skepsun.kototoro.parsers.ContentLoaderContext
 // import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.model.ContentRating
@@ -65,9 +65,9 @@ import java.net.CookiePolicy
  * - Most list endpoints require token; on HTTP 401 it throws AuthRequiredException.
  */
 // @Broken("Temporarily disabled per release 9.4.2 requirements")
-@MangaSourceParser("PICACG", "哔咔漫画", "zh", type = ContentType.HENTAI_MANGA)
-internal class PicacgParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.PICACG, pageSize = 24), Interceptor, MangaParserAuthProvider, MangaParserCredentialsAuthProvider, FavoritesProvider, FavoritesSyncProvider {
+@ContentSourceParser("PICACG", "哔咔漫画", "zh", type = ContentType.HENTAI_MANGA)
+internal class PicacgParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.PICACG, pageSize = 24), Interceptor, ContentParserAuthProvider, ContentParserCredentialsAuthProvider, FavoritesProvider, FavoritesSyncProvider {
 
     // 默认使用官方域名，并保留旧域作为备选，方便在设置中切换
     override val configKeyDomain = ConfigKey.Domain(
@@ -113,26 +113,26 @@ internal class PicacgParser(context: MangaLoaderContext) :
         SortOrder.POPULARITY_MONTH,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val staticTags = staticCategoryTags
         val dynamicTags = runCatching { fetchAvailableKeywords() }
             .onFailure { println("PICACG TAGS: fetch keywords failed ${it.message}") }
             .getOrDefault(emptySet())
         val allTags = (dynamicTags + staticTags)
         println("PICACG TAGS: static=${staticTags.size}, dynamic=${dynamicTags.size}, all=${allTags.size}")
-        val groups = buildList<MangaTagGroup> {
-            if (staticTags.isNotEmpty()) add(MangaTagGroup("分类", staticTags))
-            if (dynamicTags.isNotEmpty()) add(MangaTagGroup("关键词", dynamicTags))
+        val groups = buildList<ContentTagGroup> {
+            if (staticTags.isNotEmpty()) add(ContentTagGroup("分类", staticTags))
+            if (dynamicTags.isNotEmpty()) add(ContentTagGroup("关键词", dynamicTags))
         }
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             availableLocales = setOf(Locale.CHINESE),
             tagGroups = groups,
@@ -529,10 +529,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
         return true
     }
 
-    override suspend fun fetchFavorites(): List<Manga> {
+    override suspend fun fetchFavorites(): List<Content> {
         val t = getAuthToken()
         if (t.isNullOrBlank()) throw AuthRequiredException(source)
-        val results = mutableListOf<Manga>()
+        val results = mutableListOf<Content>()
         var page = 1
         while (true) {
             val path = "users/favourite?page=$page&s="
@@ -556,10 +556,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
                     if (server.isNotEmpty() && pathImg.isNotEmpty()) "$server/static/$pathImg" else ""
                 }.orEmpty()
                 val tagsArr = c.optJSONArray("tags") ?: JSONArray()
-                val tags = mutableSetOf<MangaTag>().apply {
+                val tags = mutableSetOf<ContentTag>().apply {
                     for (ti in 0 until tagsArr.length()) {
                         val n = tagsArr.optString(ti)
-                        if (n.isNotEmpty()) add(MangaTag(n, n, source))
+                        if (n.isNotEmpty()) add(ContentTag(n, n, source))
                     }
                 }
                 val authorsArr = c.optJSONArray("author") ?: JSONArray()
@@ -570,7 +570,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
                     }
                 }
                 results.add(
-                    Manga(
+                    Content(
                         id = generateUid(cid),
                         url = cid,
                         publicUrl = "https://$domain/comic/$cid",
@@ -594,7 +594,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
         return results
     }
 
-    override suspend fun addFavorite(manga: Manga): Boolean {
+    override suspend fun addFavorite(manga: Content): Boolean {
         val t = getAuthToken()
         if (t.isNullOrBlank()) throw AuthRequiredException(source)
         val path = "comics/${manga.url}/favourite"
@@ -604,7 +604,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
         return resp.isSuccessful
     }
 
-    override suspend fun removeFavorite(manga: Manga): Boolean {
+    override suspend fun removeFavorite(manga: Content): Boolean {
         // Picacg 使用同一接口 toggle，传空体即可取消
         return addFavorite(manga)
     }
@@ -741,8 +741,8 @@ internal class PicacgParser(context: MangaLoaderContext) :
         "官方都在看",  // 3 comics
     )
 
-    private val staticCategoryTags: Set<MangaTag> = staticCategories.mapNotNullToSet { t ->
-        t.takeIf { it.isNotBlank() }?.let { MangaTag(title = it, key = it.lowercase(Locale.ROOT), source = source) }
+    private val staticCategoryTags: Set<ContentTag> = staticCategories.mapNotNullToSet { t ->
+        t.takeIf { it.isNotBlank() }?.let { ContentTag(title = it, key = it.lowercase(Locale.ROOT), source = source) }
     }
     init {
         println("PICACG TAGS INIT: staticCategories=${staticCategories.size}, staticTags=${staticCategoryTags.size}")
@@ -753,7 +753,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
         return staticCategories.any { it.equals(name, ignoreCase = false) }
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val tagSelected = filter.tags.oneOrThrowIfMany()
         val query = tagSelected?.title ?: filter.query
         val lb = leaderboardTag(order)
@@ -767,10 +767,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
                 val root = res.parseJson()
                 val docs = root.optJSONObject("data")?.optJSONObject("comics")?.optJSONArray("docs")
                     ?: JSONArray()
-                val out = mutableListOf<Manga>()
+                val out = mutableListOf<Content>()
                 for (i in 0 until docs.length()) {
                     val jo = docs.optJSONObject(i) ?: continue
-                    out.add(parseManga(jo))
+                    out.add(parseContent(jo))
                 }
                 out
             }
@@ -792,10 +792,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
                 val root = JSONObject(res.body as String)
                 val docs = root.optJSONObject("data")?.optJSONObject("comics")?.optJSONArray("docs")
                     ?: JSONArray()
-                val out = mutableListOf<Manga>()
+                val out = mutableListOf<Content>()
                 for (i in 0 until docs.length()) {
                     val jo = docs.optJSONObject(i) ?: continue
-                    out.add(parseManga(jo))
+                    out.add(parseContent(jo))
                 }
                 out
             }
@@ -806,10 +806,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
                 if (res.code == 401) throw AuthRequiredException(source)
                 val root = res.parseJson()
                 val arr = root.optJSONObject("data")?.optJSONArray("comics") ?: JSONArray()
-                val out = mutableListOf<Manga>()
+                val out = mutableListOf<Content>()
                 for (i in 0 until arr.length()) {
                     val jo = arr.optJSONObject(i) ?: continue
-                    out.add(parseManga(jo))
+                    out.add(parseContent(jo))
                 }
                 out
             }
@@ -820,10 +820,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
                 val root = res.parseJson()
                 val docs = root.optJSONObject("data")?.optJSONObject("comics")?.optJSONArray("docs")
                     ?: JSONArray()
-                val out = mutableListOf<Manga>()
+                val out = mutableListOf<Content>()
                 for (i in 0 until docs.length()) {
                     val jo = docs.optJSONObject(i) ?: continue
-                    out.add(parseManga(jo))
+                    out.add(parseContent(jo))
                 }
                 out
             }
@@ -832,7 +832,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
 
     // 删除网页模式兜底与 manhuabika.com 抓取逻辑
 
-    private fun parseManga(jo: JSONObject): Manga {
+    private fun parseContent(jo: JSONObject): Content {
         val idStr = jo.optString("_id")
         val id = generateUid(idStr)
         val title = jo.optString("title")
@@ -844,15 +844,15 @@ internal class PicacgParser(context: MangaLoaderContext) :
         }
         val tagsArr = jo.optJSONArray("tags") ?: JSONArray()
         val catsArr = jo.optJSONArray("categories") ?: JSONArray()
-        val tagSet = ArrayMap<String, MangaTag>()
+        val tagSet = ArrayMap<String, ContentTag>()
         tagsArr.forEachString { t ->
-            if (t.isNotBlank()) tagSet[t] = MangaTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
+            if (t.isNotBlank()) tagSet[t] = ContentTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
         }
         catsArr.forEachString { t ->
-            if (t.isNotBlank()) tagSet[t] = MangaTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
+            if (t.isNotBlank()) tagSet[t] = ContentTag(title = t, key = t.lowercase(Locale.ROOT), source = source)
         }
         val rating = guessContentRating(tagSet.keys) ?: ContentRating.ADULT
-        return Manga(
+        return Content(
             id = id,
             title = title,
             altTitles = emptySet(),
@@ -868,7 +868,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         var idStr = manga.url
         if (idStr.startsWith("http://") || idStr.startsWith("https://")) {
             // 兼容从公开链接传入的情况：尝试从 URL 获取漫画 ID
@@ -898,14 +898,14 @@ internal class PicacgParser(context: MangaLoaderContext) :
         }
         val catsArr = info.optJSONArray("categories") ?: JSONArray()
         val tagsArr = info.optJSONArray("tags") ?: JSONArray()
-        val tagSet = ArrayMap<String, MangaTag>()
-        catsArr.forEachString { t -> if (t.isNotBlank()) tagSet[t] = MangaTag(t, t.lowercase(Locale.ROOT), source) }
-        tagsArr.forEachString { t -> if (t.isNotBlank()) tagSet[t] = MangaTag(t, t.lowercase(Locale.ROOT), source) }
+        val tagSet = ArrayMap<String, ContentTag>()
+        catsArr.forEachString { t -> if (t.isNotBlank()) tagSet[t] = ContentTag(t, t.lowercase(Locale.ROOT), source) }
+        tagsArr.forEachString { t -> if (t.isNotBlank()) tagSet[t] = ContentTag(t, t.lowercase(Locale.ROOT), source) }
         val rating = guessContentRating(tagSet.keys) ?: manga.contentRating ?: ContentRating.ADULT
 
         // Load chapters (eps)
         val chapters = coroutineScope {
-            val all = mutableListOf<MangaChapter>()
+            val all = mutableListOf<ContentChapter>()
             var i = 1
             while (true) {
                 val epPath = "comics/$idStr/eps?page=$i"
@@ -920,7 +920,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
                     val titleEp = e.optString("title").ifBlank { order.toString() }
                     val chId = generateUid("$idStr:$order")
                     all.add(
-                        MangaChapter(
+                        ContentChapter(
                             id = chId,
                             title = titleEp,
                             number = order.toFloat(),
@@ -952,10 +952,10 @@ internal class PicacgParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val idStr = chapter.url.substringBefore('/')
         val order = chapter.url.substringAfter('/').toIntOrNull() ?: 1
-        val pages = mutableListOf<MangaPage>()
+        val pages = mutableListOf<ContentPage>()
         var i = 1
         while (true) {
             val path = "comics/$idStr/order/$order/pages?page=$i"
@@ -970,7 +970,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
                 val pathMedia = media?.optString("path").orEmpty()
                 val img = if (fileServer.isNotBlank() && pathMedia.isNotBlank()) "$fileServer/static/$pathMedia" else continue
                 pages.add(
-                    MangaPage(
+                    ContentPage(
                         id = generateUid("$idStr:$order:$i:$idx"),
                         url = img,
                         preview = null,
@@ -1000,7 +1000,7 @@ internal class PicacgParser(context: MangaLoaderContext) :
         }
     }
  
-   private suspend fun fetchAvailableKeywords(): Set<MangaTag> {
+   private suspend fun fetchAvailableKeywords(): Set<ContentTag> {
     val path = "keywords"
     val res = webClient.httpGet("$baseUrl/$path", buildApiHeaders("GET", path))
     val root = res.parseJson()
@@ -1012,16 +1012,16 @@ internal class PicacgParser(context: MangaLoaderContext) :
         root.optJSONArray("data") != null -> root.optJSONArray("data")
         else -> JSONArray()
     }
-    val out = mutableSetOf<MangaTag>()
+    val out = mutableSetOf<ContentTag>()
     for (i in 0 until arr.length()) {
         val kw = arr.optString(i).orEmpty()
         if (kw.isNotBlank()) {
-            out.add(MangaTag(title = kw, key = kw.lowercase(Locale.ROOT), source = source))
+            out.add(ContentTag(title = kw, key = kw.lowercase(Locale.ROOT), source = source))
         }
     }
     // 确保“最近更新”在列表中（作为默认选项），即使接口未返回
     if (out.none { it.title == "最近更新" }) {
-        out.add(MangaTag(title = "最近更新", key = "最近更新", source = source))
+        out.add(ContentTag(title = "最近更新", key = "最近更新", source = source))
     }
     return out
 }

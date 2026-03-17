@@ -7,12 +7,12 @@ import okhttp3.Response
 import org.jsoup.nodes.Document
 
 import org.jsoup.nodes.Element
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -29,12 +29,12 @@ import java.io.File
  * /wenku/{order}_{tagid}_{isfull}_{anime}_{rgroupid}_{sortid}_{typeid}_{words}_{page}_{update}.html
  * 其中 tagid 支持多选（用 - 连接，最多 4 个）。
  */
-@MangaSourceParser("BILINOVEL", "哔哩轻小说", "zh", type = ContentType.NOVEL)
-internal class Bilinovel(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.BILINOVEL, pageSize = 20),
+@ContentSourceParser("BILINOVEL", "哔哩轻小说", "zh", type = ContentType.NOVEL)
+internal class Bilinovel(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.BILINOVEL, pageSize = 20),
     Interceptor,
-    MangaParserAuthProvider,
-    MangaParserCredentialsAuthProvider {
+    ContentParserAuthProvider,
+    ContentParserCredentialsAuthProvider {
 
 
     companion object {
@@ -70,44 +70,44 @@ internal class Bilinovel(context: MangaLoaderContext) :
         SortOrder.NEWEST,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = true,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val groups = buildFilterGroups()
         val allTags = groups.flatMap { it.tags }.toSet()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = allTags,
             tagGroups = groups,
         )
     }
 
-    private fun buildFilterGroups(): List<MangaTagGroup> {
-        val groups = mutableListOf<MangaTagGroup>()
+    private fun buildFilterGroups(): List<ContentTagGroup> {
+        val groups = mutableListOf<ContentTagGroup>()
 
         // 排序方式
         val orderTags = linkedSetOf(
-            MangaTag("最新更新", "order:lastupdate", source),
-            MangaTag("周点击榜", "order:weekvisit", source),
-            MangaTag("总推荐榜", "order:goodnum", source),
-            MangaTag("新书入库", "order:postdate", source),
+            ContentTag("最新更新", "order:lastupdate", source),
+            ContentTag("周点击榜", "order:weekvisit", source),
+            ContentTag("总推荐榜", "order:goodnum", source),
+            ContentTag("新书入库", "order:postdate", source),
         )
-        groups += MangaTagGroup("排序", orderTags)
+        groups += ContentTagGroup("排序", orderTags)
 
         // 文库地区
         val rgroupTags = linkedSetOf(
-            MangaTag("不限", "rgroupid:0", source),
-            MangaTag("日本轻小说", "rgroupid:1", source),
-            MangaTag("华文轻小说", "rgroupid:2", source),
-            MangaTag("Web轻小说", "rgroupid:3", source),
-            MangaTag("轻改漫画", "rgroupid:4", source),
-            MangaTag("韩国轻小说", "rgroupid:5", source),
+            ContentTag("不限", "rgroupid:0", source),
+            ContentTag("日本轻小说", "rgroupid:1", source),
+            ContentTag("华文轻小说", "rgroupid:2", source),
+            ContentTag("Web轻小说", "rgroupid:3", source),
+            ContentTag("轻改漫画", "rgroupid:4", source),
+            ContentTag("韩国轻小说", "rgroupid:5", source),
         )
-        groups += MangaTagGroup("地区", rgroupTags)
+        groups += ContentTagGroup("地区", rgroupTags)
 
         // 作品主题（多选，最多 4 个）
         val themeOptions = listOf(
@@ -125,39 +125,39 @@ internal class Bilinovel(context: MangaLoaderContext) :
             "JC" to "304", "间谍" to "254", "竞技" to "146", "宅文化" to "263", "同人" to "333",
         )
         val themeTags = themeOptions.mapTo(linkedSetOf()) { (name, id) ->
-            MangaTag(name, "tagid:$id", source)
+            ContentTag(name, "tagid:$id", source)
         }
-        groups += MangaTagGroup("主题", themeTags)
+        groups += ContentTagGroup("主题", themeTags)
 
         // 是否动画
         val animeTags = linkedSetOf(
-            MangaTag("不限", "anime:0", source),
-            MangaTag("已动画化", "anime:1", source),
-            MangaTag("未动画化", "anime:2", source),
+            ContentTag("不限", "anime:0", source),
+            ContentTag("已动画化", "anime:1", source),
+            ContentTag("未动画化", "anime:2", source),
         )
-        groups += MangaTagGroup("动画", animeTags)
+        groups += ContentTagGroup("动画", animeTags)
 
         // 写作状态
         val fullTags = linkedSetOf(
-            MangaTag("不限", "isfull:0", source),
-            MangaTag("新书上传", "isfull:1", source),
-            MangaTag("情节展开", "isfull:2", source),
-            MangaTag("精彩纷呈", "isfull:3", source),
-            MangaTag("接近尾声", "isfull:4", source),
-            MangaTag("已经完本", "isfull:5", source),
+            ContentTag("不限", "isfull:0", source),
+            ContentTag("新书上传", "isfull:1", source),
+            ContentTag("情节展开", "isfull:2", source),
+            ContentTag("精彩纷呈", "isfull:3", source),
+            ContentTag("接近尾声", "isfull:4", source),
+            ContentTag("已经完本", "isfull:5", source),
         )
-        groups += MangaTagGroup("状态", fullTags)
+        groups += ContentTagGroup("状态", fullTags)
 
         // 字数
         val wordTags = linkedSetOf(
-            MangaTag("不限", "words:0", source),
-            MangaTag("30万以下", "words:1", source),
-            MangaTag("30-50万", "words:2", source),
-            MangaTag("50-100万", "words:3", source),
-            MangaTag("100-200万", "words:4", source),
-            MangaTag("200万以上", "words:5", source),
+            ContentTag("不限", "words:0", source),
+            ContentTag("30万以下", "words:1", source),
+            ContentTag("30-50万", "words:2", source),
+            ContentTag("50-100万", "words:3", source),
+            ContentTag("100-200万", "words:4", source),
+            ContentTag("200万以上", "words:5", source),
         )
-        groups += MangaTagGroup("字数", wordTags)
+        groups += ContentTagGroup("字数", wordTags)
 
         return groups
     }
@@ -205,7 +205,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
         return response
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 搜索优先
         val query = filter.query?.trim().orEmpty()
         if (query.isNotEmpty()) {
@@ -226,7 +226,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
                     val snippet = response.peekBody(2048).string().take(200)
                     println("Bilinovel Search: Cloudflare challenge detected for $url, snippet=$snippet")
                     context.requestBrowserAction(this, url)
-                    emptyList<Manga>()
+                    emptyList<Content>()
                 } else {
                     val preview = response.peekBody(65536).string()
                     val doc = org.jsoup.Jsoup.parse(preview, url)
@@ -278,7 +278,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
         val update: String = "0",
     )
 
-    private fun resolveFilterParams(order: SortOrder, filter: MangaListFilter): FilterParams {
+    private fun resolveFilterParams(order: SortOrder, filter: ContentListFilter): FilterParams {
         val tagMap = filter.tags.associate { it.key.substringBefore(":") to it.key.substringAfter(":") }
         val orderParam = tagMap["order"] ?: when (order) {
             SortOrder.UPDATED -> "lastupdate"
@@ -306,8 +306,8 @@ internal class Bilinovel(context: MangaLoaderContext) :
         )
     }
 
-    private fun parseList(doc: Document): List<Manga> {
-        val list = mutableListOf<Manga>()
+    private fun parseList(doc: Document): List<Content> {
+        val list = mutableListOf<Content>()
         // 搜索/列表页面在不同模板下 href 可能放在 data-href，或 href 为 javascript: 占位
         for (item in doc.select("ol.book-ol li.book-li a.book-layout, li.book-li a.book-layout, .book-li a.book-layout")) {
             val rawHref = item.attrOrNull("href").orEmpty()
@@ -332,15 +332,15 @@ internal class Bilinovel(context: MangaLoaderContext) :
             val author = item.selectFirst(".book-author")?.text()?.trim()?.removePrefix("作者")?.trim()
             val stateText = item.selectFirst(".tag-small.red")?.text()?.trim().orEmpty()
             val state = when {
-                stateText.contains("完", ignoreCase = true) -> MangaState.FINISHED
-                stateText.contains("连载") -> MangaState.ONGOING
+                stateText.contains("完", ignoreCase = true) -> ContentState.FINISHED
+                stateText.contains("连载") -> ContentState.ONGOING
                 else -> null
             }
             val tags = item.select(".tag-small-group em").flatMap { em ->
                 em.text().split(' ', '　', ',', '，').mapNotNull { t -> t.trim().takeIf { it.isNotEmpty() } }
-            }.mapTo(linkedSetOf<MangaTag>()) { t -> MangaTag(t, t, source) }
+            }.mapTo(linkedSetOf<ContentTag>()) { t -> ContentTag(t, t, source) }
 
-            list += Manga(
+            list += Content(
                 id = generateUid(href),
                 url = href,
                 publicUrl = item.absUrl(href),
@@ -358,7 +358,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
         return list
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val url = manga.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         // 详情页使用桌面端 UA
         val response = webClient.httpGet(url, getDesktopHeaders())
@@ -379,11 +379,11 @@ internal class Bilinovel(context: MangaLoaderContext) :
         val desc = descHtml.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
             .replace(Regex("<[^>]+>"), "").trim()
         val tagSet = doc.select(".tag-small-group em a").map { it.text().trim() }
-            .mapTo(linkedSetOf<MangaTag>()) { name -> MangaTag(name, name, source) }
+            .mapTo(linkedSetOf<ContentTag>()) { name -> ContentTag(name, name, source) }
         val stateText = doc.selectFirst(".book-meta.book-layout-inline")?.text().orEmpty()
         val state = when {
-            stateText.contains("完", ignoreCase = true) -> MangaState.FINISHED
-            stateText.contains("连载") -> MangaState.ONGOING
+            stateText.contains("完", ignoreCase = true) -> ContentState.FINISHED
+            stateText.contains("连载") -> ContentState.ONGOING
             else -> null
         }
 
@@ -398,11 +398,11 @@ internal class Bilinovel(context: MangaLoaderContext) :
         )
     }
 
-    private suspend fun fetchChapters(manga: Manga): List<MangaChapter> {
+    private suspend fun fetchChapters(manga: Content): List<ContentChapter> {
         val catalogUrl = manga.url.replace(Regex("\\.html$"), "").removeSuffix("/") + "/catalog"
         val url = catalogUrl.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val doc = webClient.httpGet(url, getDesktopHeaders()).parseHtml()
-        val chapters = mutableListOf<MangaChapter>()
+        val chapters = mutableListOf<ContentChapter>()
         
         // 按顺序遍历所有 li 元素，识别卷标题和章节
         // 卷标题结构: <li class="chapter-bar chapter-li"><h3>第一卷</h3></li>
@@ -430,7 +430,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
                         val href = a.attrAsAbsoluteUrlOrNull("href")?.toRelativePath() ?: return@forEach
                         val title = a.selectFirst(".chapter-index")?.text()?.trim() ?: a.text().trim()
                         if (title.isEmpty()) return@forEach
-                        chapters += MangaChapter(
+                        chapters += ContentChapter(
                             id = generateUid(href),
                             title = title,
                             number = chapters.size + 1f,
@@ -456,7 +456,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
                     if (hrefValue.startsWith("javascript:", ignoreCase = true)) return@forEach
                     val href = a.attrAsAbsoluteUrlOrNull("href")?.toRelativePath() ?: return@forEach
                     val title = a.selectFirst(".chapter-index, .chapter-name")?.text()?.trim() ?: a.text().trim()
-                    chapters += MangaChapter(
+                    chapters += ContentChapter(
                         id = generateUid(href),
                         title = title,
                         number = chapters.size + 1f,
@@ -483,7 +483,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
                         if (hrefValue.startsWith("javascript:", ignoreCase = true)) return@forEach
                         val href = a.attrAsAbsoluteUrlOrNull("href")?.toRelativePath() ?: return@forEach
                         val title = a.text().trim()
-                        chapters += MangaChapter(
+                        chapters += ContentChapter(
                             id = generateUid(href),
                             title = title,
                             number = chapters.size + 1f,
@@ -512,7 +512,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
                 val hrefValue = a.attr("href")
                 if (hrefValue.startsWith("javascript:", ignoreCase = true)) return@forEach
                 val href = a.attrAsAbsoluteUrlOrNull("href")?.toRelativePath() ?: return@forEach
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = generateUid(href),
                     title = a.text().trim(),
                     number = chapters.size + 1f,
@@ -529,11 +529,11 @@ internal class Bilinovel(context: MangaLoaderContext) :
         return chapters
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val content = getChapterContent(chapter) ?: return listOf(createErrorPage("内容为空"))
         val dataUrl = content.html.toDataUrl(context)
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = dataUrl,
                 preview = null,
@@ -542,7 +542,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getChapterContent(chapter: MangaChapter): NovelChapterContent? {
+    override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         val initialUrl = chapter.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val allHtml = StringBuilder()
         val allImages = mutableListOf<NovelChapterContent.NovelImage>()
@@ -672,7 +672,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
         // 不暴露 userAgentKey 给用户设置，内部已预设最优 UA 策略
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String = page.url
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     override val authUrl: String = "https://$domain/login.php"
 
@@ -712,14 +712,14 @@ internal class Bilinovel(context: MangaLoaderContext) :
     /**
      * 创建错误页面
      */
-    private fun createErrorPage(message: String): MangaPage {
+    private fun createErrorPage(message: String): ContentPage {
         val html = """
             <!DOCTYPE html><html><head><meta charset="utf-8"/>
             <style>body{font-family:sans-serif;padding:16px;}</style>
             </head><body><h1>错误</h1><p>$message</p></body></html>
         """.trimIndent()
 
-        return MangaPage(
+        return ContentPage(
             id = generateUid(message),
             url = html.toDataUrl(context),
             preview = null,
@@ -730,7 +730,7 @@ internal class Bilinovel(context: MangaLoaderContext) :
     /**
      * 将HTML转换为Data URL
      */
-    private fun String.toDataUrl(context: MangaLoaderContext): String {
+    private fun String.toDataUrl(context: ContentLoaderContext): String {
         val encoded = context.encodeBase64(toByteArray(Charsets.UTF_8))
         return "data:text/html;charset=utf-8;base64,$encoded"
     }

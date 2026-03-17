@@ -1,10 +1,10 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import org.json.JSONObject
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.ArrayList
@@ -20,9 +20,9 @@ import java.util.EnumSet
  * - 详情: /api/book?id={id}
  * - 章节: /api/chapter?id={bookId}&chapterid={chapterId}
  */
-@MangaSourceParser("BIQUGE", "笔趣阁", "zh", type = ContentType.NOVEL)
-internal class Biquge(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.BIQUGE, pageSize = 150) {
+@ContentSourceParser("BIQUGE", "笔趣阁", "zh", type = ContentType.NOVEL)
+internal class Biquge(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.BIQUGE, pageSize = 150) {
 
     override val configKeyDomain = ConfigKey.Domain("www.fab00db.icu")
 
@@ -30,36 +30,36 @@ internal class Biquge(context: MangaLoaderContext) :
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = false,
             isTagsExclusionSupported = false,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
-        return MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
             availableTags = buildFilterTags(),
         )
     }
 
-    private fun buildFilterTags(): Set<MangaTag> {
-        val tags = LinkedHashSet<MangaTag>()
+    private fun buildFilterTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
         
         // 分类标签
-        tags += MangaTag("玄幻", "xuanhuan", source)
-        tags += MangaTag("武侠", "wuxia", source)
-        tags += MangaTag("都市", "dushi", source)
-        tags += MangaTag("历史", "lishi", source)
-        tags += MangaTag("网游", "wangyou", source)
-        tags += MangaTag("科幻", "kehuan", source)
-        tags += MangaTag("女生", "mm", source)
-        tags += MangaTag("完本", "finish", source)
+        tags += ContentTag("玄幻", "xuanhuan", source)
+        tags += ContentTag("武侠", "wuxia", source)
+        tags += ContentTag("都市", "dushi", source)
+        tags += ContentTag("历史", "lishi", source)
+        tags += ContentTag("网游", "wangyou", source)
+        tags += ContentTag("科幻", "kehuan", source)
+        tags += ContentTag("女生", "mm", source)
+        tags += ContentTag("完本", "finish", source)
         
         return tags
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 笔趣阁API不支持分页，每次返回所有结果（约150本）
         if (page > 1) {
             return emptyList()
@@ -79,7 +79,7 @@ internal class Biquge(context: MangaLoaderContext) :
         return parseNovelList(json)
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val bookId = manga.url.substringAfterLast("/")
         val apiUrl = "https://$domain/api/book?id=$bookId"
         
@@ -87,11 +87,11 @@ internal class Biquge(context: MangaLoaderContext) :
         return parseNovelDetail(manga, json)
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val content = getChapterContent(chapter) ?: return listOf(createErrorPage("内容为空"))
         val dataUrl = content.html.toDataUrl()
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(chapter.url),
                 url = dataUrl,
                 preview = null,
@@ -100,7 +100,7 @@ internal class Biquge(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getChapterContent(chapter: MangaChapter): NovelChapterContent? {
+    override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         // URL格式: /book/{bookId}/{chapterId}
         val parts = chapter.url.split("/")
         if (parts.size < 4) {
@@ -137,7 +137,7 @@ internal class Biquge(context: MangaLoaderContext) :
         }
     }
 
-    override suspend fun getPageUrl(page: MangaPage): String {
+    override suspend fun getPageUrl(page: ContentPage): String {
         return page.url
     }
 
@@ -146,8 +146,8 @@ internal class Biquge(context: MangaLoaderContext) :
     /**
      * 解析小说列表
      */
-    private fun parseNovelList(json: JSONObject): List<Manga> {
-        val result = ArrayList<Manga>()
+    private fun parseNovelList(json: JSONObject): List<Content> {
+        val result = ArrayList<Content>()
         val items = json.optJSONArray("data") ?: return result
         
         for (i in 0 until items.length()) {
@@ -165,7 +165,7 @@ internal class Biquge(context: MangaLoaderContext) :
             // 生成封面URL
             val coverUrl = generateCoverUrl(id)
             
-            result += Manga(
+            result += Content(
                 id = generateUid("/book/$id"),
                 url = "/book/$id",
                 publicUrl = "https://$domain/#/book/$id",
@@ -189,7 +189,7 @@ internal class Biquge(context: MangaLoaderContext) :
     /**
      * 解析小说详情
      */
-    private fun parseNovelDetail(manga: Manga, json: JSONObject): Manga {
+    private fun parseNovelDetail(manga: Content, json: JSONObject): Content {
         val title = json.optString("title", manga.title)
         val author = json.optString("author", "")
         val intro = json.optString("intro", "")
@@ -199,24 +199,24 @@ internal class Biquge(context: MangaLoaderContext) :
         
         // 状态
         val state = when {
-            full.contains("完结") || full.contains("完本") -> MangaState.FINISHED
-            full.contains("连载") -> MangaState.ONGOING
+            full.contains("完结") || full.contains("完本") -> ContentState.FINISHED
+            full.contains("连载") -> ContentState.ONGOING
             else -> null
         }
         
         // 标签
         val tags = if (sortname.isNotEmpty()) {
-            setOf(MangaTag(sortname, sortname, source))
+            setOf(ContentTag(sortname, sortname, source))
         } else {
             emptySet()
         }
         
         // 生成章节列表
         // 注意：API不直接返回章节列表，需要根据lastchapterid推断
-        val chapters = ArrayList<MangaChapter>()
+        val chapters = ArrayList<ContentChapter>()
         if (lastChapterId > 0) {
             for (i in 1..lastChapterId) {
-                chapters += MangaChapter(
+                chapters += ContentChapter(
                     id = generateUid("/book/${json.optString("id")}/$i"),
                     title = "第${i}章",
                     number = i.toFloat(),
@@ -290,9 +290,9 @@ internal class Biquge(context: MangaLoaderContext) :
         </head><body><h1>错误</h1><p>$message</p></body></html>
     """.trimIndent()
 
-    private fun createErrorPage(message: String): MangaPage {
+    private fun createErrorPage(message: String): ContentPage {
         val html = buildErrorHtml(message)
-        return MangaPage(
+        return ContentPage(
             id = generateUid(message),
             url = html.toDataUrl(),
             preview = null,

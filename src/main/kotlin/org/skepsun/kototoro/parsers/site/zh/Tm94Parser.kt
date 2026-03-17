@@ -2,21 +2,21 @@ package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
 import org.json.JSONObject
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
-import org.skepsun.kototoro.parsers.model.MangaTagGroup
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -34,12 +34,12 @@ import java.util.EnumSet
  * - 播放页内嵌 player_aaaa JSON，包含 m3u8 直链
  * - 使用 MacCMS 风格 URL：/index.php/vod/play/id/{id}/sid/{sid}/nid/{nid}.html
  */
-@MangaSourceParser(name = "MT94", title = "94MT", locale = "zh", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser(name = "MT94", title = "94MT", locale = "zh", type = ContentType.HENTAI_VIDEO)
 internal class Tm94Parser(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.MT94,
+    source = ContentParserSource.MT94,
     pageSize = 24,
 ) {
 
@@ -56,24 +56,24 @@ internal class Tm94Parser(
         SortOrder.UPDATED,
     )
 
-    override val filterCapabilities: MangaListFilterCapabilities =
-        MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities =
+        ContentListFilterCapabilities(
             isSearchSupported = true,
             isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): MangaListFilterOptions {
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = CATEGORY_TAGS.map { (title, id) ->
-            MangaTag(title, "cat:$id", source)
+            ContentTag(title, "cat:$id", source)
         }.toSet()
-        return MangaListFilterOptions(
+        return ContentListFilterOptions(
             availableTags = tags,
-            tagGroups = listOf(MangaTagGroup("分类", tags)),
+            tagGroups = listOf(ContentTagGroup("分类", tags)),
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
         )
     }
 
-    private fun listUrl(page: Int, filter: MangaListFilter): String {
+    private fun listUrl(page: Int, filter: ContentListFilter): String {
         val query = filter.query?.trim()
         val p = if (page < 1) 1 else page
         if (!query.isNullOrBlank()) {
@@ -84,11 +84,11 @@ internal class Tm94Parser(
         return "https://$domain/index.php/vod/type/id/$catId/page/$p.html"
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = listUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         println("Tm94Parser fetching: $url")
-        val items = ArrayList<Manga>(pageSize)
+        val items = ArrayList<Content>(pageSize)
         val seen = HashSet<String>()
 
         val elements = doc.select("a.item-link[href*=/id/]")
@@ -114,7 +114,7 @@ internal class Tm94Parser(
                 ?: "视频 $id"
 
             items.add(
-                Manga(
+                Content(
                     id = generateUid(id),
                     // 统一归一化为详情页地址，有些站点部分页面只有 play 链接，部分只有 detail，统一用 detail 安全
                     // 如果原本就是 play 链接，也可以 parse 出 id 构造 detail
@@ -141,7 +141,7 @@ internal class Tm94Parser(
         return items
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
 
         val title = doc.selectFirst("meta[property=og:title]")?.attrOrNull("content")
@@ -154,7 +154,7 @@ internal class Tm94Parser(
 
         val tags = doc.select(".con-detail ul:has(.info-label:contains(类型)) a, a[href*=/vod/type/id/]").mapNotNull { a ->
             val text = a.text().trim()
-            if (text.isNotEmpty()) MangaTag(text, text, source) else null
+            if (text.isNotEmpty()) ContentTag(text, text, source) else null
         }.toSet()
 
         val actors = doc.select(".con-detail ul:has(.info-label:contains(主演)) a").mapNotNull { a ->
@@ -165,7 +165,7 @@ internal class Tm94Parser(
             val href = a.attrOrNull("href") ?: return@mapIndexed null
             val id = VIDEO_ID_REGEX.find(href)?.groupValues?.getOrNull(1) ?: generateUid(href)
             val titleText = a.text().trim().ifEmpty { "第${idx + 1}集" }
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("$id|$href"),
                 url = href,
                 title = titleText,
@@ -190,7 +190,7 @@ internal class Tm94Parser(
         )
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val playUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(playUrl, getRequestHeaders()).parseHtml()
         val scripts = doc.select("script").mapNotNull { it.data().takeIf { data -> data.contains("player_") } }
@@ -220,7 +220,7 @@ internal class Tm94Parser(
             ?: return emptyList()
 
         return listOf(
-            MangaPage(
+            ContentPage(
                 id = generateUid(decodedUrl),
                 url = decodedUrl,
                 preview = doc.selectFirst("meta[property=og:image]")?.attrOrNull("content"),

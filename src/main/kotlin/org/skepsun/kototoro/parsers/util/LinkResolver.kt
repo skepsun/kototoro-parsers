@@ -4,29 +4,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParser
-import org.skepsun.kototoro.parsers.core.AbstractMangaParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParser
+import org.skepsun.kototoro.parsers.core.AbstractContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.suspendlazy.suspendLazy
 
 public class LinkResolver internal constructor(
-	private val context: MangaLoaderContext,
+	private val context: ContentLoaderContext,
 	public val link: HttpUrl,
 ) {
 
 	private val source = suspendLazy(Dispatchers.Default, ::resolveSource)
 
-	public suspend fun getSource(): MangaParserSource? = source.get()
+	public suspend fun getSource(): ContentParserSource? = source.get()
 
-	public suspend fun getManga(): Manga? {
+	public suspend fun getContent(): Content? {
 		val parser = context.newParserInstance(source.get() ?: return null)
-		return parser.resolveLink(this, link) ?: resolveManga(parser)
+		return parser.resolveLink(this, link) ?: resolveContent(parser)
 	}
 
-	private suspend fun resolveSource(): MangaParserSource? = runInterruptible(Dispatchers.Default) {
+	private suspend fun resolveSource(): ContentParserSource? = runInterruptible(Dispatchers.Default) {
 		val domains = setOfNotNull(link.host, link.topPrivateDomain())
-		for (s in MangaParserSource.entries) {
+		for (s in ContentParserSource.entries) {
 			val parser = context.newParserInstance(s)
 			for (d in parser.configKeyDomain.presetValues) {
 				if (d in domains) {
@@ -37,14 +37,14 @@ public class LinkResolver internal constructor(
 		null
 	}
 
-	internal suspend fun resolveManga(
-		parser: MangaParser,
+	internal suspend fun resolveContent(
+		parser: ContentParser,
 		url: String = link.toString().toRelativeUrl(link.host),
 		id: Long = parser.generateUid(url),
 		title: String = STUB_TITLE,
-	): Manga? = resolveBySeed(
+	): Content? = resolveBySeed(
 		parser,
-		Manga(
+		Content(
 			id = id,
 			title = title,
 			altTitles = emptySet(),
@@ -63,7 +63,7 @@ public class LinkResolver internal constructor(
 		),
 	)
 
-	private suspend fun resolveBySeed(parser: MangaParser, s: Manga): Manga? {
+	private suspend fun resolveBySeed(parser: ContentParser, s: Content): Content? {
 		val seed = parser.getDetails(s)
 		if (!parser.filterCapabilities.isSearchSupported) {
 			return seed.takeUnless { it.chapters.isNullOrEmpty() }
@@ -75,7 +75,7 @@ public class LinkResolver internal constructor(
 			else -> return seed // unfortunately we do not know a real manga title so unable to find it
 		}
 		val resolved = runCatchingCancellable {
-			val list = parser.getList(0, parser.bestSortOrder(), MangaListFilter(query = query))
+			val list = parser.getList(0, parser.bestSortOrder(), ContentListFilter(query = query))
 			list.singleOrNull { manga -> isSameUrl(manga.publicUrl) }
 		}.getOrNull()
 		if (resolved == null) {
@@ -106,12 +106,12 @@ public class LinkResolver internal constructor(
 			&& link.encodedPath == httpUrl.encodedPath
 	}
 
-	private fun MangaParser.bestSortOrder(): SortOrder {
+	private fun ContentParser.bestSortOrder(): SortOrder {
 		val supported = availableSortOrders
 		if (SortOrder.RELEVANCE in supported) {
 			return SortOrder.RELEVANCE
 		}
-		if (this is AbstractMangaParser) {
+		if (this is AbstractContentParser) {
 			return defaultSortOrder
 		}
 		return SortOrder.entries.first { it in supported }

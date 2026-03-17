@@ -3,9 +3,9 @@ package org.skepsun.kototoro.parsers.site.zh
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.skepsun.kototoro.parsers.MangaLoaderContextMock
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaParserSource
+import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.network.OkHttpWebClient
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
@@ -21,18 +21,18 @@ import kotlin.time.Duration.Companion.minutes
  * - 校验响应成功与 Content-Type 为图片
  * - 校验图片请求头（Referer、UA）与拦截器逻辑一致
  */
-class CopyMangaImageLoadTest {
+class CopyContentImageLoadTest {
 
-    private val context = MangaLoaderContextMock
+    private val context = ContentLoaderContextMock
 
     @Test
     fun image_load_xigelide() = runTest(timeout = 3.minutes) {
         // 启用仅 API 模式，跳过站点 HTML 请求
         System.setProperty("copymanga.only.api", "true")
-        val parser = context.newParserInstance(MangaParserSource.COPYMANGA)
+        val parser = context.newParserInstance(ContentParserSource.COPYMANGA)
         val domain = parser.domain
         val slug = "xigelide"
-        val seed = Manga(
+        val seed = Content(
             id = slug.hashCode().toLong(),
             title = slug,
             altTitles = emptySet(),
@@ -46,7 +46,7 @@ class CopyMangaImageLoadTest {
             authors = emptySet(),
             description = null,
             chapters = null,
-            source = MangaParserSource.COPYMANGA,
+            source = ContentParserSource.COPYMANGA,
         )
 
         // 获取章节
@@ -58,7 +58,7 @@ class CopyMangaImageLoadTest {
             parser.getPages(chapter)
         } catch (e: Exception) {
             // 回退解析：直接请求章节页 HTML，从中提取图片 URL（Next.js 或 <img> 标签）
-            val webClient = OkHttpWebClient(context.httpClient, MangaParserSource.COPYMANGA)
+            val webClient = OkHttpWebClient(context.httpClient, ContentParserSource.COPYMANGA)
             val chapterUrl = chapter.url.toAbsoluteUrl(domain)
             val html = webClient.httpGet(chapterUrl).parseRaw()
 
@@ -69,11 +69,11 @@ class CopyMangaImageLoadTest {
 
             // 构造临时 Page 列表以与下游逻辑一致
             urls.take(5).mapIndexed { i, u ->
-                org.skepsun.kototoro.parsers.model.MangaPage(
+                org.skepsun.kototoro.parsers.model.ContentPage(
                     id = i.toLong(),
                     url = u,
                     preview = null,
-                    source = MangaParserSource.COPYMANGA,
+                    source = ContentParserSource.COPYMANGA,
                 )
             }
         }
@@ -93,7 +93,7 @@ class CopyMangaImageLoadTest {
             }
         } else {
             // 使用相同的 OkHttpClient，并通过 WebClient 为请求标注来源，从而走解析器拦截器
-            val webClient = OkHttpWebClient(context.httpClient, MangaParserSource.COPYMANGA)
+            val webClient = OkHttpWebClient(context.httpClient, ContentParserSource.COPYMANGA)
             val count = min(3, pages.size)
             repeat(count) { idx ->
                 val page = pages[idx]

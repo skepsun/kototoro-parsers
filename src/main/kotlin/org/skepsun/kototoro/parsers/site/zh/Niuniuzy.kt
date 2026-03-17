@@ -5,20 +5,20 @@ import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.Broken
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
-import org.skepsun.kototoro.parsers.model.Manga
-import org.skepsun.kototoro.parsers.model.MangaChapter
-import org.skepsun.kototoro.parsers.model.MangaListFilter
-import org.skepsun.kototoro.parsers.model.MangaListFilterCapabilities
-import org.skepsun.kototoro.parsers.model.MangaListFilterOptions
-import org.skepsun.kototoro.parsers.model.MangaPage
-import org.skepsun.kototoro.parsers.model.MangaParserSource
-import org.skepsun.kototoro.parsers.model.MangaTag
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -40,12 +40,12 @@ import java.util.EnumSet
  * - 视频：从 <video>、LD+JSON、脚本字符串中提取 m3u8/mp4
  */
 // @Broken("Under development")
-@MangaSourceParser(name = "NIUNIUZY", title = "牛牛资源", locale = "zh", type = ContentType.VIDEO)
+@ContentSourceParser(name = "NIUNIUZY", title = "牛牛资源", locale = "zh", type = ContentType.VIDEO)
 internal class Niuniuzy(
-    context: MangaLoaderContext,
-) : PagedMangaParser(
+    context: ContentLoaderContext,
+) : PagedContentParser(
     context = context,
-    source = MangaParserSource.NIUNIUZY,
+    source = ContentParserSource.NIUNIUZY,
     pageSize = 30,
 ) {
 
@@ -59,8 +59,8 @@ internal class Niuniuzy(
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST)
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = false,
             isMultipleTagsSupported = false,
@@ -69,25 +69,25 @@ internal class Niuniuzy(
 
     // 分类标签映射（按用户提供）：
     // 电影(1)、电视剧(2)、综艺(3)、动漫(4)、伦理(55)、爽文短剧(54)、影视解说(53)、体育赛事(48)、预告片(51)
-    override suspend fun getFilterOptions(): MangaListFilterOptions = MangaListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
         availableTags = linkedSetOf(
-            MangaTag(title = "电影", key = "cate:1", source = source),
-            MangaTag(title = "电视剧", key = "cate:2", source = source),
-            MangaTag(title = "综艺", key = "cate:3", source = source),
-            MangaTag(title = "动漫", key = "cate:4", source = source),
-            MangaTag(title = "伦理", key = "cate:55", source = source),
-            MangaTag(title = "爽文短剧", key = "cate:54", source = source),
-            MangaTag(title = "影视解说", key = "cate:53", source = source),
-            MangaTag(title = "体育赛事", key = "cate:48", source = source),
-            MangaTag(title = "预告片", key = "cate:51", source = source),
+            ContentTag(title = "电影", key = "cate:1", source = source),
+            ContentTag(title = "电视剧", key = "cate:2", source = source),
+            ContentTag(title = "综艺", key = "cate:3", source = source),
+            ContentTag(title = "动漫", key = "cate:4", source = source),
+            ContentTag(title = "伦理", key = "cate:55", source = source),
+            ContentTag(title = "爽文短剧", key = "cate:54", source = source),
+            ContentTag(title = "影视解说", key = "cate:53", source = source),
+            ContentTag(title = "体育赛事", key = "cate:48", source = source),
+            ContentTag(title = "预告片", key = "cate:51", source = source),
         ),
     )
 
     override suspend fun getListPage(
         page: Int,
         order: SortOrder,
-        filter: MangaListFilter,
-    ): List<Manga> {
+        filter: ContentListFilter,
+    ): List<Content> {
         // 搜索走站内 HTML，API 不支持搜索
         if (!filter.query.isNullOrBlank()) {
             val url = buildListUrl(page, filter)
@@ -111,8 +111,8 @@ internal class Niuniuzy(
         return enrichListWithApi(parseListFromHtml(doc))
     }
 
-    private fun parseListFromHtml(doc: org.jsoup.nodes.Document): List<Manga> {
-        val out = ArrayList<Manga>(pageSize)
+    private fun parseListFromHtml(doc: org.jsoup.nodes.Document): List<Content> {
+        val out = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
         val anchors = doc.select(
@@ -140,7 +140,7 @@ internal class Niuniuzy(
             val cover = resolveCover(img, container)
 
             out.add(
-                Manga(
+                Content(
                     id = generateUid(href),
                     url = href,
                     publicUrl = href.toAbsoluteUrl(domain),
@@ -179,7 +179,7 @@ internal class Niuniuzy(
                 val cover = resolveCover(img, c)
 
                 out.add(
-                    Manga(
+                    Content(
                         id = generateUid(href),
                         url = href,
                         publicUrl = href.toAbsoluteUrl(domain),
@@ -203,7 +203,7 @@ internal class Niuniuzy(
         return out
     }
 
-    private suspend fun fetchListFromApi(page: Int, filter: MangaListFilter): List<Manga>? {
+    private suspend fun fetchListFromApi(page: Int, filter: ContentListFilter): List<Content>? {
         try {
             val url = buildApiListUrl(page, filter)
             val raw = webClient.httpGet(url, getRequestHeaders()).parseRaw()
@@ -240,7 +240,7 @@ internal class Niuniuzy(
                 if (id.isNotBlank()) detailMap[id] = obj
             }
 
-            val result = ArrayList<Manga>(ids.size)
+            val result = ArrayList<Content>(ids.size)
             for (id in ids) {
                 val detail = detailMap[id]
                 val base = detail ?: basic[id] ?: continue
@@ -251,14 +251,14 @@ internal class Niuniuzy(
                     ?: basic[id]?.optString("vod_pic", null)?.takeIf { it.isNotBlank() }
                 val cover = pic?.toAbsoluteUrlOrNull(domain) ?: pic
                 val typeName = detail?.optString("type_name", null) ?: basic[id]?.optString("type_name", null).orEmpty()
-                val tag = typeName.takeIf { it.isNotBlank() }?.let { MangaTag(it, it, source) }
+                val tag = typeName.takeIf { it.isNotBlank() }?.let { ContentTag(it, it, source) }
                 val remarks = detail?.optString("vod_remarks", null)
                     ?: basic[id]?.optString("vod_remarks", null)
                     ?: detail?.optString("vod_sub", null)
                 val relUrl = "/index.php/vod/detail/id/$id.html"
 
                 result.add(
-                    Manga(
+                    Content(
                         id = generateUid(relUrl),
                         url = relUrl,
                         publicUrl = relUrl.toAbsoluteUrl(domain),
@@ -282,7 +282,7 @@ internal class Niuniuzy(
         }
     }
 
-    private fun buildApiListUrl(page: Int, filter: MangaListFilter): String {
+    private fun buildApiListUrl(page: Int, filter: ContentListFilter): String {
         val sb = StringBuilder("https://").append(domain).append("/api.php/provide/vod/?ac=list&pg=").append(page)
         filter.tags.firstOrNull()?.key?.substringAfter("cate:")?.toIntOrNull()?.let { sb.append("&t=").append(it) }
         if (!filter.query.isNullOrBlank()) {
@@ -291,7 +291,7 @@ internal class Niuniuzy(
         return sb.toString()
     }
 
-    private fun buildListUrl(page: Int, filter: MangaListFilter): String {
+    private fun buildListUrl(page: Int, filter: ContentListFilter): String {
         // 分类优先
         val cateId = filter.tags.firstOrNull()?.key?.substringAfter("cate:")?.toIntOrNull()
         if (cateId != null) {
@@ -332,7 +332,7 @@ internal class Niuniuzy(
         return null
     }
 
-    override suspend fun getDetails(manga: Manga): Manga {
+    override suspend fun getDetails(manga: Content): Content {
         val apiDetail = fetchDetailFromApi(manga)
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
         val metaDesc = doc.selectFirst("meta[name=description]")?.attrOrNull("content")
@@ -347,7 +347,7 @@ internal class Niuniuzy(
         }
 
         val chapters = apiDetail?.chapters?.takeIf { it.isNotEmpty() } ?: listOf(
-            MangaChapter(
+            ContentChapter(
                 id = generateUid("${manga.url}|video"),
                 url = manga.url,
                 title = "观看",
@@ -372,10 +372,10 @@ internal class Niuniuzy(
         val title: String?,
         val description: String?,
         val cover: String?,
-        val chapters: List<MangaChapter>,
+        val chapters: List<ContentChapter>,
     )
 
-    private suspend fun fetchDetailFromApi(manga: Manga): ApiDetail? {
+    private suspend fun fetchDetailFromApi(manga: Content): ApiDetail? {
         val id = extractVodId(manga.url) ?: extractVodId(manga.publicUrl) ?: return null
         val url = "https://$domain/api.php/provide/vod/?ac=detail&ids=$id"
         val raw = webClient.httpGet(url, getRequestHeaders()).parseRaw()
@@ -397,10 +397,10 @@ internal class Niuniuzy(
         return ApiDetail(title, desc, cover, chapters)
     }
 
-    private fun parseChaptersFromPlayUrl(playUrl: String, vodId: String): List<MangaChapter> {
+    private fun parseChaptersFromPlayUrl(playUrl: String, vodId: String): List<ContentChapter> {
         if (playUrl.isBlank()) return emptyList()
         val segments = playUrl.split("#").mapNotNull { it.takeIf { seg -> seg.isNotBlank() } }
-        val chapters = ArrayList<MangaChapter>(segments.size)
+        val chapters = ArrayList<ContentChapter>(segments.size)
         var index = 1
         for (seg in segments) {
             val parts = seg.split("$", limit = 2)
@@ -413,7 +413,7 @@ internal class Niuniuzy(
             val number = Regex("""(\d+(?:\.\d+)?)""").find(title)?.groupValues?.get(1)?.toFloatOrNull()
                 ?: index.toFloat()
             chapters.add(
-                MangaChapter(
+                ContentChapter(
                     id = generateUid("$vodId|$index|$url"),
                     url = url,
                     title = title,
@@ -430,9 +430,9 @@ internal class Niuniuzy(
         return chapters
     }
 
-    private suspend fun enrichListWithApi(list: List<Manga>): List<Manga> {
+    private suspend fun enrichListWithApi(list: List<Content>): List<Content> {
         if (list.isEmpty()) return list
-        val idMap = HashMap<String, Manga>()
+        val idMap = HashMap<String, Content>()
         list.forEach { m ->
             val id = extractVodId(m.url) ?: extractVodId(m.publicUrl) ?: return@forEach
             idMap[id] = m
@@ -462,7 +462,7 @@ internal class Niuniuzy(
                     val cover = detail.optString("vod_pic", "").takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
                     val remarks = detail.optString("vod_remarks", "").takeIf { it.isNotBlank() }
                     val typeName = detail.optString("type_name", "")
-                    val tag = typeName.takeIf { it.isNotBlank() }?.let { MangaTag(it, it, source) }
+                    val tag = typeName.takeIf { it.isNotBlank() }?.let { ContentTag(it, it, source) }
                     val desc = detail.optString("vod_content", "").replace(Regex("<[^>]+>"), "").trim().ifBlank { null }
                     m.copy(
                         title = title ?: m.title,
@@ -485,12 +485,12 @@ internal class Niuniuzy(
         return null
     }
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         if ((chapter.url.startsWith("http://") || chapter.url.startsWith("https://")) &&
             (chapter.url.endsWith(".m3u8", true) || chapter.url.endsWith(".mp4", true))
         ) {
             return listOf(
-                MangaPage(
+                ContentPage(
                     id = generateUid("${chapter.id}|page1"),
                     url = chapter.url,
                     preview = null,
@@ -540,7 +540,7 @@ internal class Niuniuzy(
             ?: doc.selectFirst("img[src*=/upload/]")?.attrAsAbsoluteUrlOrNull("src")
             
         return distinctStreams.map { u ->
-            MangaPage(
+            ContentPage(
                 id = generateUid(u),
                 url = u,
                 preview = poster,

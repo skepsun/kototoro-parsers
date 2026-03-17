@@ -5,13 +5,13 @@ import okhttp3.Headers
 import org.json.JSONArray
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.FavoritesProvider
-import org.skepsun.kototoro.parsers.MangaLoaderContext
-import org.skepsun.kototoro.parsers.MangaParserAuthProvider
-import org.skepsun.kototoro.parsers.MangaParserCredentialsAuthProvider
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentParserAuthProvider
+import org.skepsun.kototoro.parsers.ContentParserCredentialsAuthProvider
 import org.skepsun.kototoro.parsers.FavoritesSyncProvider
-import org.skepsun.kototoro.parsers.MangaSourceParser
+import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
-import org.skepsun.kototoro.parsers.core.PagedMangaParser
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
@@ -29,11 +29,11 @@ import org.skepsun.kototoro.parsers.util.json.mapJSON
 import org.skepsun.kototoro.parsers.util.suspendlazy.suspendLazy
 import java.util.*
 
-@MangaSourceParser("BAOZIMH", "包子漫画", "zh")
-internal class Baozimh(context: MangaLoaderContext) :
-	PagedMangaParser(context, MangaParserSource.BAOZIMH, pageSize = 36),
-	MangaParserAuthProvider,
-	MangaParserCredentialsAuthProvider,
+@ContentSourceParser("BAOZIMH", "包子漫画", "zh")
+internal class Baozimh(context: ContentLoaderContext) :
+	PagedContentParser(context, ContentParserSource.BAOZIMH, pageSize = 36),
+	ContentParserAuthProvider,
+	ContentParserCredentialsAuthProvider,
 	FavoritesProvider,
 	FavoritesSyncProvider {
 
@@ -43,6 +43,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 		"webmota.com",
 		"kukuc.co",
 		"twmanga.com",
+		"dinnerku.com",
 		"baozimh.com",
 	)
 
@@ -68,14 +69,14 @@ internal class Baozimh(context: MangaLoaderContext) :
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.POPULARITY)
 
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
+	override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities(
 			isSearchSupported = true,
 		)
 
-	override suspend fun getFilterOptions() = MangaListFilterOptions(
+	override suspend fun getFilterOptions() = ContentListFilterOptions(
 		availableTags = tagsMap.get().values.toSet(),
-		availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
+		availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
 		availableContentTypes = EnumSet.of(
 			ContentType.MANGA,
 			ContentType.MANHWA,
@@ -86,7 +87,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 
 	private val tagsMap = suspendLazy(initializer = ::parseTags)
 
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
 		when {
 			!filter.query.isNullOrEmpty() -> {
 				if (page > 1) return emptyList()
@@ -100,7 +101,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 				if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
 					context.requestBrowserAction(this, url)
 				}
-				return parseMangaListSearch(response.parseHtml())
+				return parseContentListSearch(response.parseHtml())
 			}
 
 			else -> {
@@ -136,8 +137,8 @@ internal class Baozimh(context: MangaLoaderContext) :
 						filter.states.oneOrThrowIfMany()?.let {
 							append(
 								when (it) {
-									MangaState.ONGOING -> "serial"
-									MangaState.FINISHED -> "pub"
+									ContentState.ONGOING -> "serial"
+									ContentState.FINISHED -> "pub"
 									else -> "all"
 								},
 							)
@@ -152,16 +153,16 @@ internal class Baozimh(context: MangaLoaderContext) :
 				if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
 					context.requestBrowserAction(this, url)
 				}
-				return parseMangaList(response.parseJson().getJSONArray("items"))
+				return parseContentList(response.parseJson().getJSONArray("items"))
 			}
 		}
 	}
 
-	private fun parseMangaList(json: JSONArray): List<Manga> {
+	private fun parseContentList(json: JSONArray): List<Content> {
 		return json.mapJSON { j ->
 			val href = "https://$baseUrl/comic/" + j.getString("comic_id")
 			val author = j.getString("author")
-			Manga(
+			Content(
 				id = generateUid(href),
 				url = href,
 				publicUrl = href,
@@ -178,10 +179,10 @@ internal class Baozimh(context: MangaLoaderContext) :
 		}
 	}
 
-	private fun parseMangaListSearch(doc: Document): List<Manga> {
+	private fun parseContentListSearch(doc: Document): List<Content> {
 		return doc.select("div.comics-card").map { div ->
 			val href = "https://$baseUrl" + div.selectFirstOrThrow("a").attrAsRelativeUrl("href")
-			Manga(
+			Content(
 				id = generateUid(href),
 				url = href,
 				publicUrl = href,
@@ -198,14 +199,39 @@ internal class Baozimh(context: MangaLoaderContext) :
 		}
 	}
 
-	private suspend fun parseTags(): Map<String, MangaTag> {
-		val tagElements = webClient.httpGet("https://$baseUrl/classify").parseHtml()
-			.select("div.nav")[3].select("a.item:not(.active)")
-		val tagMap = ArrayMap<String, MangaTag>(tagElements.size)
+	private suspend fun parseTags(): Map<String, ContentTag> {
+		val doc = try {
+			webClient.httpGet("https://$baseUrl/classify").parseHtml()
+		} catch (e: Exception) {
+			null
+		}
+		
+		val navs = doc?.select("div.nav")
+		val tagElements = if (navs != null && navs.size > 3) {
+			navs[3].select("a.item:not(.active)")
+		} else null
+
+		if (tagElements.isNullOrEmpty()) {
+			// fallback tags from baozi.js
+			val fallbackTags = listOf(
+				"恋爱" to "lianai", "纯爱" to "chunai", "古风" to "gufeng", "异能" to "yineng",
+				"悬疑" to "xuanyi", "剧情" to "juqing", "科幻" to "kehuan", "奇幻" to "qihuan",
+				"玄幻" to "xuanhuan", "穿越" to "chuanyue", "冒险" to "mouxian", "推理" to "tuili",
+				"武侠" to "wuxia", "格斗" to "gedou", "战争" to "zhanzheng", "热血" to "rexie",
+				"搞笑" to "gaoxiao", "大女主" to "danuzhu", "都市" to "dushi", "总裁" to "zongcai",
+				"后宫" to "hougong", "日常" to "richang", "韩漫" to "hanman", "少年" to "shaonian",
+				"其它" to "qita"
+			)
+			return fallbackTags.associate { (title, key) ->
+				title to ContentTag(key = key, title = title, source = source)
+			}
+		}
+
+		val tagMap = ArrayMap<String, ContentTag>(tagElements.size)
 		for (el in tagElements) {
-			val name = el.text()
+			val name = el.text().trim()
 			if (name.isEmpty()) continue
-			tagMap[name] = MangaTag(
+			tagMap[name] = ContentTag(
 				key = el.attr("href").substringAfter("type=").substringBefore("&"),
 				title = name,
 				source = source,
@@ -214,7 +240,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 		return tagMap
 	}
 
-	override suspend fun getDetails(manga: Manga): Manga {
+	override suspend fun getDetails(manga: Content): Content {
 		val url = manga.url.toAbsoluteUrl(baseUrl)
 		val response = webClient.httpGet(url)
 		if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
@@ -225,27 +251,32 @@ internal class Baozimh(context: MangaLoaderContext) :
 		val tagMap = tagsMap.get()
 		val selectTag = doc.select(".tag-list span.tag").drop(1)
 		val tags = selectTag.mapNotNullToSet { tagMap[it.text()] }
-		var chaptersReversed = false
-		val chapters = try {
-			doc.requireElementById("chapter-items")
-				.select("div.comics-chapters a") + doc.requireElementById("chapters_other_list")
-				.select("div.comics-chapters a")
-		} catch (e: ParseException) {
-			chaptersReversed = true
-			// If the above fails it means the manga is new, so we select the chapters using the "comics-chapters__item" query
-			doc.select(".comics-chapters__item")
+		val chapterElements = doc.select("#chapter-items .comics-chapters a, #chapters_other_list .comics-chapters a")
+		println("BAOZI DEBUG: url=$url, code=${response.code}, chapterElements size=${chapterElements.size}")
+		
+		val (chapters, chaptersReversed) = if (chapterElements.isNotEmpty()) {
+			chapterElements to false
+		} else {
+			val fallback = doc.select(".comics-chapters a, .comics-chapters__item")
+			println("BAOZI DEBUG: fallback size=${fallback.size}")
+			if (fallback.isEmpty()) {
+				println("BAOZI DEBUG: title=${doc.title()}, html snippet=${doc.body().html().take(500)}")
+			}
+			// fallback for newer site structure or "latest chapters" only view
+			fallback to true
 		}
+		println("BAOZI DEBUG: final chapters size=${chapters.size}, reversed=$chaptersReversed")
 		return manga.copy(
 			description = doc.selectFirst(".comics-detail__desc")?.text().orEmpty(),
 			state = when (state) {
-				"連載中" -> MangaState.ONGOING
-				"已完結" -> MangaState.FINISHED
+				"連載中" -> ContentState.ONGOING
+				"已完結" -> ContentState.FINISHED
 				else -> null
 			},
 			tags = tags,
 			chapters = chapters.mapChapters(chaptersReversed) { i, a ->
 				val url = a.attrAsRelativeUrl("href").toAbsoluteUrl(baseUrl)
-				MangaChapter(
+				ContentChapter(
 					id = generateUid(url),
 					title = a.selectFirst("span")?.textOrNull(),
 					number = i + 1f,
@@ -260,7 +291,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 		)
 	}
 
-	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		// 使用 App 版链接获取内容，更高效且包含原图
 		// 格式类似：https://appcn.baozimh.com/baozimhapp/comic/chapter/{comicId}/{section}_{chapter}.html
 		val comicId = when {
@@ -310,7 +341,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 				processedUrl = "https://$baseUrl$processedUrl"
 			}
 			
-			MangaPage(
+			ContentPage(
 				id = generateUid(processedUrl),
 				url = processedUrl,
 				preview = null,
@@ -359,7 +390,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 		return false
 	}
 
-	override suspend fun fetchFavorites(): List<Manga> {
+	override suspend fun fetchFavorites(): List<Content> {
 		if (!isAuthorized()) throw AuthRequiredException(source)
 		val headers = Headers.Builder()
 			.add("User-Agent", config[userAgentKey])
@@ -385,7 +416,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 					img.attr("data-src").ifEmpty { img.attr("src") }
 				}
 			val absCover = cover?.let { if (it.startsWith("http")) it else "https:$it" }
-			Manga(
+			Content(
 				id = generateUid(id),
 				url = "/comic/$id",
 				publicUrl = "https://$baseUrl/comic/$id",
@@ -403,7 +434,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 		}
 	}
 
-	override suspend fun addFavorite(manga: Manga): Boolean {
+	override suspend fun addFavorite(manga: Content): Boolean {
 		if (!isAuthorized()) throw AuthRequiredException(source)
 		val headers = Headers.Builder()
 			.add("User-Agent", config[userAgentKey])
@@ -415,7 +446,7 @@ internal class Baozimh(context: MangaLoaderContext) :
 		return resp.isSuccessful
 	}
 
-	override suspend fun removeFavorite(manga: Manga): Boolean {
+	override suspend fun removeFavorite(manga: Content): Boolean {
 		if (!isAuthorized()) throw AuthRequiredException(source)
 		val headers = Headers.Builder()
 			.add("User-Agent", config[userAgentKey])
