@@ -5,6 +5,7 @@ package org.skepsun.kototoro.parsers.site.zh
 import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
+import org.skepsun.kototoro.parsers.Broken
 import org.skepsun.kototoro.parsers.InternalParsersApi
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
@@ -29,6 +30,7 @@ import java.util.EnumSet
  * Lanraragi (self-hosted)
  * 基于公开 API，需用户提供 API 地址与 APIKEY。
  */
+@Broken("没人用，而且污染推荐")
 @ContentSourceParser("LANRARAGI", "Lanraragi", "en")
 internal class LanraragiParser(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.LANRARAGI, pageSize = 50) {
