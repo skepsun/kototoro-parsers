@@ -185,7 +185,7 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 
 		else -> {
 			if (offset == 0) {
-				cachedSearchIds = hitomiSearch(filter.query, order).toList()
+				cachedSearchIds = hitomiSearch(filter.query, order, filter.locale.getSiteLang()).toList()
 			}
 			cachedSearchIds.subList(offset, min(offset + 25, cachedSearchIds.size))
 		}
