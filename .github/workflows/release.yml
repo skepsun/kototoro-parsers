@@ -36,7 +36,7 @@ jobs:
           
           # Setup deploy directory
           mkdir -p ../../deploy
-          cp plugin.jar ../../deploy/
+          cp plugin.jar ../../deploy/plugin.txt
           
           # Create index.min.json for the repository
           # Format follows Mihon extension repo structure loosely
@@ -47,7 +47,7 @@ jobs:
               "pkg": "org.skepsun.kototoro.parsers",
               "version": "1.0.0",
               "code": 1,
-              "apk": "plugin.jar",
+              "apk": "plugin.txt",
               "lang": "all",
               "nsfw": 0
             }
