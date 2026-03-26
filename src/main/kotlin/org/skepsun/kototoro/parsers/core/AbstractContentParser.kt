@@ -22,7 +22,7 @@ import java.util.*
 @InternalParsersApi
 public abstract class AbstractContentParser @InternalParsersApi constructor(
 	@property:InternalParsersApi public val context: ContentLoaderContext,
-	public final override val source: ContentParserSource,
+	public final override val source: ContentSource,
 ) : ContentParser {
 
 	public final override val searchQueryCapabilities: ContentSearchQueryCapabilities

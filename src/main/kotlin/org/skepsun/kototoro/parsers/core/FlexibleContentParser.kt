@@ -19,7 +19,7 @@ import java.util.*
 @Deprecated("Too complex. Use AbstractContentParser instead")
 internal abstract class FlexibleContentParser @InternalParsersApi constructor(
 	@property:InternalParsersApi val context: ContentLoaderContext,
-	final override val source: ContentParserSource,
+	final override val source: ContentSource,
 ) : ContentParser {
 
 	override val config: ContentSourceConfig by lazy { context.getConfig(source) }

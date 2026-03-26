@@ -1,0 +1,62 @@
+name: Build and Release Plugin
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          
+      - name: Build standard JAR
+        run: ./gradlew jar --no-daemon
+        
+      - name: D8 Dexing and Packaging
+        run: |
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | tail -1)
+          D8_PATH="$BUILD_TOOLS_DIR/d8"
+          ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+          
+          cd build/libs
+          JAR_FILE=$(ls *.jar | head -n 1)
+          $D8_PATH --release --lib $ANDROID_JAR --output . $JAR_FILE
+          
+          jar cvf plugin.jar classes.dex
+          
+          # Setup deploy directory
+          mkdir -p ../../deploy
+          cp plugin.jar ../../deploy/
+          
+          # Create index.min.json for the repository
+          # Format follows Mihon extension repo structure loosely
+          cat << 'EOF' > ../../deploy/index.min.json
+          [
+            {
+              "name": "Kototoro Parsers",
+              "pkg": "org.skepsun.kototoro.parsers",
+              "version": "1.0.0",
+              "code": 1,
+              "apk": "plugin.jar",
+              "hasReadme": 0,
+              "hasChangelog": 0,
+              "isNsfw": 0
+            }
+          ]
+          EOF
+
+      - name: Deploy to Repo Branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy
+          publish_branch: repo
+          force_orphan: true

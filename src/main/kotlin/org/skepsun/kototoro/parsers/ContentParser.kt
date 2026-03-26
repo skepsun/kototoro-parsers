@@ -16,7 +16,7 @@ import java.util.*
 
 public interface ContentParser : Interceptor {
 
-	public val source: ContentParserSource
+	public val source: ContentSource
 
 	/**
 	 * Supported [SortOrder] variants. Must not be empty.

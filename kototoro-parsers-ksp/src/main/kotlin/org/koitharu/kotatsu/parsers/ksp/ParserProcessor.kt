@@ -82,8 +82,8 @@ class ParserProcessor(
 
 			public enum class ContentParserSource(
 				public val title: String,
-				public val locale: String,
-				public val contentType: ContentType,
+				override val locale: String,
+				override val contentType: ContentType,
 				public val isBroken: Boolean,
 			): ContentSource {
 

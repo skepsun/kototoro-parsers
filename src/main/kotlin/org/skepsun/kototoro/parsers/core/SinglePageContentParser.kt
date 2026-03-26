@@ -4,13 +4,13 @@ import org.skepsun.kototoro.parsers.InternalParsersApi
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentListFilter
-import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentSource
 import org.skepsun.kototoro.parsers.model.SortOrder
 
 @InternalParsersApi
 public abstract class SinglePageContentParser(
 	context: ContentLoaderContext,
-	source: ContentParserSource,
+	source: ContentSource,
 ) : AbstractContentParser(context, source) {
 
 	final override suspend fun getList(offset: Int, order: SortOrder, filter: ContentListFilter): List<Content> {

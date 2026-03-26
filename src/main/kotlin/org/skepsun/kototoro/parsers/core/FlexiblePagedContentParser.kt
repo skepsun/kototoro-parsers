@@ -3,7 +3,7 @@ package org.skepsun.kototoro.parsers.core
 import androidx.annotation.VisibleForTesting
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.model.Content
-import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentSource
 import org.skepsun.kototoro.parsers.model.search.ContentSearchQuery
 import org.skepsun.kototoro.parsers.model.search.SearchableField
 import org.skepsun.kototoro.parsers.util.Paginator
@@ -11,7 +11,7 @@ import org.skepsun.kototoro.parsers.util.Paginator
 @Deprecated("Too complex. Use PagedContentParser instead")
 internal abstract class FlexiblePagedContentParser(
 	context: ContentLoaderContext,
-	source: ContentParserSource,
+	source: ContentSource,
 	@VisibleForTesting(otherwise = VisibleForTesting.PROTECTED) @JvmField public val pageSize: Int,
 	searchPageSize: Int = pageSize,
 ) : FlexibleContentParser(context, source) {

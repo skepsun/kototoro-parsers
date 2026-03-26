@@ -7,7 +7,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Response
 import org.skepsun.kototoro.parsers.bitmap.Bitmap
 import org.skepsun.kototoro.parsers.config.ContentSourceConfig
-import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentSource
 import org.skepsun.kototoro.parsers.util.LinkResolver
 import java.util.*
@@ -18,9 +17,9 @@ public abstract class ContentLoaderContext {
 
 	public abstract val cookieJar: CookieJar
 
-	public fun newParserInstance(source: ContentParserSource): ContentParser = source.newParser(this)
+	public abstract fun newParserInstance(source: ContentSource): ContentParser
 
-	public fun newLinkResolver(link: HttpUrl): LinkResolver = LinkResolver(this, link)
+	public abstract fun newLinkResolver(link: HttpUrl): LinkResolver
 
 	public fun newLinkResolver(link: String): LinkResolver = newLinkResolver(link.toHttpUrl())
 
