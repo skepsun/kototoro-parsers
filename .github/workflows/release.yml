@@ -48,9 +48,8 @@ jobs:
               "version": "1.0.0",
               "code": 1,
               "apk": "plugin.jar",
-              "hasReadme": 0,
-              "hasChangelog": 0,
-              "isNsfw": 0
+              "lang": "all",
+              "nsfw": 0
             }
           ]
           EOF
