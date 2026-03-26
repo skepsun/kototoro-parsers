@@ -35,8 +35,8 @@ jobs:
           jar cvf plugin.jar classes.dex
           
           # Setup deploy directory
-          mkdir -p ../../deploy
-          cp plugin.jar ../../deploy/plugin.txt
+          mkdir -p ../../deploy/apk
+          cp plugin.jar ../../deploy/apk/plugin.txt
           
           # Create index.min.json for the repository
           # Format follows Mihon extension repo structure loosely
