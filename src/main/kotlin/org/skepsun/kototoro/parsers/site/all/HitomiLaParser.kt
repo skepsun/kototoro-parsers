@@ -222,6 +222,10 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 				}
 			}
 
+			if (language != "all" && sortByPopularity in listOf(SortOrder.UPDATED, SortOrder.NEWEST) && !terms.any { it.contains(":") }) {
+				positiveTerms.push("language:$language")
+			}
+
 			val positiveResults = positiveTerms.map {
 				async {
 					runCatchingCancellable {
@@ -239,12 +243,13 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 			}
 
 			val results = when {
-				sortByPopularity == SortOrder.UPDATED -> getGalleryIDsFromNozomi(null, "index", language)
-				sortByPopularity == SortOrder.POPULARITY_TODAY -> getGalleryIDsFromNozomi("popular", "today", language)
-				sortByPopularity == SortOrder.POPULARITY_WEEK -> getGalleryIDsFromNozomi("popular", "week", language)
-				sortByPopularity == SortOrder.POPULARITY_MONTH -> getGalleryIDsFromNozomi("popular", "month", language)
-				sortByPopularity == SortOrder.POPULARITY_YEAR -> getGalleryIDsFromNozomi("popular", "year", language)
-				positiveTerms.isEmpty() -> getGalleryIDsFromNozomi(null, "index", language)
+				positiveTerms.isEmpty() || (sortByPopularity != SortOrder.UPDATED && sortByPopularity != SortOrder.NEWEST) -> when (sortByPopularity) {
+					SortOrder.POPULARITY_TODAY -> getGalleryIDsFromNozomi("popular", "today", language)
+					SortOrder.POPULARITY_WEEK -> getGalleryIDsFromNozomi("popular", "week", language)
+					SortOrder.POPULARITY_MONTH -> getGalleryIDsFromNozomi("popular", "month", language)
+					SortOrder.POPULARITY_YEAR -> getGalleryIDsFromNozomi("popular", "year", language)
+					else -> getGalleryIDsFromNozomi(null, "index", language)
+				}
 				else -> emptySet()
 			}.toMutableSet()
 
