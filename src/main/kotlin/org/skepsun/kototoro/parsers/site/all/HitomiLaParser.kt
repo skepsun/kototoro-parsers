@@ -81,6 +81,7 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 		get() = ContentListFilterCapabilities(
 			isMultipleTagsSupported = true,
 			isSearchSupported = true,
+			isSearchWithFiltersSupported = true,
 		)
 
 	override suspend fun getFilterOptions() = ContentListFilterOptions(
