@@ -35,9 +35,42 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 
 	private val cdnDomain = "gold-usergeneratedcontent.net"
 
+	private val preferredLanguageKey = ConfigKey.PreferredLanguage(
+		title = "Preferred Language",
+		presetValues = linkedMapOf(
+			"all" to "All",
+			"japanese" to "日本語",
+			"chinese" to "中文",
+			"korean" to "한국어",
+			"english" to "English",
+			"german" to "Deutsch",
+			"french" to "Français",
+			"spanish" to "Español",
+			"italian" to "Italiano",
+			"portuguese" to "Português",
+			"russian" to "Русский",
+			"arabic" to "العربية",
+			"indonesian" to "Indonesian",
+			"vietnamese" to "Tiếng Việt",
+			"turkish" to "Türkçe",
+			"polish" to "Polski",
+			"hungarian" to "Magyar",
+			"czech" to "Čeština",
+			"danish" to "Dansk",
+			"estonian" to "Eesti",
+			"hindi" to "हिन्दी",
+			"ukrainian" to "Українська",
+			"catalan" to "Català",
+			"cebuano" to "Cebuano",
+			"esperanto" to "Esperanto",
+			"javanese" to "Javanese",
+		),
+	)
+
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
 		keys.add(userAgentKey)
+		keys.add(preferredLanguageKey)
 	}
 
 	private val ltnBaseUrl get() = "https://ltn.$cdnDomain"
@@ -81,6 +114,7 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 		get() = ContentListFilterCapabilities(
 			isMultipleTagsSupported = true,
 			isSearchSupported = true,
+			isSearchWithFiltersSupported = true,
 		)
 
 	override suspend fun getFilterOptions() = ContentListFilterOptions(
@@ -91,6 +125,13 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 	private fun Locale?.getSiteLang(): String = when (this) {
 		null -> "all"
 		else -> localeMap[this] ?: "all"
+	}
+
+	private fun getEffectiveLanguage(filterLocale: Locale?): String {
+		val filterLang = filterLocale.getSiteLang()
+		if (filterLang != "all") return filterLang
+		val preferred = config[preferredLanguageKey]
+		return if (preferred.isNotBlank() && preferred != "all") preferred else "all"
 	}
 
 	private suspend fun fetchAvailableTags(): Set<ContentTag> = coroutineScope {
@@ -125,71 +166,74 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 
 	private var cachedSearchIds: List<Int> = emptyList()
 
-	override suspend fun getList(offset: Int, order: SortOrder, filter: ContentListFilter): List<Content> = when {
-		filter.query.isNullOrEmpty() -> {
+	override suspend fun getList(offset: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+		val language = getEffectiveLanguage(filter.locale)
+		return when {
+			filter.query.isNullOrEmpty() -> {
 
-			if (filter.tags.isEmpty()) {
-				when (order) {
-					SortOrder.POPULARITY_TODAY -> {
-						getGalleryIDsFromNozomi(
-							"popular",
-							"today",
-							filter.locale.getSiteLang(),
-							offset.nextOffsetRange(),
-						)
-					}
+				if (filter.tags.isEmpty()) {
+					when (order) {
+						SortOrder.POPULARITY_TODAY -> {
+							getGalleryIDsFromNozomi(
+								"popular",
+								"today",
+								language,
+								offset.nextOffsetRange(),
+							)
+						}
 
-					SortOrder.POPULARITY_WEEK -> {
-						getGalleryIDsFromNozomi(
-							"popular",
-							"week",
-							filter.locale.getSiteLang(),
-							offset.nextOffsetRange(),
-						)
-					}
+						SortOrder.POPULARITY_WEEK -> {
+							getGalleryIDsFromNozomi(
+								"popular",
+								"week",
+								language,
+								offset.nextOffsetRange(),
+							)
+						}
 
-					SortOrder.POPULARITY_MONTH -> {
-						getGalleryIDsFromNozomi(
-							"popular",
-							"month",
-							filter.locale.getSiteLang(),
-							offset.nextOffsetRange(),
-						)
-					}
+						SortOrder.POPULARITY_MONTH -> {
+							getGalleryIDsFromNozomi(
+								"popular",
+								"month",
+								language,
+								offset.nextOffsetRange(),
+							)
+						}
 
-					SortOrder.POPULARITY_YEAR -> {
-						getGalleryIDsFromNozomi(
-							"popular",
-							"year",
-							filter.locale.getSiteLang(),
-							offset.nextOffsetRange(),
-						)
-					}
+						SortOrder.POPULARITY_YEAR -> {
+							getGalleryIDsFromNozomi(
+								"popular",
+								"year",
+								language,
+								offset.nextOffsetRange(),
+							)
+						}
 
-					else -> {
-						getGalleryIDsFromNozomi(null, "index", filter.locale.getSiteLang(), offset.nextOffsetRange())
+						else -> {
+							getGalleryIDsFromNozomi(null, "index", language, offset.nextOffsetRange())
+						}
 					}
+				} else {
+					if (offset == 0) {
+						cachedSearchIds =
+							hitomiSearch(
+								filter.tags.joinToString(" ") { it.key },
+								order,
+								language,
+							).toList()
+					}
+					cachedSearchIds.subList(offset, min(offset + 25, cachedSearchIds.size))
 				}
-			} else {
+			}
+
+			else -> {
 				if (offset == 0) {
-					cachedSearchIds =
-						hitomiSearch(
-							filter.tags.joinToString(" ") { it.key },
-							order,
-							filter.locale.getSiteLang(),
-						).toList()
+					cachedSearchIds = hitomiSearch(filter.query, order, language).toList()
 				}
 				cachedSearchIds.subList(offset, min(offset + 25, cachedSearchIds.size))
 			}
-		}
-
-		else -> {
-			if (offset == 0) {
-				cachedSearchIds = hitomiSearch(filter.query, order, filter.locale.getSiteLang()).toList()
-			}
-			cachedSearchIds.subList(offset, min(offset + 25, cachedSearchIds.size))
-		}
-	}.toContentList()
+		}.toContentList()
+	}
 
 	private fun Int.nextOffsetRange(): LongRange {
 		val bytes = this * 4L
@@ -222,6 +266,10 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 				}
 			}
 
+			if (language != "all" && sortByPopularity in listOf(SortOrder.UPDATED, SortOrder.NEWEST) && !terms.any { it.contains(":") }) {
+				positiveTerms.push("language:$language")
+			}
+
 			val positiveResults = positiveTerms.map {
 				async {
 					runCatchingCancellable {
@@ -239,12 +287,13 @@ internal class HitomiLaParser(context: ContentLoaderContext) : AbstractContentPa
 			}
 
 			val results = when {
-				sortByPopularity == SortOrder.UPDATED -> getGalleryIDsFromNozomi(null, "index", language)
-				sortByPopularity == SortOrder.POPULARITY_TODAY -> getGalleryIDsFromNozomi("popular", "today", language)
-				sortByPopularity == SortOrder.POPULARITY_WEEK -> getGalleryIDsFromNozomi("popular", "week", language)
-				sortByPopularity == SortOrder.POPULARITY_MONTH -> getGalleryIDsFromNozomi("popular", "month", language)
-				sortByPopularity == SortOrder.POPULARITY_YEAR -> getGalleryIDsFromNozomi("popular", "year", language)
-				positiveTerms.isEmpty() -> getGalleryIDsFromNozomi(null, "index", language)
+				positiveTerms.isEmpty() || (sortByPopularity != SortOrder.UPDATED && sortByPopularity != SortOrder.NEWEST) -> when (sortByPopularity) {
+					SortOrder.POPULARITY_TODAY -> getGalleryIDsFromNozomi("popular", "today", language)
+					SortOrder.POPULARITY_WEEK -> getGalleryIDsFromNozomi("popular", "week", language)
+					SortOrder.POPULARITY_MONTH -> getGalleryIDsFromNozomi("popular", "month", language)
+					SortOrder.POPULARITY_YEAR -> getGalleryIDsFromNozomi("popular", "year", language)
+					else -> getGalleryIDsFromNozomi(null, "index", language)
+				}
 				else -> emptySet()
 			}.toMutableSet()
 

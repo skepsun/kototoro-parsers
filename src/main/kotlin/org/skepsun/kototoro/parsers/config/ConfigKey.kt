@@ -46,4 +46,10 @@ public sealed class ConfigKey<T>(
 		@JvmField public val title: String,
 		override val defaultValue: Boolean = false,
 	) : ConfigKey<Boolean>(key)
+
+	public class PreferredLanguage(
+		@JvmField public val title: String,
+		@JvmField public val presetValues: Map<String, String>,
+		override val defaultValue: String = "all",
+	) : ConfigKey<String>("preferred_language")
 }

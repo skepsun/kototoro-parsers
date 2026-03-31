@@ -244,6 +244,12 @@ internal class WnacgParser(context: ContentLoaderContext) :
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // 优先使用 cateId 过滤构建分类页 URL
         val cateId = filter.tags.firstOrNull { it.key.startsWith("cate-") }?.key?.substringAfter("cate-")?.toIntOrNull()
+        
+        // 当按“标签”模式搜索时，Kototoro 会将搜索词放入 filter.tags 中而 query 为空
+        // 提取出非分类系统的纯文本标签作为搜索后备词汇
+        val customTagQuery = filter.tags.firstOrNull { !it.key.startsWith("cate-") }?.title
+        val actualQuery = filter.query?.takeIf { it.isNotBlank() } ?: customTagQuery
+
         val url = when {
             cateId != null -> {
                 if (page <= 1) {
@@ -252,12 +258,12 @@ internal class WnacgParser(context: ContentLoaderContext) :
                     "https://$domain/albums-index-page-$page-cate-$cateId.html"
                 }
             }
-            !filter.query.isNullOrEmpty() -> {
+            !actualQuery.isNullOrBlank() -> {
                 buildString {
                     append("https://")
                     append(domain)
                     append("/search/?q=")
-                    append(filter.query!!.urlEncoded())
+                    append(actualQuery.urlEncoded())
                     append("&syn=yes&s=create_time_DESC&p=")
                     append(page)
                 }

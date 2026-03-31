@@ -40,13 +40,13 @@ jobs:
 
           # Create index.min.json for the repository
           # Format follows Mihon extension repo structure loosely
-          cat << 'EOF' > ../../deploy/index.min.json
+          cat << EOF > ../../deploy/index.min.json
           [
             {
               "name": "Kototoro Parsers",
               "pkg": "org.skepsun.kototoro.parsers",
-              "version": "1.0.0",
-              "code": 1,
+              "version": "1.0.${{ github.run_number }}",
+              "code": ${{ github.run_number }},
               "apk": "plugin.jar",
               "lang": "all",
               "nsfw": 0
