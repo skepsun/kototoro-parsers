@@ -6,8 +6,8 @@ import org.skepsun.kototoro.parsers.model.ContentType
  * Annotate each [ContentParser] implementation with this annotation, used by codegen
  */
 @Target(AnnotationTarget.CLASS)
-@Retention(AnnotationRetention.SOURCE)
-internal annotation class ContentSourceParser(
+@Retention(AnnotationRetention.RUNTIME)
+public annotation class ContentSourceParser(
 	/**
 	 * Name of content source. Used as an Enum value, must be UPPER_CASE and unique.
 	 */
