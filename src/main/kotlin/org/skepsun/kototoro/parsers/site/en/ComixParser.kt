@@ -216,7 +216,7 @@ class ComixParser(context: ContentLoaderContext) :
             )
         }
 
-        return@coroutineScope Content.copy(
+        return@coroutineScope content.copy(
             chapters = chaptersDeferred.await(),
         )
     }
@@ -303,7 +303,7 @@ class ComixParser(context: ContentLoaderContext) :
         }
     }
 
-    private suspend fun getChapters(Content: Content): List<ContentChapter> {
+    private suspend fun getChapters(content: Content): List<ContentChapter> {
         val hashId = content.url.substringAfter("/title/")
         val allChapters = mutableListOf<JSONObject>()
         var page = 1
