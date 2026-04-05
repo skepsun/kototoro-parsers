@@ -14,10 +14,10 @@ import org.skepsun.kototoro.parsers.util.*
 import java.util.*
 
 @ContentSourceParser("COMIX", "Comix", "en")
-class ComixParser(context: ContentLoaderContext) :
+internal class ComixParser(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.COMIX, pageSize = 28) {
 
-    override val configKeyDomain = ConfigKey.Domain("comix.to")
+    override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("comix.to")
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
@@ -37,7 +37,7 @@ class ComixParser(context: ContentLoaderContext) :
         )
     )
 
-    override suspend fun getFilterOptions() = ContentListFilterOptions(
+    override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
         availableTags = fetchAvailableTags(),
     )
 
@@ -113,7 +113,7 @@ class ComixParser(context: ContentLoaderContext) :
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildString {
-            append("https://comix.to/api/v2/Content?")
+            append("https://comix.to/api/v2/manga?")
             var firstParam = true
             fun addParam(param: String) {
                 if (firstParam) {
@@ -199,12 +199,12 @@ class ComixParser(context: ContentLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(content: Content): Content = coroutineScope {
-        val hashId = content.url.substringAfter("/title/")
-        val chaptersDeferred = async { getChapters(content) }
+    override suspend fun getDetails(manga: Content): Content = coroutineScope {
+        val hashId = manga.url.substringAfter("/title/")
+        val chaptersDeferred = async { getChapters(manga) }
 
         // Get detailed Content info
-        val detailUrl = "https://comix.to/api/v2/Content/$hashId"
+        val detailUrl = "https://comix.to/api/v2/manga/$hashId"
         val response = webClient.httpGet(detailUrl).parseJson()
 
         if (response.has("result")) {
@@ -216,7 +216,7 @@ class ComixParser(context: ContentLoaderContext) :
             )
         }
 
-        return@coroutineScope content.copy(
+        return@coroutineScope manga.copy(
             chapters = chaptersDeferred.await(),
         )
     }
@@ -303,14 +303,14 @@ class ComixParser(context: ContentLoaderContext) :
         }
     }
 
-    private suspend fun getChapters(content: Content): List<ContentChapter> {
-        val hashId = content.url.substringAfter("/title/")
+    private suspend fun getChapters(manga: Content): List<ContentChapter> {
+        val hashId = manga.url.substringAfter("/title/")
         val allChapters = mutableListOf<JSONObject>()
         var page = 1
 
         while (true) {
             val time = 1L
-            val path = "/Content/$hashId/chapters"
+            val path = "/manga/$hashId/chapters"
             val hashToken = ComixHash.generateHash(path, 0, time)
             val chaptersUrl = "https://comix.to/api/v2$path?order[number]=desc&limit=100&page=$page&time=$time&_=$hashToken"
             
@@ -390,5 +390,8 @@ class ComixParser(context: ContentLoaderContext) :
         return chaptersBuilder.reversed()
     }
 }
+
+
+
 
 
