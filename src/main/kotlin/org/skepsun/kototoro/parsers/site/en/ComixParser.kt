@@ -4,23 +4,23 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import org.json.JSONArray
 import org.json.JSONObject
-import org.koitharu.kotatsu.parsers.MangaLoaderContext
-import org.koitharu.kotatsu.parsers.MangaSourceParser
-import org.koitharu.kotatsu.parsers.config.ConfigKey
-import org.koitharu.kotatsu.parsers.core.PagedMangaParser
-import org.koitharu.kotatsu.parsers.exception.ParseException
-import org.koitharu.kotatsu.parsers.model.*
-import org.koitharu.kotatsu.parsers.util.*
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.config.ConfigKey
+import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ParseException
+import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.util.*
 import java.util.*
 
-@MangaSourceParser("COMIX", "Comix", "en", ContentType.MANGA)
-class ComixParser(context: MangaLoaderContext) :
-    PagedMangaParser(context, MangaParserSource.COMIX, 28) {
+@ContentSourceParser("COMIX", "Comix", "en")
+class ComixParser(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.COMIX, pageSize = 28) {
 
     override val configKeyDomain = ConfigKey.Domain("comix.to")
 
-    override val filterCapabilities: MangaListFilterCapabilities
-        get() = MangaListFilterCapabilities(
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
             isSearchSupported = true,
             isSearchWithFiltersSupported = true,
             isMultipleTagsSupported = true,
@@ -37,83 +37,83 @@ class ComixParser(context: MangaLoaderContext) :
         )
     )
 
-    override suspend fun getFilterOptions() = MangaListFilterOptions(
+    override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableTags = fetchAvailableTags(),
     )
 
-    private suspend fun fetchAvailableTags(): Set<MangaTag> {
+    private suspend fun fetchAvailableTags(): Set<ContentTag> {
         return setOf(
             // Genres
-            MangaTag(key = "6", title = "Action", source = source),
-            MangaTag(key = "7", title = "Adventure", source = source),
-            MangaTag(key = "8", title = "Boys Love", source = source),
-            MangaTag(key = "9", title = "Comedy", source = source),
-            MangaTag(key = "10", title = "Crime", source = source),
-            MangaTag(key = "11", title = "Drama", source = source),
-            MangaTag(key = "12", title = "Fantasy", source = source),
-            MangaTag(key = "13", title = "Girls Love", source = source),
-            MangaTag(key = "14", title = "Historical", source = source),
-            MangaTag(key = "15", title = "Horror", source = source),
-            MangaTag(key = "16", title = "Isekai", source = source),
-            MangaTag(key = "17", title = "Magical Girls", source = source),
-            MangaTag(key = "87267", title = "Mature", source = source),
-            MangaTag(key = "18", title = "Mecha", source = source),
-            MangaTag(key = "19", title = "Medical", source = source),
-            MangaTag(key = "20", title = "Mystery", source = source),
-            MangaTag(key = "21", title = "Philosophical", source = source),
-            MangaTag(key = "22", title = "Psychological", source = source),
-            MangaTag(key = "23", title = "Romance", source = source),
-            MangaTag(key = "24", title = "Sci-Fi", source = source),
-            MangaTag(key = "25", title = "Slice of Life", source = source),
-            MangaTag(key = "26", title = "Sports", source = source),
-            MangaTag(key = "27", title = "Superhero", source = source),
-            MangaTag(key = "28", title = "Thriller", source = source),
-            MangaTag(key = "29", title = "Tragedy", source = source),
-            MangaTag(key = "30", title = "Wuxia", source = source),
+            ContentTag(key = "6", title = "Action", source = source),
+            ContentTag(key = "7", title = "Adventure", source = source),
+            ContentTag(key = "8", title = "Boys Love", source = source),
+            ContentTag(key = "9", title = "Comedy", source = source),
+            ContentTag(key = "10", title = "Crime", source = source),
+            ContentTag(key = "11", title = "Drama", source = source),
+            ContentTag(key = "12", title = "Fantasy", source = source),
+            ContentTag(key = "13", title = "Girls Love", source = source),
+            ContentTag(key = "14", title = "Historical", source = source),
+            ContentTag(key = "15", title = "Horror", source = source),
+            ContentTag(key = "16", title = "Isekai", source = source),
+            ContentTag(key = "17", title = "Magical Girls", source = source),
+            ContentTag(key = "87267", title = "Mature", source = source),
+            ContentTag(key = "18", title = "Mecha", source = source),
+            ContentTag(key = "19", title = "Medical", source = source),
+            ContentTag(key = "20", title = "Mystery", source = source),
+            ContentTag(key = "21", title = "Philosophical", source = source),
+            ContentTag(key = "22", title = "Psychological", source = source),
+            ContentTag(key = "23", title = "Romance", source = source),
+            ContentTag(key = "24", title = "Sci-Fi", source = source),
+            ContentTag(key = "25", title = "Slice of Life", source = source),
+            ContentTag(key = "26", title = "Sports", source = source),
+            ContentTag(key = "27", title = "Superhero", source = source),
+            ContentTag(key = "28", title = "Thriller", source = source),
+            ContentTag(key = "29", title = "Tragedy", source = source),
+            ContentTag(key = "30", title = "Wuxia", source = source),
             // Themes
-            MangaTag(key = "31", title = "Aliens", source = source),
-            MangaTag(key = "32", title = "Animals", source = source),
-            MangaTag(key = "33", title = "Cooking", source = source),
-            MangaTag(key = "34", title = "Crossdressing", source = source),
-            MangaTag(key = "35", title = "Delinquents", source = source),
-            MangaTag(key = "36", title = "Demons", source = source),
-            MangaTag(key = "37", title = "Genderswap", source = source),
-            MangaTag(key = "38", title = "Ghosts", source = source),
-            MangaTag(key = "39", title = "Gyaru", source = source),
-            MangaTag(key = "40", title = "Harem", source = source),
-            MangaTag(key = "41", title = "Incest", source = source),
-            MangaTag(key = "42", title = "Loli", source = source),
-            MangaTag(key = "43", title = "Mafia", source = source),
-            MangaTag(key = "44", title = "Magic", source = source),
-            MangaTag(key = "45", title = "Martial Arts", source = source),
-            MangaTag(key = "46", title = "Military", source = source),
-            MangaTag(key = "47", title = "Monster Girls", source = source),
-            MangaTag(key = "48", title = "Monsters", source = source),
-            MangaTag(key = "49", title = "Music", source = source),
-            MangaTag(key = "50", title = "Ninja", source = source),
-            MangaTag(key = "51", title = "Office Workers", source = source),
-            MangaTag(key = "52", title = "Police", source = source),
-            MangaTag(key = "53", title = "Post-Apocalyptic", source = source),
-            MangaTag(key = "54", title = "Reincarnation", source = source),
-            MangaTag(key = "55", title = "Reverse Harem", source = source),
-            MangaTag(key = "56", title = "Samurai", source = source),
-            MangaTag(key = "57", title = "School Life", source = source),
-            MangaTag(key = "58", title = "Shota", source = source),
-            MangaTag(key = "59", title = "Supernatural", source = source),
-            MangaTag(key = "60", title = "Survival", source = source),
-            MangaTag(key = "61", title = "Time Travel", source = source),
-            MangaTag(key = "62", title = "Traditional Games", source = source),
-            MangaTag(key = "63", title = "Vampires", source = source),
-            MangaTag(key = "64", title = "Video Games", source = source),
-            MangaTag(key = "65", title = "Villainess", source = source),
-            MangaTag(key = "66", title = "Virtual Reality", source = source),
-            MangaTag(key = "67", title = "Zombies", source = source),
+            ContentTag(key = "31", title = "Aliens", source = source),
+            ContentTag(key = "32", title = "Animals", source = source),
+            ContentTag(key = "33", title = "Cooking", source = source),
+            ContentTag(key = "34", title = "Crossdressing", source = source),
+            ContentTag(key = "35", title = "Delinquents", source = source),
+            ContentTag(key = "36", title = "Demons", source = source),
+            ContentTag(key = "37", title = "Genderswap", source = source),
+            ContentTag(key = "38", title = "Ghosts", source = source),
+            ContentTag(key = "39", title = "Gyaru", source = source),
+            ContentTag(key = "40", title = "Harem", source = source),
+            ContentTag(key = "41", title = "Incest", source = source),
+            ContentTag(key = "42", title = "Loli", source = source),
+            ContentTag(key = "43", title = "Mafia", source = source),
+            ContentTag(key = "44", title = "Magic", source = source),
+            ContentTag(key = "45", title = "Martial Arts", source = source),
+            ContentTag(key = "46", title = "Military", source = source),
+            ContentTag(key = "47", title = "Monster Girls", source = source),
+            ContentTag(key = "48", title = "Monsters", source = source),
+            ContentTag(key = "49", title = "Music", source = source),
+            ContentTag(key = "50", title = "Ninja", source = source),
+            ContentTag(key = "51", title = "Office Workers", source = source),
+            ContentTag(key = "52", title = "Police", source = source),
+            ContentTag(key = "53", title = "Post-Apocalyptic", source = source),
+            ContentTag(key = "54", title = "Reincarnation", source = source),
+            ContentTag(key = "55", title = "Reverse Harem", source = source),
+            ContentTag(key = "56", title = "Samurai", source = source),
+            ContentTag(key = "57", title = "School Life", source = source),
+            ContentTag(key = "58", title = "Shota", source = source),
+            ContentTag(key = "59", title = "Supernatural", source = source),
+            ContentTag(key = "60", title = "Survival", source = source),
+            ContentTag(key = "61", title = "Time Travel", source = source),
+            ContentTag(key = "62", title = "Traditional Games", source = source),
+            ContentTag(key = "63", title = "Vampires", source = source),
+            ContentTag(key = "64", title = "Video Games", source = source),
+            ContentTag(key = "65", title = "Villainess", source = source),
+            ContentTag(key = "66", title = "Virtual Reality", source = source),
+            ContentTag(key = "67", title = "Zombies", source = source),
         )
     }
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildString {
-            append("https://comix.to/api/v2/manga?")
+            append("https://comix.to/api/v2/Content?")
             var firstParam = true
             fun addParam(param: String) {
                 if (firstParam) {
@@ -161,11 +161,11 @@ class ComixParser(context: MangaLoaderContext) :
 
         return (0 until items.length()).map { i ->
             val item = items.getJSONObject(i)
-            parseMangaFromJson(item)
+            parseContentFromJson(item)
         }
     }
 
-    private fun parseMangaFromJson(json: JSONObject): Manga {
+    private fun parseContentFromJson(json: JSONObject): Content {
         val hashId = json.getString("hash_id")
         val title = json.getString("title")
         val description = json.optString("synopsis", "").nullIfEmpty()
@@ -176,13 +176,13 @@ class ComixParser(context: MangaLoaderContext) :
         val rating = json.optDouble("rated_avg", 0.0)
 
         val state = when (status) {
-            "finished" -> MangaState.FINISHED
-            "releasing" -> MangaState.ONGOING
-            "on_hiatus" -> MangaState.PAUSED
+            "finished" -> null
+            "releasing" -> null
+            "on_hiatus" -> null
             else -> null
         }
 
-        return Manga(
+        return Content(
             id = generateUid(hashId),
             url = "/title/$hashId",
             publicUrl = "https://comix.to/title/$hashId",
@@ -199,31 +199,31 @@ class ComixParser(context: MangaLoaderContext) :
         )
     }
 
-    override suspend fun getDetails(manga: Manga): Manga = coroutineScope {
-        val hashId = manga.url.substringAfter("/title/")
-        val chaptersDeferred = async { getChapters(manga) }
+    override suspend fun getDetails(content: Content): Content = coroutineScope {
+        val hashId = content.url.substringAfter("/title/")
+        val chaptersDeferred = async { getChapters(content) }
 
-        // Get detailed manga info
-        val detailUrl = "https://comix.to/api/v2/manga/$hashId"
+        // Get detailed Content info
+        val detailUrl = "https://comix.to/api/v2/Content/$hashId"
         val response = webClient.httpGet(detailUrl).parseJson()
 
         if (response.has("result")) {
             val result = response.getJSONObject("result")
-            val updatedManga = parseMangaFromJson(result)
+            val updatedContent = parseContentFromJson(result)
 
-            return@coroutineScope updatedManga.copy(
+            return@coroutineScope updatedContent.copy(
                 chapters = chaptersDeferred.await(),
             )
         }
 
-        return@coroutineScope manga.copy(
+        return@coroutineScope Content.copy(
             chapters = chaptersDeferred.await(),
         )
     }
 
-    override suspend fun getRelatedManga(seed: Manga): List<Manga> = emptyList()
+    override suspend fun getRelatedContent(seed: Content): List<Content> = emptyList()
 
-    override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val chapterId = chapter.url.substringAfterLast("/").substringBefore("-")
         val chapterUrl = "https://comix.to${chapter.url}"
 
@@ -294,7 +294,7 @@ class ComixParser(context: MangaLoaderContext) :
                 is JSONObject -> imageItem.getString("url")
                 else -> throw ParseException("Unexpected image format", chapterUrl)
             }
-            MangaPage(
+            ContentPage(
                 id = generateUid("$chapterId-$i"),
                 url = imageUrl,
                 preview = null,
@@ -303,14 +303,14 @@ class ComixParser(context: MangaLoaderContext) :
         }
     }
 
-    private suspend fun getChapters(manga: Manga): List<MangaChapter> {
-        val hashId = manga.url.substringAfter("/title/")
+    private suspend fun getChapters(Content: Content): List<ContentChapter> {
+        val hashId = content.url.substringAfter("/title/")
         val allChapters = mutableListOf<JSONObject>()
         var page = 1
 
         while (true) {
             val time = 1L
-            val path = "/manga/$hashId/chapters"
+            val path = "/Content/$hashId/chapters"
             val hashToken = ComixHash.generateHash(path, 0, time)
             val chaptersUrl = "https://comix.to/api/v2$path?order[number]=desc&limit=100&page=$page&time=$time&_=$hashToken"
             
@@ -347,7 +347,7 @@ class ComixParser(context: MangaLoaderContext) :
         val allChapterNumbers = allChapters.map { it.getDouble("number").toFloat() }.toSet()
 
         // Build chapters with branches - each team gets complete chapter list with gaps filled
-        val chaptersBuilder = ChaptersListBuilder(allChapters.size * chaptersByTeam.size)
+        val chaptersBuilder = java.util.ArrayList<ContentChapter>(allChapters.size * chaptersByTeam.size)
 
         for ((teamName, teamChapters) in chaptersByTeam) {
             // Map of chapter numbers this team has
@@ -371,7 +371,7 @@ class ComixParser(context: MangaLoaderContext) :
                     "Chapter $number"
                 }
 
-                val chapter = MangaChapter(
+                val chapter = ContentChapter(
                     id = generateUid("$teamName-$chapterId"),
                     title = title,
                     number = number,
@@ -387,6 +387,8 @@ class ComixParser(context: MangaLoaderContext) :
             }
         }
 
-        return chaptersBuilder.toList().reversed()
+        return chaptersBuilder.reversed()
     }
 }
+
+
