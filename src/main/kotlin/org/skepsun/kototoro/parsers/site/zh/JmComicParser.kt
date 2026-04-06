@@ -33,6 +33,7 @@ import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentTag
+import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -311,7 +312,7 @@ internal class JmParser(
             url = "$baseUrl/album?id=$id",
             publicUrl = "$baseUrl/album?id=$id",
             rating = RATING_UNKNOWN,
-            contentRating = null,
+            contentRating = ContentRating.ADULT,
             coverUrl = cover,
             largeCoverUrl = cover,
             tags = tags.map { ContentTag(it, it, source) }.toSet(),
