@@ -93,4 +93,4 @@ It is recommended that unit tests be run before submitting a PR.
 ## Help
 
 If you need help or have some questions, ask a community in our [Telegram chat](https://t.me/kototoroapp)
-or [Discord server](https://discord.gg/NNJ5RgVBC5).
+or [Discord server](https://discord.gg/xBXvPz7tr7).
