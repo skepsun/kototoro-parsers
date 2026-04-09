@@ -12,6 +12,7 @@ import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
+import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.ArrayList
@@ -302,7 +303,7 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
                 tags = emptySet(),
                 description = null,
                 rating = RATING_UNKNOWN,
-                contentRating = null,
+                contentRating = ContentRating.ADULT,
                 state = null,
                 source = source,
             )

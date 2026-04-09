@@ -373,7 +373,7 @@ internal class Novelia(context: ContentLoaderContext) :
                 tags = emptySet(),
                 description = null,  // 列表API不包含简介
                 rating = RATING_UNKNOWN,
-                contentRating = null,
+                contentRating = ContentRating.ADULT,
                 state = state,
                 source = source,
             )

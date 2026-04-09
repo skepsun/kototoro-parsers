@@ -180,7 +180,7 @@ internal class MxsParser(context: ContentLoaderContext) :
             authors = emptySet(),
             state = null,
             source = source,
-            contentRating = ContentRating.SAFE,
+            contentRating = ContentRating.ADULT,
         )
     }
 
@@ -250,7 +250,7 @@ internal class MxsParser(context: ContentLoaderContext) :
             tags = if (tagSet.isNotEmpty()) tagSet else manga.tags,
             chapters = chapters,
             authors = if (authors.isNotEmpty()) authors else manga.authors,
-            contentRating = manga.contentRating ?: ContentRating.SAFE,
+            contentRating = manga.contentRating ?: ContentRating.ADULT,
         )
     }
 

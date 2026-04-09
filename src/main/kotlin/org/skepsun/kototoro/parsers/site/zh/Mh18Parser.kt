@@ -125,7 +125,7 @@ internal class Mh18Parser(context: ContentLoaderContext) :
                         authors = emptySet(),
                         state = null,
                         source = source,
-                        contentRating = ContentRating.SAFE,
+                        contentRating = ContentRating.ADULT,
                     )
                 )
             }
