@@ -18,6 +18,7 @@ import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
+import org.json.JSONObject
 import java.util.EnumSet
 
 import okhttp3.Headers
@@ -161,7 +162,7 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
                             val srcAttr = it.attr("src")
                             if (srcAttr.startsWith("data:")) return@let srcAttr
                             
-                            val src = it.attr("data-src").ifEmpty { it.attr("data-original") }.ifEmpty { srcAttr }
+                            val src = it.attr("data-xkrkllgl").ifEmpty { it.attr("data-src").ifEmpty { it.attr("data-original") } }.ifEmpty { srcAttr }
                             src.toAbsoluteUrl()
                         }
                     
@@ -218,7 +219,7 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
                     val srcAttr = it.attr("src")
                     if (srcAttr.startsWith("data:")) return@let srcAttr
                     
-                    val src = it.attr("data-src").ifEmpty { it.attr("data-original") }.ifEmpty { srcAttr }
+                    val src = it.attr("data-xkrkllgl").ifEmpty { it.attr("data-src").ifEmpty { it.attr("data-original") } }.ifEmpty { srcAttr }
                     src.toAbsoluteUrl()
                 }
                 
@@ -320,7 +321,7 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
             val srcAttr = img.attr("src")
             if (srcAttr.startsWith("data:")) return@mapNotNull srcAttr
             
-            val src = img.attr("data-src").ifEmpty { img.attr("data-original") }.ifEmpty { srcAttr }
+            val src = img.attr("data-xkrkllgl").ifEmpty { img.attr("data-src").ifEmpty { img.attr("data-original") } }.ifEmpty { srcAttr }
             if (src.isBlank()) return@mapNotNull null
             // Filter common assets
             if (src.contains("banner", true) || src.contains("logo", true) 
@@ -377,9 +378,26 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
              }
         }
 
+        // DPlayer extraction - data-config JSON containing video URL
+        doc.select(".dplayer").forEach { player ->
+            val configJson = player.attr("data-config")
+            if (configJson.isNotBlank()) {
+                try {
+                    val config = org.json.JSONObject(configJson)
+                    val video = config.optJSONObject("video")
+                    val url = video?.optString("url", null)
+                    if (!url.isNullOrBlank()) {
+                        videoLinks.add(url.replace("\\/", "/"))
+                    }
+                } catch (e: Exception) {
+                    // Ignore JSON parse errors
+                }
+            }
+        }
+
         // Regex for un-embedded links - Search in full HTML
         val html = doc.outerHtml()
-        val videoRegex = Regex("""https?:\\?/\\?/[^"'<>\s]+\.(?:mp4|m3u8)""", RegexOption.IGNORE_CASE)
+        val videoRegex = Regex("""https?:\\?/\\?/[^"'<>\s]+\.(?:mp4|m3u8)[^"'<>\s]*""", RegexOption.IGNORE_CASE)
         videoRegex.findAll(html).forEach { match ->
             val cleanUrl = match.value.replace("\\/", "/")
             videoLinks.add(cleanUrl)
