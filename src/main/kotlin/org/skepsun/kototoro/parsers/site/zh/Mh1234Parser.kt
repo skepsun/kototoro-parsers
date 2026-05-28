@@ -26,15 +26,13 @@ import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.EnumSet
 
 /**
- * 漫画1234（b.amh1234.com）
- * 参考 venera-configs/mh1234.js
+ * 漫画1234（m.wmh1234.com）
  */
 @ContentSourceParser("MH1234", "漫画1234", "zh")
 internal class Mh1234Parser(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.MH1234, pageSize = 20) {
 
     override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("m.wmh1234.com")
-    private val imageCdnDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("wmh1234.wszwhg.net")
     override val availableSortOrders: Set<SortOrder> =
         EnumSet.of(SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY)
 
@@ -149,11 +147,16 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val url = "https://${domain}/comic/${chapter.url}.html"
+        val chapterPath = chapter.url.trim('/').substringBefore(".html")
+        val url = "https://${domain}/comic/${chapterPath}.html"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
         val doc = resp.parseHtml()
         val images = doc.select("img.reader-image")
+        val pageHeaders = mapOf(
+            "Referer" to url,
+            "User-Agent" to UserAgents.CHROME_DESKTOP,
+        )
         return images.mapIndexedNotNull { index, img ->
             val full = img.attr("data-src").ifEmpty { img.attr("src") }
             if (full.isEmpty()) return@mapIndexedNotNull null
@@ -161,6 +164,7 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
                 id = generateUid("$full-$index"),
                 url = full,
                 preview = full,
+                headers = pageHeaders,
                 source = source,
             )
         }
@@ -171,10 +175,12 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
     private fun parseChapters(doc: Document, manga: Content): List<ContentChapter> {
         val items = doc.select(".chapter-list .chapter-item")
         if (items.isEmpty()) return emptyList()
-        return items.mapIndexed { index, a ->
+        return items.mapIndexedNotNull { index, a ->
             val href = a.attr("href")
+            if (!href.startsWith("/comic/")) return@mapIndexedNotNull null
             val chapName = a.selectFirst(".chapter-title")?.text()?.trim() ?: a.text().trim()
-            val chapterUrl = href.substringAfter("/comic/").substringBefore(".html")
+            val chapterUrl = href.substringAfter("/comic/").substringBefore(".html").trim('/')
+            if (chapterUrl.isEmpty()) return@mapIndexedNotNull null
             ContentChapter(
                 id = generateUid("$chapterUrl-${manga.id}"),
                 url = chapterUrl,
