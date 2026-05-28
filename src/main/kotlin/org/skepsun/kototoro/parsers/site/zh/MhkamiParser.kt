@@ -2,6 +2,7 @@ package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
@@ -161,11 +162,13 @@ internal class MhkamiParser(
             val fallbackDoc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), imageHeaders()).parseHtml()
             imageUrls.addAll(extractChapterImages(fallbackDoc))
         }
+        val pageHeaders = imageHeaderMap()
         return imageUrls.mapIndexed { index, full ->
             ContentPage(
                 id = generateUid("$full#$index"),
-                url = "$IMAGE_PROXY?url=${full.urlEncoded()}",
+                url = full,
                 preview = full,
+                headers = pageHeaders,
                 source = source,
             )
         }
@@ -248,13 +251,33 @@ internal class MhkamiParser(
 
     private fun extractChapterImages(doc: Document): List<String> {
         return doc.select(".acgn-reader-chapter__item-box .item img, .item img")
-            .mapNotNull { img ->
-                img.attr("data-src")
-                    .trim()
-                    .ifEmpty { img.attr("src").trim() }
-                    .ifEmpty { null }
-                    ?.toAbsoluteUrl(domain)
-            }
+            .mapNotNull(::extractImageUrl)
+    }
+
+    private fun extractImageUrl(img: Element): String? {
+        val candidates = listOf(
+            "data-src",
+            "data-original",
+            "data-echo",
+            "data-lazy-src",
+            "data-url",
+            "src",
+        ).mapNotNull { attr ->
+            img.attr(attr)
+                .trim()
+                .ifEmpty { null }
+                ?.toAbsoluteUrl(domain)
+        }
+        return candidates.firstOrNull { !isPlaceholderImage(it) }
+            ?: candidates.firstOrNull()
+    }
+
+    private fun isPlaceholderImage(url: String): Boolean {
+        val normalized = url.lowercase()
+        return normalized.contains("/static/boodo/img/load.gif") ||
+            normalized.endsWith("/load.gif") ||
+            normalized.endsWith("/loading.gif") ||
+            normalized.contains("/placeholder/")
     }
 
     private fun toChapterIndexUrl(chapterUrl: String): String {
@@ -273,8 +296,12 @@ internal class MhkamiParser(
         .add("Referer", "https://$domain/")
         .build()
 
+    private fun imageHeaderMap(): Map<String, String> = mapOf(
+        "User-Agent" to IMAGE_UA,
+        "Referer" to "https://$domain/",
+    )
+
     private companion object {
-        private const val IMAGE_PROXY = "https://image.44422444.xyz/"
         private const val MOBILE_UA =
             "Mozilla/5.0 (Linux; Android 10; HarmonyOS; SCM-W09; HMSCore 6.6.0.332) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.93 HuaweiBrowser/11.1.2.332 Mobile Safari/537.36"
         private const val IMAGE_UA =
