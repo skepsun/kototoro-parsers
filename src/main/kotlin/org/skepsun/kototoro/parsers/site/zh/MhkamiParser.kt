@@ -1,6 +1,7 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.ContentLoaderContext
@@ -20,6 +21,8 @@ import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.util.parseJson
+import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
@@ -149,20 +152,27 @@ internal class MhkamiParser(
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val start = toChapterIndexUrl(chapter.url)
-        val pageUrls = traverseChapterPages(start)
-        if (pageUrls.isEmpty()) return emptyList()
+        val chapterUrl = chapter.url.toAbsoluteUrl(domain)
+        val imageUrls = LinkedHashSet<String>()
+        val chapterHtml = webClient.httpGet(chapterUrl, getRequestHeaders()).parseRaw()
 
-        val imageUrls = LinkedHashSet<String>(pageUrls.size * 2)
-        pageUrls.forEach { pageUrl ->
-            val doc = webClient.httpGet(pageUrl, imageHeaders()).parseHtml()
-            imageUrls.addAll(extractChapterImages(doc))
+        extractChapterReadInfo(chapterUrl, chapterHtml)?.let { readInfo ->
+            imageUrls.addAll(fetchChapterImagesFromApi(chapterUrl, readInfo))
         }
-        if (imageUrls.size <= 1) {
-            val fallbackDoc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), imageHeaders()).parseHtml()
-            imageUrls.addAll(extractChapterImages(fallbackDoc))
+
+        if (imageUrls.isEmpty()) {
+            val start = toChapterIndexUrl(chapterUrl)
+            val pageUrls = traverseChapterPages(start)
+            pageUrls.forEach { pageUrl ->
+                val doc = webClient.httpGet(pageUrl, imageHeaders()).parseHtml()
+                imageUrls.addAll(extractChapterImages(doc))
+            }
+            if (imageUrls.size <= 1) {
+                val fallbackDoc = webClient.httpGet(chapterUrl, imageHeaders()).parseHtml()
+                imageUrls.addAll(extractChapterImages(fallbackDoc))
+            }
         }
-        val pageHeaders = imageHeaderMap()
+        val pageHeaders = imageHeaderMap(chapterUrl)
         return imageUrls.mapIndexed { index, full ->
             ContentPage(
                 id = generateUid("$full#$index"),
@@ -254,6 +264,50 @@ internal class MhkamiParser(
             .mapNotNull(::extractImageUrl)
     }
 
+    private suspend fun fetchChapterImagesFromApi(chapterUrl: String, readInfo: ChapterReadInfo): List<String> {
+        val result = ArrayList<String>(readInfo.picCount)
+        for (offset in 0 until readInfo.picCount step API_BATCH_SIZE) {
+            val json = webClient.httpPost(
+                "${baseUrl()}/api/comic/read/pics".toHttpUrl(),
+                "id=${readInfo.apiCid.urlEncoded()}&aid=${readInfo.aid.urlEncoded()}&offset=$offset&limit=$API_BATCH_SIZE",
+                apiHeaders(chapterUrl),
+            ).parseJson()
+            if (json.optInt("code") != 1) {
+                break
+            }
+            val batch = json.optJSONObject("data")?.optJSONArray("pic") ?: continue
+            repeat(batch.length()) { index ->
+                val url = batch.optJSONObject(index)?.optString("pic").orEmpty()
+                    .ifEmpty { batch.optString(index) }
+                    .trim()
+                    .ifEmpty { return@repeat }
+                    .toAbsoluteUrl(domain)
+                if (!isPlaceholderImage(url)) {
+                    result += url
+                }
+            }
+        }
+        return result
+    }
+
+    private fun extractChapterReadInfo(chapterUrl: String, html: String): ChapterReadInfo? {
+        val aid = READ_AID_REGEX.find(html)?.groupValues?.getOrNull(1)
+            ?: CHAPTER_URL_REGEX.find(chapterUrl)?.groupValues?.getOrNull(1)
+            ?: return null
+        val apiCid = READ_API_CID_REGEX.find(html)?.groupValues?.getOrNull(1)
+            ?.ifBlank { null }
+            ?: READ_CID_REGEX.find(html)?.groupValues?.getOrNull(1)
+            ?: CHAPTER_URL_REGEX.find(chapterUrl)?.groupValues?.getOrNull(2)
+            ?: return null
+        val picCount = READ_PIC_COUNT_REGEX.find(html)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+        if (picCount <= 0) return null
+        return ChapterReadInfo(
+            aid = aid,
+            apiCid = apiCid,
+            picCount = picCount,
+        )
+    }
+
     private fun extractImageUrl(img: Element): String? {
         val candidates = listOf(
             "data-src",
@@ -296,9 +350,16 @@ internal class MhkamiParser(
         .add("Referer", "https://$domain/")
         .build()
 
-    private fun imageHeaderMap(): Map<String, String> = mapOf(
+    private fun apiHeaders(chapterUrl: String): Headers = Headers.Builder()
+        .add("User-Agent", MOBILE_UA)
+        .add("Referer", chapterUrl)
+        .add("Origin", baseUrl())
+        .add("X-Requested-With", "XMLHttpRequest")
+        .build()
+
+    private fun imageHeaderMap(chapterUrl: String): Map<String, String> = mapOf(
         "User-Agent" to IMAGE_UA,
-        "Referer" to "https://$domain/",
+        "Referer" to chapterUrl,
     )
 
     private companion object {
@@ -310,9 +371,15 @@ internal class MhkamiParser(
         private const val DEFAULT_AREA = "9"
         private const val DEFAULT_PLOT_TAG = "全部"
         private const val DEFAULT_FULL = "3"
+        private const val API_BATCH_SIZE = 5
         private const val MAX_PAGE_SCAN = 200
         private val INDEX_PAGE_REGEX = Regex("""_\d+\.html$""")
+        private val CHAPTER_URL_REGEX = Regex("""/chapter/(\d+)/(\d+)(?:_\d+)?\.html$""")
         private val COVER_STYLE_REGEX = Regex("""url\(['"]?([^'")]+)['"]?\)""")
+        private val READ_AID_REGEX = Regex("""\baid:'([^']+)'""")
+        private val READ_CID_REGEX = Regex("""\bcid:'([^']+)'""")
+        private val READ_API_CID_REGEX = Regex("""\bapiCid:'([^']*)'""")
+        private val READ_PIC_COUNT_REGEX = Regex("""\bpicCount:(\d+)""")
 
         private val PLOT_TAGS = listOf(
             "全部" to "全部",
@@ -380,4 +447,10 @@ internal class MhkamiParser(
             "周日更新" to "7",
         )
     }
+
+    private data class ChapterReadInfo(
+        val aid: String,
+        val apiCid: String,
+        val picCount: Int,
+    )
 }
