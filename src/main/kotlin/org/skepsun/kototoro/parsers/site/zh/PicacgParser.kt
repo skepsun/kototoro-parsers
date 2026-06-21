@@ -69,10 +69,10 @@ import java.net.CookiePolicy
 internal class PicacgParser(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.PICACG, pageSize = 24), Interceptor, ContentParserAuthProvider, ContentParserCredentialsAuthProvider, FavoritesProvider, FavoritesSyncProvider {
 
-    // 默认使用官方域名，并保留旧域作为备选，方便在设置中切换
+    // 默认使用当前可达的官方 API 域名，并保留旧域作为备选，方便在设置中切换
     override val configKeyDomain = ConfigKey.Domain(
-        "api.go2778.com",
         "picaapi.picacomic.com",
+        "api.go2778.com",
     )
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.KOTOTORO)
 

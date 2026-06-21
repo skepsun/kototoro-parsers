@@ -37,7 +37,13 @@ private const val SERVER_DATA_SAVER = "data-saver"
 @ContentSourceParser("MANGADEX", "MangaDex")
 internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentParser(context, ContentParserSource.MANGADEX) {
 
-	override val configKeyDomain = ConfigKey.Domain("mangadex.org")
+	override val configKeyDomain = ConfigKey.Domain("mangadex.org", "api.mangadex.org")
+
+	private val webDomain: String
+		get() = domain.removePrefix("api.")
+
+	private val apiDomain: String
+		get() = if (domain.startsWith("api.")) domain else "api.$domain"
 
 	private val preferredServerKey = ConfigKey.PreferredImageServer(
 		presetValues = mapOf(
@@ -217,7 +223,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 	}
 
 	private fun mangaDexApiUrlBuilder(vararg pathSegments: String): HttpUrl.Builder =
-		"https://api.$domain/".toHttpUrl().newBuilder().apply {
+		"https://$apiDomain/".toHttpUrl().newBuilder().apply {
 			pathSegments.forEach(::addPathSegment)
 		}
 
@@ -294,7 +300,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 
 	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val json = webClient.httpGet(
-			"https://api.$domain/at-home/server/${chapter.url}?forcePort443=false",
+			"https://$apiDomain/at-home/server/${chapter.url}?forcePort443=false",
 		).parseJson()
 		val chapterJson = json.getJSONObject("chapter")
 		val server = config[preferredServerKey] ?: SERVER_DATA
@@ -314,7 +320,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 	}
 
 	private suspend fun fetchAvailableTags(): Set<ContentTag> {
-		val tags = webClient.httpGet("https://api.${domain}/manga/tag").parseJson()
+		val tags = webClient.httpGet("https://$apiDomain/manga/tag").parseJson()
 			.getJSONArray("data")
 		return tags.mapJSONToSet { jo ->
 			ContentTag(
@@ -328,7 +334,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 	}
 
 	private suspend fun fetchAvailableLocales(): Set<Locale> {
-		val head = webClient.httpGet("https://$domain/").parseHtml().head()
+		val head = webClient.httpGet("https://$webDomain/").parseHtml().head()
 		return head.getElementsByAttributeValue("property", "og:locale:alternate")
 			.mapNotNullToSet { meta ->
 				val raw = meta.attrOrNull("content") ?: return@mapNotNullToSet null
@@ -345,7 +351,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 			?.getJSONObject("attributes")
 			?.getString("fileName")
 			?.let {
-				"https://uploads.$domain/covers/$id/$it"
+				"https://uploads.$webDomain/covers/$id/$it"
 			}
 		val authors: Set<String> = (relations["author"] ?: relations["artist"])
 			?.mapNotNullToSet {
@@ -359,7 +365,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 			},
 			altTitles = setOfNotNull(attrs.optJSONArray("altTitles")?.flatten()?.selectByLocale()), // TODO
 			url = id,
-			publicUrl = "https://$domain/title/$id",
+			publicUrl = "https://$webDomain/title/$id",
 			rating = RATING_UNKNOWN,
 			contentRating = when (attrs.getStringOrNull("contentRating")) {
 				"pornographic" -> ContentRating.ADULT
