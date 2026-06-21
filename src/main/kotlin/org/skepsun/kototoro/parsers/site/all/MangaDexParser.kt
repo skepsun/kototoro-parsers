@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.ContentLoaderContext
@@ -158,23 +159,22 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 		PUBLICATION_YEAR -> "year"
 	}
 
-	private fun Any?.toQueryParam(): String = when (this) {
-		is String -> urlEncoded()
-		is Locale -> if (language == "in") "id" else language
-		is ContentTag -> key
+	private fun Any?.toQueryParams(): List<String> = when (this) {
+		is String -> listOf(this)
+		is Locale -> listOf(if (language == "in") "id" else language)
+		is ContentTag -> listOf(key)
 		is ContentState -> when (this) {
 			ContentState.ONGOING -> "ongoing"
 			ContentState.FINISHED -> "completed"
 			ContentState.ABANDONED -> "cancelled"
 			ContentState.PAUSED -> "hiatus"
 			else -> ""
-		}
+		}.let(::listOf)
 
 		is ContentRating -> when (this) {
-			ContentRating.SAFE -> "safe"
-			// quick fix for double value
-			ContentRating.SUGGESTIVE -> "suggestive&contentRating[]=erotica"
-			ContentRating.ADULT -> "pornographic"
+			ContentRating.SAFE -> listOf("safe")
+			ContentRating.SUGGESTIVE -> listOf("suggestive", "erotica")
+			ContentRating.ADULT -> listOf("pornographic")
 		}
 
 		is Demographic -> when (this) {
@@ -184,75 +184,86 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 			Demographic.JOSEI -> "josei"
 			Demographic.NONE -> "none"
 			else -> ""
-		}
+		}.let(::listOf)
 
-		is SortOrder -> when (this) {
-			SortOrder.UPDATED -> "[latestUploadedChapter]=desc"
-			SortOrder.UPDATED_ASC -> "[latestUploadedChapter]=asc"
-			SortOrder.RATING -> "[rating]=desc"
-			SortOrder.RATING_ASC -> "[rating]=asc"
-			SortOrder.ALPHABETICAL -> "[title]=asc"
-			SortOrder.ALPHABETICAL_DESC -> "[title]=desc"
-			SortOrder.NEWEST -> "[year]=desc"
-			SortOrder.NEWEST_ASC -> "[year]=asc"
-			SortOrder.POPULARITY -> "[followedCount]=desc"
-			SortOrder.POPULARITY_ASC -> "[followedCount]=asc"
-			SortOrder.ADDED -> "[createdAt]=desc"
-			SortOrder.ADDED_ASC -> "[createdAt]=asc"
-			SortOrder.RELEVANCE -> "&order[relevance]=desc"
-			else -> "[latestUploadedChapter]=desc"
-		}
-
-		else -> this.toString().urlEncoded()
+		else -> listOf(this.toString())
 	}
 
-	private fun StringBuilder.appendCriterion(field: SearchableField, value: Any?, paramName: String? = null) {
+	private fun HttpUrl.Builder.addCriterion(field: SearchableField, value: Any?, paramName: String? = null) {
 		val param = paramName ?: field.toParamName()
 		if (param.isNotBlank()) {
-			append("&$param=")
-			append(value.toQueryParam())
+			value.toQueryParams().forEach { addQueryParameter(param, it) }
 		}
 	}
 
-	override suspend fun getList(query: ContentSearchQuery): List<Content> {
-		val url = buildString {
-			append("https://api.$domain/manga?limit=$PAGE_SIZE&offset=${query.offset}")
-				.append("&includes[]=cover_art&includes[]=author&includes[]=artist&includedTagsMode=AND&excludedTagsMode=OR")
+	private fun HttpUrl.Builder.addOrder(order: SortOrder) {
+		val (field, direction) = when (order) {
+			SortOrder.UPDATED -> "latestUploadedChapter" to "desc"
+			SortOrder.UPDATED_ASC -> "latestUploadedChapter" to "asc"
+			SortOrder.RATING -> "rating" to "desc"
+			SortOrder.RATING_ASC -> "rating" to "asc"
+			SortOrder.ALPHABETICAL -> "title" to "asc"
+			SortOrder.ALPHABETICAL_DESC -> "title" to "desc"
+			SortOrder.NEWEST -> "year" to "desc"
+			SortOrder.NEWEST_ASC -> "year" to "asc"
+			SortOrder.POPULARITY -> "followedCount" to "desc"
+			SortOrder.POPULARITY_ASC -> "followedCount" to "asc"
+			SortOrder.ADDED -> "createdAt" to "desc"
+			SortOrder.ADDED_ASC -> "createdAt" to "asc"
+			SortOrder.RELEVANCE -> "relevance" to "desc"
+			else -> "latestUploadedChapter" to "desc"
+		}
+		addQueryParameter("order[$field]", direction)
+	}
 
-			var hasContentRating = false
-
-			query.criteria.forEach { criterion ->
-				when (criterion) {
-					is Include<*> -> {
-						if (criterion.field == CONTENT_RATING) {
-							hasContentRating = true
-						}
-						criterion.values.forEach { appendCriterion(criterion.field, it) }
-					}
-
-					is Exclude<*> -> {
-						criterion.values.forEach { appendCriterion(criterion.field, it, "excludedTags[]") }
-					}
-
-					is Match<*> -> {
-						appendCriterion(criterion.field, criterion.value)
-					}
-
-					else -> {
-						// Not supported
-					}
-				}
-			}
-
-			// If contentRating is not provided, add default values
-			if (!hasContentRating) {
-				append("&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic")
-			}
-
-			append("&order")
-			append((query.order ?: defaultSortOrder).toQueryParam())
+	private fun mangaDexApiUrlBuilder(vararg pathSegments: String): HttpUrl.Builder =
+		"https://api.$domain/".toHttpUrl().newBuilder().apply {
+			pathSegments.forEach(::addPathSegment)
 		}
 
+	override suspend fun getList(query: ContentSearchQuery): List<Content> {
+		val urlBuilder = mangaDexApiUrlBuilder("manga")
+			.addQueryParameter("limit", PAGE_SIZE.toString())
+			.addQueryParameter("offset", query.offset.toString())
+			.addQueryParameter("includes[]", "cover_art")
+			.addQueryParameter("includes[]", "author")
+			.addQueryParameter("includes[]", "artist")
+			.addQueryParameter("includedTagsMode", "AND")
+			.addQueryParameter("excludedTagsMode", "OR")
+
+		var hasContentRating = false
+
+		query.criteria.forEach { criterion ->
+			when (criterion) {
+				is Include<*> -> {
+					if (criterion.field == CONTENT_RATING) {
+						hasContentRating = true
+					}
+					criterion.values.forEach { urlBuilder.addCriterion(criterion.field, it) }
+				}
+
+				is Exclude<*> -> {
+					criterion.values.forEach { urlBuilder.addCriterion(criterion.field, it, "excludedTags[]") }
+				}
+
+				is Match<*> -> {
+					urlBuilder.addCriterion(criterion.field, criterion.value)
+				}
+
+				else -> {
+					// Not supported
+				}
+			}
+		}
+
+		if (!hasContentRating) {
+			listOf("safe", "suggestive", "erotica", "pornographic").forEach {
+				urlBuilder.addQueryParameter("contentRating[]", it)
+			}
+		}
+		urlBuilder.addOrder(query.order ?: defaultSortOrder)
+
+		val url = urlBuilder.build()
 		val json = webClient.httpGet(url).parseJson().getJSONArray("data")
 		return json.mapJSON { jo -> jo.fetchContent(null) }
 	}
@@ -270,9 +281,12 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 
 	private suspend fun getDetails(mangaId: String): Content = coroutineScope {
 		val jsonDeferred = async {
-			webClient.httpGet(
-				"https://api.$domain/manga/${mangaId}?includes[]=artist&includes[]=author&includes[]=cover_art",
-			).parseJson().getJSONObject("data")
+			val url = mangaDexApiUrlBuilder("manga", mangaId)
+				.addQueryParameter("includes[]", "artist")
+				.addQueryParameter("includes[]", "author")
+				.addQueryParameter("includes[]", "cover_art")
+				.build()
+			webClient.httpGet(url).parseJson().getJSONObject("data")
 		}
 		val feedDeferred = async { loadChapters(mangaId) }
 		jsonDeferred.await().fetchContent(mapChapters(feedDeferred.await()))
@@ -431,18 +445,17 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 			offset + limit > CHAPTERS_MAX_COUNT -> CHAPTERS_MAX_COUNT - offset
 			else -> limit
 		}
-		val url = buildString {
-			append("https://api.")
-			append(domain)
-			append("/manga/")
-			append(mangaId)
-			append("/feed")
-			append("?limit=")
-			append(limitedLimit)
-			append("&includes[]=scanlation_group&order[volume]=asc&order[chapter]=asc&offset=")
-			append(offset)
-			append("&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic")
-		}
+		val url = mangaDexApiUrlBuilder("manga", mangaId, "feed")
+			.addQueryParameter("limit", limitedLimit.toString())
+			.addQueryParameter("includes[]", "scanlation_group")
+			.addQueryParameter("order[volume]", "asc")
+			.addQueryParameter("order[chapter]", "asc")
+			.addQueryParameter("offset", offset.toString())
+			.addQueryParameter("contentRating[]", "safe")
+			.addQueryParameter("contentRating[]", "suggestive")
+			.addQueryParameter("contentRating[]", "erotica")
+			.addQueryParameter("contentRating[]", "pornographic")
+			.build()
 		val json = webClient.httpGet(url).parseJson()
 		if (json.getString("result") == "ok") {
 			return Chapters(
@@ -453,7 +466,7 @@ internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentPa
 			val error = json.optJSONArray("errors").mapJSON { jo ->
 				jo.getString("detail")
 			}.joinToString("\n")
-			throw ParseException(error, url)
+			throw ParseException(error, url.toString())
 		}
 	}
 
