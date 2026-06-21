@@ -20,6 +20,7 @@ import org.skepsun.kototoro.parsers.model.search.QueryCriteria.*
 import org.skepsun.kototoro.parsers.model.search.SearchCapability
 import org.skepsun.kototoro.parsers.model.search.SearchableField
 import org.skepsun.kototoro.parsers.model.search.SearchableField.*
+import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import org.skepsun.kototoro.parsers.util.json.*
 import java.text.SimpleDateFormat
@@ -38,6 +39,7 @@ private const val SERVER_DATA_SAVER = "data-saver"
 internal class MangaDexParser(context: ContentLoaderContext) : FlexibleContentParser(context, ContentParserSource.MANGADEX) {
 
 	override val configKeyDomain = ConfigKey.Domain("mangadex.org", "api.mangadex.org")
+	override val userAgentKey = ConfigKey.UserAgent(UserAgents.KOTOTORO)
 
 	private val webDomain: String
 		get() = domain.removePrefix("api.")
