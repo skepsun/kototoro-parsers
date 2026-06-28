@@ -93,15 +93,61 @@ internal class Pinse91(
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         
         val mangaMap = LinkedHashMap<String, Content>()
-        val elements = doc.select(".video-grid a[href*='/v/']").takeIf { it.isNotEmpty() }
-            ?: doc.select("a[href*='/v/']")
         val durationRegex = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
+
+        fun isVideoPath(href: String): Boolean {
+            val idPath = href.substringAfter("/v/", "").substringBefore("/").substringBefore("?").trim()
+            return idPath.isNotEmpty() && idPath.all { it.isDigit() } && href.length >= 5
+        }
+
+        fun putContent(href: String, title: String, coverUrl: String?) {
+            val finalTitle = title.trim().takeIf { it.isNotBlank() && !durationRegex.matches(it) } ?: return
+            mangaMap[href] = Content(
+                id = generateUid(href),
+                url = href,
+                publicUrl = href.toAbsoluteUrl(domain),
+                title = finalTitle,
+                altTitles = emptySet(),
+                coverUrl = coverUrl,
+                largeCoverUrl = coverUrl,
+                authors = emptySet(),
+                tags = emptySet(),
+                state = null,
+                description = null,
+                contentRating = ContentRating.ADULT,
+                source = source,
+                rating = RATING_UNKNOWN,
+            )
+        }
+
+        doc.select(".video-grid article.video-card").forEach { card ->
+            val titleEl = card.selectFirst("a.video-card-title[href*='/v/']") ?: return@forEach
+            val href = titleEl.attrAsRelativeUrl("href")
+            if (!isVideoPath(href)) return@forEach
+
+            val title = titleEl.attr("title").takeIf { it.isNotBlank() }
+                ?: titleEl.text().takeIf { it.isNotBlank() }
+                ?: card.selectFirst("a[aria-label][href*='/v/']")?.attr("aria-label")?.takeIf { it.isNotBlank() }
+                ?: return@forEach
+
+            val img = card.selectFirst("img")
+            val coverUrl = img?.attrAsAbsoluteUrlOrNull("data-src")
+                ?: img?.attrAsAbsoluteUrlOrNull("src")
+                ?: img?.attrAsAbsoluteUrlOrNull("data-original")
+
+            putContent(href, title, coverUrl)
+        }
+
+        if (mangaMap.isNotEmpty()) {
+            return mangaMap.values.toList()
+        }
+
+        val elements = doc.select(".video-grid a.video-card-title[href*='/v/']").takeIf { it.isNotEmpty() }
+            ?: doc.select("a[href*='/v/']")
 
         for (el in elements) {
             val href = el.attrAsRelativeUrl("href")
-            // Strict check: video path must start with /v/ followed by a numeric ID
-            val idPath = href.substringAfter("/v/", "").substringBefore("/").substringBefore("?").trim()
-            if (idPath.isEmpty() || !idPath.all { it.isDigit() } || href.length < 5) continue
+            if (!isVideoPath(href)) continue
             if (href.contains("/author/") || href.contains("/search")) continue
             
             val text = el.text().trim()
@@ -131,22 +177,7 @@ internal class Pinse91(
                 ?: img?.attrAsAbsoluteUrlOrNull("data-original")
                 ?: existing?.coverUrl
 
-            mangaMap[href] = Content(
-                id = generateUid(href),
-                url = href,
-                publicUrl = href.toAbsoluteUrl(domain),
-                title = finalTitle,
-                altTitles = emptySet(),
-                coverUrl = coverUrl,
-                largeCoverUrl = coverUrl,
-                authors = emptySet(),
-                tags = emptySet(),
-                state = null,
-                description = null,
-                contentRating = ContentRating.ADULT,
-                source = source,
-                rating = RATING_UNKNOWN,
-            )
+            putContent(href, finalTitle, coverUrl)
         }
 
         return mangaMap.values.toList()

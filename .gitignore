@@ -88,6 +88,8 @@ bin/
 src/test/resources/cookies.txt
 local.properties
 .kotlin/
+.pi-esr-memory/
+.pi-loom/
 !/.idea/kotlin-statistics.xml
 
 .idea/**/discord.xml
