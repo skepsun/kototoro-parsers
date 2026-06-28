@@ -163,7 +163,20 @@ internal class Klz9(context: ContentLoaderContext) :
     private suspend fun fetchAllContent(): JSONArray {
         val url = "https://$domain/api/manga/all"
         val response = webClient.httpGet(url.toHttpUrl(), generateSignatureHeaders())
-        return JSONArray(response.parseRaw())
+        val items = JSONArray(response.parseRaw())
+        val seen = mutableMapOf<String, JSONObject>()
+        for (i in 0 until items.length()) {
+            val item = items.getJSONObject(i)
+            val slug = item.optString("slug", "")
+            val key = slug.lowercase()
+            val existing = seen[key]
+            if (existing == null || slug.any { it.isUpperCase() }) {
+                seen[key] = item
+            }
+        }
+        val deduped = JSONArray()
+        seen.values.forEach { deduped.put(it) }
+        return deduped
     }
 
     private fun parseContentList(items: JSONArray, order: SortOrder): List<Content> {
@@ -176,7 +189,7 @@ internal class Klz9(context: ContentLoaderContext) :
     }
 
     private fun parseContentFromJson(json: JSONObject): Content {
-        val slug = json.optString("slug", "")
+        val slug = json.optString("slug", "").lowercase()
         val href = "/manga/$slug"
         
         val genresStr = json.optString("genres", "")
