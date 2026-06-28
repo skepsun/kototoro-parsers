@@ -79,14 +79,17 @@ internal class BakaTsuki(context: ContentLoaderContext) :
                 absoluteUrl.contains("File:") || absoluteUrl.contains("Help:")) continue
             if (!seen.add(absoluteUrl)) continue
             val title = a.attr("title").trim().ifEmpty { a.text().trim() }.ifEmpty { continue }
+            val img = a.parent()?.selectFirst("img") ?: a.selectFirst("img")
+            val thumb = img?.attr("src")?.toAbsoluteUrlOrNull(domain)
+                ?: img?.attr("data-src")?.toAbsoluteUrlOrNull(domain)
             items += Content(
                 id = generateUid(absoluteUrl),
                 url = absoluteUrl.removePrefix("https://$domain"),
                 publicUrl = absoluteUrl,
                 title = title,
                 altTitles = emptySet(),
-                coverUrl = null,
-                largeCoverUrl = null,
+                coverUrl = thumb,
+                largeCoverUrl = thumb,
                 authors = emptySet(),
                 tags = emptySet(),
                 description = null,
@@ -107,7 +110,9 @@ internal class BakaTsuki(context: ContentLoaderContext) :
             ?: manga.title
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
             ?: doc.selectFirst("meta[name=og:image]")?.attr("content")?.trim()
+            ?: doc.selectFirst("#mw-content-text .infobox img, #mw-content-text .thumb img, #mw-content-text img")?.attr("src")
             ?: manga.coverUrl
+        val coverUrl = cover?.toAbsoluteUrlOrNull(domain)
         val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
             ?: doc.selectFirst("meta[name=og:description]")?.attr("content")?.trim()
         val contentEl = doc.selectFirst("#mw-content-text") ?: doc.body()
@@ -115,8 +120,8 @@ internal class BakaTsuki(context: ContentLoaderContext) :
         return manga.copy(
             title = title,
             description = desc ?: manga.description,
-            coverUrl = cover?.toAbsoluteUrlOrNull(domain) ?: manga.coverUrl,
-            largeCoverUrl = cover?.toAbsoluteUrlOrNull(domain) ?: manga.largeCoverUrl,
+            coverUrl = coverUrl ?: manga.coverUrl,
+            largeCoverUrl = coverUrl ?: manga.largeCoverUrl,
             chapters = chapters,
         )
     }
