@@ -1,6 +1,7 @@
 package org.skepsun.kototoro.parsers.site.en
 
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
@@ -194,11 +195,25 @@ internal class GoGoAnime(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        for (link in doc.select("a[href*=/category/]")) {
+        var cards: List<Element> = doc.select("a.film-poster-ahref[href], a.dynamic-name[href], a.item[href], .card a[href], .video-item a[href], .video-card a[href], article a[href], .post a[href]")
+        if (cards.isEmpty()) {
+            cards = doc.select("a[href*=/anime/]").filter { a ->
+                val h = a.attr("href")
+                val hasContent = a.selectFirst("img") != null || a.selectFirst("h3,h2,h4,.title,.name") != null
+                val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
+                    !h.contains("login") && !h.contains("signup") && !h.contains("random") &&
+                    !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
+                    !h.contains("javascript") && !h.contains("facebook") && !h.contains("twitter") &&
+                    h.startsWith("/") && h.count { it == '/' } >= 2 && h.length > 5
+                hasContent || notNav
+            }
+        }
+        for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
             val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
+                ?: link.selectFirst("h3,h2,h4,.title,.name")?.text()?.trim()
                 ?: link.text().trim().ifEmpty { continue }
             val thumb = link.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
             items.add(Content(

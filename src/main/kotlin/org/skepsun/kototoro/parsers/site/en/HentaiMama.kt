@@ -94,17 +94,24 @@ internal class HentaiMama(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        for (link in doc.select("a[href*=/video/], a[href*=/hentai/], .hentai-item a[href], .video-item a[href]")) {
+        val cards = doc.select(".video-item a[href], .hentai-item a[href], .card a[href], article a[href], .post a[href]")
+        val links = if (cards.isNotEmpty()) cards else doc.select("a[href]").filter { a ->
+            val h = a.attr("href")
+            val hasImg = a.selectFirst("img") != null
+            val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
+                !h.contains("login") && !h.contains("signup") &&
+                !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
+                !h.contains("javascript") && h.startsWith("/") && h.count { it == '/' } >= 2
+            hasImg && notNav
+        }
+        for (link in links) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
-            val container = link.parents().firstOrNull { p ->
-                p.hasClass("hentai-item") || p.hasClass("video-item") || p.hasClass("card")
-            } ?: link.parent()!!
-            val title = container.selectFirst("h3, .title, .hentai-title")?.text()?.trim()
-                ?: link.selectFirst("img[alt]")?.attr("alt")?.trim()
+            val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
+                ?: link.selectFirst("h3, h2, .title, .name")?.text()?.trim()
                 ?: link.text().trim().ifEmpty { continue }
-            val thumb = container.selectFirst("img[src], img[data-src]")?.let {
+            val thumb = link.selectFirst("img[src], img[data-src]")?.let {
                 (it.attr("data-src").ifBlank { it.attr("src") }).toAbsoluteUrlOrNull(domain)
             }
             items.add(Content(

@@ -52,44 +52,7 @@ internal class HentaiCloud(context: ContentLoaderContext) :
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val url = buildListUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-        val items = ArrayList<Content>(pageSize)
-        val seen = LinkedHashSet<String>()
-
-        val cards = doc.select(".video-item, .video-item-container, .item-thumb, article")
-        for (card in cards) {
-            val link = card.selectFirst("a[href*=/video/]") ?: card.selectFirst("a[href]") ?: continue
-            val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
-            if (!seen.add(href)) continue
-
-            val title = link.attr("title").takeIf { it.isNotBlank() }
-                ?: link.selectFirst("img[alt]")?.attr("alt")?.trim()
-                ?: link.text().trim().ifEmpty { "Untitled" }
-                ?: "Untitled"
-
-            val coverUrl = link.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
-                ?: link.selectFirst("img[data-src]")?.attr("data-src")?.toAbsoluteUrlOrNull(domain)
-
-            items.add(
-                Content(
-                    id = generateUid(href),
-                    url = href,
-                    publicUrl = href.toAbsoluteUrl(domain),
-                    title = title,
-                    altTitles = emptySet(),
-                    coverUrl = coverUrl,
-                    largeCoverUrl = null,
-                    authors = emptySet(),
-                    tags = emptySet(),
-                    state = null,
-                    description = null,
-                    contentRating = ContentRating.ADULT,
-                    source = source,
-                    rating = RATING_UNKNOWN,
-                ),
-            )
-            if (items.size >= pageSize) break
-        }
-        return items
+        return parseList(doc)
     }
 
     override suspend fun getDetails(manga: Content): Content {
@@ -184,8 +147,44 @@ internal class HentaiCloud(context: ContentLoaderContext) :
             val tag = filter.tags.first().key.urlEncoded()
             "$base/genre/$tag?page=$page"
         } else {
-            "$base/videos?page=$page"
+            "$base/popular?page=$page"
         }
+    }
+
+    private fun parseList(doc: Document): List<Content> {
+        val items = ArrayList<Content>(pageSize)
+        val seen = LinkedHashSet<String>()
+        val cards = doc.select(".video-item a[href], .hentai-item a[href], .card a[href], article a[href], .post a[href]")
+        val links = if (cards.isNotEmpty()) cards else doc.select("a[href]").filter { a ->
+            val h = a.attr("href")
+            val hasImg = a.selectFirst("img") != null
+            val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
+                !h.contains("login") && !h.contains("signup") &&
+                !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
+                !h.contains("javascript") && h.startsWith("/") && h.count { it == '/' } >= 2
+            hasImg && notNav
+        }
+        for (link in links) {
+            val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
+            val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
+            if (!seen.add(absoluteUrl)) continue
+            val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
+                ?: link.selectFirst("h3, h2, .title, .name")?.text()?.trim()
+                ?: link.text().trim().ifEmpty { continue }
+            val thumb = link.selectFirst("img[src], img[data-src]")?.let {
+                (it.attr("data-src").ifBlank { it.attr("src") }).toAbsoluteUrlOrNull(domain)
+            }
+            items.add(Content(
+                id = generateUid(absoluteUrl),
+                url = absoluteUrl.removePrefix("https://$domain"),
+                publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
+                coverUrl = thumb, largeCoverUrl = thumb,
+                authors = emptySet(), tags = emptySet(), state = null, description = null,
+                contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
+            ))
+            if (items.size >= pageSize) break
+        }
+        return items
     }
 
     private fun extractStreams(doc: Document): List<String> {
