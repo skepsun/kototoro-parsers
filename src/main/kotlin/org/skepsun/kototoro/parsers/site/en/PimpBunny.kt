@@ -41,12 +41,23 @@ internal class PimpBunny(context: ContentLoaderContext) :
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
             isSearchSupported = true,
-            isMultipleTagsSupported = false,
+            isMultipleTagsSupported = true,
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val cats = listOf(
+            "Exclusive" to "exclusive", "BBC" to "bbc", "Anal" to "anal",
+            "Deep Throat" to "deep-throat", "BDSM" to "bdsm", "Bizarre Porn" to "bizarre-porn",
+            "Double Penetration" to "double-penetration", "Feet" to "feet", "Fetish" to "fetish",
+            "Gang Bang" to "gang-bang", "Lesbian" to "lesbian", "Outdoor" to "outdoor",
+            "Blowjob" to "blowjob", "Creampie" to "creampie", "Threesome" to "threesome",
+            "Solo" to "solo", "MILF" to "milf", "Teen" to "teen",
+            "Cosplay" to "cosplay", "Massage" to "massage", "POV" to "pov",
+            "Big Boobs" to "big-boobs", "Interracial" to "interracial", "Public" to "public",
+        ).map { ContentTag(it.first, it.second, source) }.toSet()
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
+            availableTags = cats,
         )
     }
 
@@ -206,16 +217,16 @@ internal class PimpBunny(context: ContentLoaderContext) :
         .build()
 
     private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
-        return if (!filter.query.isNullOrBlank()) {
-            val q = filter.query.urlEncoded()
-            "https://$domain/search/?q=$q&page=$page"
-        } else {
-            val sortParam = when (order) {
-                SortOrder.POPULARITY -> "?sort_by=video_viewed&page=$page"
-                SortOrder.RATING -> "?sort_by=rating&page=$page"
-                else -> "?page=$page"
+        val tag = filter.tags.firstOrNull()?.key
+        return when {
+            !filter.query.isNullOrBlank() -> {
+                val q = filter.query.urlEncoded()
+                "https://$domain/search/?q=$q&page=$page"
             }
-            "https://$domain/videos/$sortParam"
+            tag != null -> "https://$domain/categories/$tag/?page=$page"
+            order == SortOrder.POPULARITY -> "https://$domain/videos/?sort_by=video_viewed&page=$page"
+            order == SortOrder.RATING -> "https://$domain/videos/?sort_by=rating&page=$page"
+            else -> "https://$domain/?page=$page"
         }
     }
 
