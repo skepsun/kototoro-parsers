@@ -116,12 +116,35 @@ internal class AniWorld(context: ContentLoaderContext) :
                 else -> "Source"
             }
             if (redirectPath.isNotBlank()) {
-                pages.add(ContentPage(
-                    id = generateUid("${chapter.id}|$langKey"),
-                    url = redirectPath.toAbsoluteUrl(domain),
-                    preview = langName,
-                    source = source,
-                ))
+                val redirectUrl = redirectPath.toAbsoluteUrl(domain)
+                try {
+                    val redirectDoc = webClient.httpGet(redirectUrl, getRequestHeaders()).parseHtml()
+                    val sources = extractVideoSources(redirectDoc)
+                    if (sources.isNotEmpty()) {
+                        sources.forEach { src ->
+                            pages.add(ContentPage(
+                                id = generateUid("${chapter.id}|$langKey|${src.hashCode()}"),
+                                url = src,
+                                preview = langName,
+                                source = source,
+                            ))
+                        }
+                    } else {
+                        pages.add(ContentPage(
+                            id = generateUid("${chapter.id}|$langKey"),
+                            url = redirectUrl,
+                            preview = langName,
+                            source = source,
+                        ))
+                    }
+                } catch (_: Exception) {
+                    pages.add(ContentPage(
+                        id = generateUid("${chapter.id}|$langKey"),
+                        url = redirectUrl,
+                        preview = langName,
+                        source = source,
+                    ))
+                }
             }
         }
 
@@ -137,6 +160,30 @@ internal class AniWorld(context: ContentLoaderContext) :
 
         context.requestBrowserAction(this, chapterUrl)
         return emptyList()
+    }
+
+    private fun extractVideoSources(doc: Document): List<String> {
+        val sources = LinkedHashSet<String>()
+
+        doc.select("iframe[src]").forEach { src ->
+            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+        doc.select("source[src]").forEach { src ->
+            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+        doc.select("video source[src]").forEach { src ->
+            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+        doc.select("video[src]").forEach { v ->
+            v.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+
+        val html = doc.outerHtml()
+        Regex("https?://[^\"'\\s>]+\\.(?:m3u8|mp4)", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
+            sources.add(m.value)
+        }
+
+        return sources.toList()
     }
 
     override fun getRequestHeaders() = Headers.Builder()

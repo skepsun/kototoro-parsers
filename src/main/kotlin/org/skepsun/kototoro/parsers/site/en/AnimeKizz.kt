@@ -95,6 +95,42 @@ internal class AnimeKizz(context: ContentLoaderContext) :
         val chapterUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
 
+        val tsrScripts = doc.select("script.tsr-once")
+        for (script in tsrScripts) {
+            val content = script.html()
+            val jsonMatch = Regex("""__TSR__\.(?:initMatch|dehydrated)\s*\([^,]*,\s*(\{[\s\S]*?\})\s*\)""")
+                .find(content)
+            if (jsonMatch != null) {
+                val jsonStr = jsonMatch.groupValues[1]
+                val videoUrls = Regex("https?://[^\"'\\\\]+\\.(?:m3u8|mp4)", RegexOption.IGNORE_CASE)
+                    .findAll(jsonStr).map { it.value }.toList()
+                if (videoUrls.isNotEmpty()) {
+                    return videoUrls.mapIndexed { index, src ->
+                        ContentPage(
+                            id = generateUid("${chapterUrl}|$index"),
+                            url = src,
+                            preview = null,
+                            source = source,
+                        )
+                    }
+                }
+            }
+        }
+
+        val html = doc.outerHtml()
+        val videoUrls = Regex("""https?://[^\s"'<>]+\.(?:m3u8|mp4)""")
+            .findAll(html).map { it.value }.toList()
+        if (videoUrls.isNotEmpty()) {
+            return videoUrls.mapIndexed { index, src ->
+                ContentPage(
+                    id = generateUid("${chapterUrl}|$index"),
+                    url = src,
+                    preview = null,
+                    source = source,
+                )
+            }
+        }
+
         val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
             ?: doc.selectFirst("iframe[data-src]")?.attr("data-src")
         if (iframeSrc != null) {

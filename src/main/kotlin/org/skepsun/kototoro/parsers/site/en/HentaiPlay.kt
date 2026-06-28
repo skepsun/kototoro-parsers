@@ -149,6 +149,23 @@ internal class HentaiPlay(context: ContentLoaderContext) :
             ))
         }
 
+        val sourcePages = doc.select("source[src]").mapNotNull { src ->
+            val s = src.attr("src").takeIf { it.isNotBlank() && it.startsWith("http") }
+            if (s != null) ContentPage(
+                id = generateUid(s),
+                url = s, preview = null, source = source,
+            ) else null
+        }
+        if (sourcePages.isNotEmpty()) return sourcePages
+
+        val html = doc.outerHtml()
+        Regex("https?://hentaiplanet\\.info[^\"'\\s>]+\\.mp4", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
+            return listOf(ContentPage(
+                id = generateUid(m.value),
+                url = m.value, preview = null, source = source,
+            ))
+        }
+
         context.requestBrowserAction(this, chapterUrl)
         return emptyList()
     }

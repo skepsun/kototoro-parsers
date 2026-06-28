@@ -96,6 +96,48 @@ internal class GoGoAnime(context: ContentLoaderContext) :
         val chapterUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
 
+        val plainUrlIframe = doc.selectFirst("iframe[data-plain-url]")
+        if (plainUrlIframe != null) {
+            val plainUrl = plainUrlIframe.attr("data-plain-url").takeIf { it.isNotBlank() }
+            if (plainUrl != null) {
+                try {
+                    val iframeDoc = webClient.httpGet(plainUrl.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
+                    val sources = extractVideoSources(iframeDoc)
+                    if (sources.isNotEmpty()) {
+                        return sources.mapIndexed { index, src ->
+                            ContentPage(
+                                id = generateUid("${chapterUrl}|$index"),
+                                url = src,
+                                preview = null,
+                                source = source,
+                            )
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        val embedIframe = doc.selectFirst("iframe[src*=/embed]")
+        if (embedIframe != null) {
+            val embedUrl = embedIframe.attr("src").toAbsoluteUrl(domain)
+            try {
+                val embedDoc = webClient.httpGet(embedUrl, getRequestHeaders()).parseHtml()
+                val sources = extractVideoSources(embedDoc)
+                if (sources.isNotEmpty()) {
+                    return sources.mapIndexed { index, src ->
+                        ContentPage(
+                            id = generateUid("${chapterUrl}|$index"),
+                            url = src,
+                            preview = null,
+                            source = source,
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
         val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
             ?: doc.selectFirst("iframe[data-src]")?.attr("data-src")
         if (iframeSrc != null) {
@@ -122,6 +164,27 @@ internal class GoGoAnime(context: ContentLoaderContext) :
 
         context.requestBrowserAction(this, chapterUrl)
         return emptyList()
+    }
+
+    private fun extractVideoSources(doc: Document): List<String> {
+        val sources = LinkedHashSet<String>()
+
+        doc.select("video source[src]").forEach { src ->
+            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+        doc.select("source[src]").forEach { src ->
+            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+        doc.select("video[src]").forEach { v ->
+            v.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        }
+
+        val html = doc.outerHtml()
+        Regex("https?://[^\"'\\s>]+\\.(?:m3u8|mp4)", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
+            sources.add(m.value)
+        }
+
+        return sources.toList()
     }
 
     override fun getRequestHeaders() = Headers.Builder()

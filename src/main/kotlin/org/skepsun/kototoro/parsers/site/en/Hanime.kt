@@ -36,6 +36,7 @@ internal class Hanime(context: ContentLoaderContext) :
 
     private val apiBase = "https://search.htv-services.com"
     private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
+    private val knownCdnHosts = setOf("streamable.cloud")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY, SortOrder.RATING,
@@ -142,6 +143,36 @@ internal class Hanime(context: ContentLoaderContext) :
                     if (url.startsWith("http")) {
                         pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
                     }
+                }
+            }
+        }
+
+        val docHtml = doc.outerHtml().replace("\\u002F", "/").replace("\\/", "/")
+        Regex("https?://[^\"'\\s<>]+\\.m3u8", RegexOption.IGNORE_CASE).findAll(docHtml).forEach { m ->
+            val url = m.value
+            if (disallowedStreamHosts.none { url.contains(it) }) {
+                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+            }
+        }
+
+        doc.select("script:not([type])").forEach { script ->
+            val data = script.data()
+            if (data.contains("__NUXT__") || data.contains("window.__NUXT__")) {
+                runCatching {
+                    val jsonStr = data
+                        .substringAfter("__NUXT__")
+                        .substringAfter("=")
+                        .substringBefore(";\n")
+                        .substringBefore(";")
+                        .trim()
+                    Regex("https?://[^\"'\\\\]+m3u8[^\"'\\\\]*", RegexOption.IGNORE_CASE)
+                        .findAll(jsonStr)
+                        .forEach { m ->
+                            val url = m.value.replace("\\/", "/").replace("\\u002F", "/")
+                            if (disallowedStreamHosts.none { url.contains(it) }) {
+                                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+                            }
+                        }
                 }
             }
         }

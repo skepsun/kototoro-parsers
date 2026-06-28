@@ -190,6 +190,9 @@ internal class HentaiCloud(context: ContentLoaderContext) :
     private fun extractStreams(doc: Document): List<String> {
         val streams = LinkedHashSet<String>()
 
+        doc.select("source[src]").forEach { src ->
+            src.attr("src").takeIf { it.isNotBlank() }?.let { streams.add(it.toAbsoluteUrl(domain)) }
+        }
         doc.select("video source[src]").forEach { src ->
             src.attr("src").takeIf { it.isNotBlank() }?.let { streams.add(it.toAbsoluteUrl(domain)) }
         }
@@ -203,6 +206,9 @@ internal class HentaiCloud(context: ContentLoaderContext) :
         val html = doc.outerHtml()
         Regex("https?://[^\"'\\s>]+\\.(?:m3u8|mp4)", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
             streams.add(m.value)
+        }
+        Regex("/media/videos/(?:hd|iphone)/\\d+\\.mp4", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
+            streams.add(m.value.toAbsoluteUrl(domain))
         }
 
         return streams.toList()

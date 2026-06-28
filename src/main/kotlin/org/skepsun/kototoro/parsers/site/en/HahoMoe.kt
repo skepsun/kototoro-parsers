@@ -128,6 +128,41 @@ internal class HahoMoe(context: ContentLoaderContext) :
         val response = webClient.httpGet(chapterUrl, getRequestHeaders())
         val doc = response.parseHtml()
 
+        val embedIframe = doc.selectFirst("iframe[src*=/embed?]")
+        if (embedIframe != null) {
+            val embedUrl = embedIframe.attr("src").toAbsoluteUrl(domain)
+            try {
+                val embedDoc = webClient.httpGet(embedUrl, getRequestHeaders()).parseHtml()
+                val sources = embedDoc.select("source[src]").mapNotNull { src ->
+                    src.attr("src").takeIf { it.isNotBlank() }
+                }
+                if (sources.isNotEmpty()) {
+                    return sources.mapIndexed { index, src ->
+                        ContentPage(
+                            id = generateUid("embed:${chapter.id}|$index"),
+                            url = src.toAbsoluteUrl(domain),
+                            preview = null,
+                            source = source,
+                        )
+                    }
+                }
+                val html = embedDoc.outerHtml()
+                val videoUrls = Regex("https?://[^\"'\\s>]+\\.(?:m3u8|mp4)", RegexOption.IGNORE_CASE)
+                    .findAll(html).map { it.value }.toList()
+                if (videoUrls.isNotEmpty()) {
+                    return videoUrls.mapIndexed { index, src ->
+                        ContentPage(
+                            id = generateUid("embed:${chapter.id}|$index"),
+                            url = src,
+                            preview = null,
+                            source = source,
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
         val serverButtons = doc.select("[data-video], [data-url]")
         if (serverButtons.isNotEmpty()) {
             return serverButtons.mapIndexed { index, btn ->
