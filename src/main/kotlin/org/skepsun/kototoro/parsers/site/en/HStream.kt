@@ -92,8 +92,11 @@ internal class HStream(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val episodeLinks = doc.select("a[href*=/hentai/]").filter {
-            it.selectFirst("img") == null && it.text().trim().length < 80
+        val socialNames = setOf("facebook", "twitter", "discord", "instagram", "youtube", "telegram", "reddit")
+        val episodeLinks = doc.select("a[href*=/hentai/]").filter { a ->
+            val href = a.attr("href")
+            val text = a.text().trim().lowercase()
+            href.count { it == '/' } >= 3 && text !in socialNames
         }
         val chapters = if (episodeLinks.size > 1) {
             episodeLinks.mapIndexed { index, el ->

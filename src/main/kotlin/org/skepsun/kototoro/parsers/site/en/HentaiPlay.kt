@@ -182,26 +182,20 @@ internal class HentaiPlay(context: ContentLoaderContext) :
         } else {
             val tag = filter.tags.firstOrNull()?.key ?: ""
             val genreParam = if (tag.isNotEmpty()) "&genre=$tag" else ""
-            "https://$domain/hentai/?page=$page$genreParam"
+            "https://$domain/page/$page/$genreParam"
         }
     }
 
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        val cards = doc.select("a[href*=/hentai/episodes/]").filter { el ->
-            el.selectFirst("img[alt]") != null || el.selectFirst(".title, .name") != null
-        }
+        val cards = doc.select("article.item.item-post h2.entry-title a[href]")
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
-            if (href.count { it == '/' } < 3) continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
-            val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
-                ?: link.selectFirst(".title, .name")?.text()?.trim()
-                ?: link.attr("title").takeIf { it.isNotBlank() }
-                ?: link.text().trim().ifEmpty { continue }
-            val thumb = link.selectFirst("img[src]")?.let {
+            val title = link.text().trim().ifEmpty { continue }
+            val thumb = link.closest("article")?.selectFirst("img[src]")?.let {
                 val raw = it.attr("data-src").ifBlank { it.attr("src") }
                 raw.toAbsoluteUrlOrNull(domain)
             }

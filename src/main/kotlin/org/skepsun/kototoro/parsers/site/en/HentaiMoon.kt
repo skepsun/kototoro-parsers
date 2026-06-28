@@ -55,9 +55,8 @@ internal class HentaiMoon(context: ContentLoaderContext) :
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
-        val cards = doc.select(".list-videos, .video-grid, .video-list, article")
-        for (card in cards) {
-            val link = card.selectFirst("a[href]") ?: continue
+        val cards = doc.select("div.list-videos div.item a[href]")
+        for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             if (!seen.add(href)) continue
 
@@ -184,7 +183,7 @@ internal class HentaiMoon(context: ContentLoaderContext) :
             val tag = filter.tags.first().key.urlEncoded()
             "$base/genre/$tag?page=$page"
         } else {
-            "$base?page=$page"
+            "$base/latest-updates/$page/"
         }
     }
 

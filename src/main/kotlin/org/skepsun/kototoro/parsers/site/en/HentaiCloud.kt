@@ -75,42 +75,17 @@ internal class HentaiCloud(context: ContentLoaderContext) :
             } else null
         }.toSet()
 
-        val videoLinks = doc.select("a[href*=/video/]").filter { el ->
-            val href = el.attr("href")
-            el.selectFirst("img") == null && href.contains("episode", ignoreCase = true) &&
-                el.ownText().isNotBlank()
-        }
-        val chapters = if (videoLinks.isNotEmpty()) {
-            videoLinks.mapIndexed { index, el ->
-                val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
-                    ?: el.attr("href").toAbsoluteUrl(domain)
-                val epText = el.ownText().trim()
-                val epNum = epText.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
-                ContentChapter(
-                    id = generateUid(epUrl),
-                    url = epUrl.removePrefix("https://$domain"),
-                    title = epText.ifBlank { "Episode $epNum" },
-                    number = index + 1f,
-                    uploadDate = 0L,
-                    volume = 0,
-                    branch = null,
-                    scanlator = null,
-                    source = source,
-                )
-            }.toList()
-        } else {
-            listOf(ContentChapter(
-                id = generateUid("${manga.url}|video"),
-                url = manga.url,
-                title = "Watch",
-                number = 1f,
-                uploadDate = 0L,
-                volume = 0,
-                branch = null,
-                scanlator = null,
-                source = source,
-            ))
-        }
+        val chapters = listOf(ContentChapter(
+            id = generateUid("${manga.url}|video"),
+            url = manga.url,
+            title = "Watch",
+            number = 1f,
+            uploadDate = 0L,
+            volume = 0,
+            branch = null,
+            scanlator = null,
+            source = source,
+        ))
 
         return manga.copy(
             title = title,
@@ -179,16 +154,7 @@ internal class HentaiCloud(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
-        val cards = doc.select(".video-item a[href], .hentai-item a[href], .card a[href], article a[href], .post a[href]")
-        val links = if (cards.isNotEmpty()) cards else doc.select("a[href]").filter { a ->
-            val h = a.attr("href")
-            val hasImg = a.selectFirst("img") != null
-            val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
-                !h.contains("login") && !h.contains("signup") &&
-                !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
-                !h.contains("javascript") && h.startsWith("/") && h.count { it == '/' } >= 2
-            hasImg && notNav
-        }
+        val links = doc.select("div.video-item a[href*=/video/]")
         for (link in links) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")

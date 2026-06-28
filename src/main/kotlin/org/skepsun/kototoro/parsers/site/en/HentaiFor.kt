@@ -55,9 +55,8 @@ internal class HentaiFor(context: ContentLoaderContext) :
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
-        val cards = doc.select(".poster, .grid-item, .item")
-        for (card in cards) {
-            val link = card.selectFirst("a[href]") ?: continue
+        val cards = doc.select("div.shortstory a[href]")
+        for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             if (!seen.add(href)) continue
 

@@ -94,16 +94,7 @@ internal class Hentaibros(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        val cards = doc.select(".video-item a[href], .hentai-item a[href], .card a[href], article a[href], .post a[href]")
-        val links = if (cards.isNotEmpty()) cards else doc.select("a[href]").filter { a ->
-            val h = a.attr("href")
-            val hasImg = a.selectFirst("img") != null
-            val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
-                !h.contains("login") && !h.contains("signup") &&
-                !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
-                !h.contains("javascript") && h.startsWith("/") && h.count { it == '/' } >= 2
-            hasImg && notNav
-        }
+        val links = doc.select("article.loop-video.video-preview-item a[href]")
         for (link in links) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
@@ -132,7 +123,7 @@ internal class Hentaibros(context: ContentLoaderContext) :
             val q = filter.query.urlEncoded()
             "https://$domain/search?q=$q&genre=$tagParam&page=$page"
         } else {
-            "https://$domain/anime?genre=$tagParam&page=$page"
+            "https://$domain/page/$page/?genre=$tagParam"
         }
     }
 

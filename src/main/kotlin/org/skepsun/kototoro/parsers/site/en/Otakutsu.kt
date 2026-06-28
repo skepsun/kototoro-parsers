@@ -58,7 +58,7 @@ internal class Otakutsu(context: ContentLoaderContext) :
             val key = a.attr("href").substringAfterLast("/").trimEnd('/')
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key.lowercase(), source) else null
         }.toSet()
-        val chapters = doc.select("a[href*=/watch/]").mapIndexed { index, el ->
+        val chapters = doc.select("""a[href^="/watch/"][href*="?ep="]""").mapIndexed { index, el ->
             val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() } ?: el.attr("href").toAbsoluteUrl(domain)
             ContentChapter(
                 id = generateUid(epUrl), url = epUrl.removePrefix("https://$domain"),
@@ -91,19 +91,7 @@ internal class Otakutsu(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        var cards = doc.select("a.film-poster-ahref[href], a.item[href], .card a[href], .video-item a[href], .video-card a[href], article a[href], .post a[href]").toList()
-        if (cards.isEmpty()) {
-            cards = doc.select("a[href]").filter { a ->
-                val h = a.attr("href")
-                val hasContent = a.selectFirst("img") != null || a.selectFirst("h3,h2,h4,.title,.name") != null
-                val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
-                    !h.contains("login") && !h.contains("signup") && !h.contains("random") &&
-                    !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
-                    !h.contains("javascript") && !h.contains("facebook") && !h.contains("twitter") &&
-                    h.startsWith("/") && h.count { it == '/' } >= 2 && h.length > 5
-                hasContent || notNav
-            }
-        }
+        val cards = doc.select("a[href^=\"/watch/\"][class*=\"relative\"]")
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
@@ -120,7 +108,7 @@ internal class Otakutsu(context: ContentLoaderContext) :
                 publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
                 coverUrl = thumb, largeCoverUrl = thumb,
                 authors = emptySet(), tags = emptySet(), state = null, description = null,
-                contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
+                contentRating = ContentRating.SAFE, source = source, rating = RATING_UNKNOWN,
             ))
         }
         return items

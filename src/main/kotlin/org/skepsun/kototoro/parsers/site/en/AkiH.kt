@@ -69,7 +69,7 @@ internal class AkiH(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val epLinks = doc.select("a[href*=/episode/], a.film-poster-ahref")
+        val epLinks = doc.select("div.live_content div.item a.live-thumbnail[href]")
         val chapters = if (epLinks.isNotEmpty()) {
             epLinks.mapIndexed { idx, el ->
                 val href = el.attr("abs:href").takeIf { it.isNotBlank() }
@@ -191,41 +191,15 @@ internal class AkiH(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        val cards = doc.select("a.film-poster-ahref[href], a.dynamic-name[href]")
-        if (cards.isEmpty()) {
-            val fallback = doc.select("a[href]").filter { a ->
-                val h = a.attr("href")
-                h.startsWith("/") && h.count { it == '/' } == 1 && h.length > 3 &&
-                    !h.contains("random") && !h.contains("popular") && !h.contains("genre") &&
-                    !h.contains("filter") && !h.contains("search") && !h.contains("login") &&
-                    !h.contains("cdn.") && !h.contains("static") && !h.contains("assets")
-            }
-            for (link in fallback) {
-                val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
-                val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
-                if (!seen.add(absoluteUrl)) continue
-                val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
-                    ?: link.text().trim().ifEmpty { continue }
-                val thumb = link.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
-                items.add(Content(
-                    id = generateUid(absoluteUrl),
-                    url = absoluteUrl.removePrefix("https://$domain"),
-                    publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
-                    coverUrl = thumb, largeCoverUrl = thumb,
-                    authors = emptySet(), tags = emptySet(), state = null, description = null,
-                    contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
-                ))
-            }
-            return items
-        }
+        val cards = doc.select("div.flw-item a.film-poster-ahref[href]")
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
-            val title = link.text().trim().ifEmpty {
-                link.selectFirst("img[alt]")?.attr("alt")?.trim()
-            }?.ifBlank { continue } ?: continue
-            val thumb = link.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
+            val title = link.attr("title").takeIf { it.isNotBlank() }
+                ?: link.text().trim().ifEmpty { continue }
+            val thumb = link.selectFirst("img.film-poster-img")?.attr("data-src")
+                ?.toAbsoluteUrlOrNull(domain)
             items.add(Content(
                 id = generateUid(absoluteUrl),
                 url = absoluteUrl.removePrefix("https://$domain"),
