@@ -64,7 +64,15 @@ internal class BakaTsuki(context: ContentLoaderContext) :
             val offset = (page - 1) * pageSize
             return "https://$domain/project/index.php?title=Special:Search&search=$q&offset=$offset"
         }
-        return "https://$domain/project/index.php?title=Category:Light_novel_(English)&pagefrom=${(page - 1) * pageSize}"
+        val tag = filter.tags.firstOrNull()?.key ?: "light-novel"
+        val category = when (tag) {
+            "light-novel" -> "Light_novel_(English)"
+            "web-novel" -> "Web_novel"
+            "teasers" -> "Teasers_(English)"
+            "alt-language" -> "Alternative_Language"
+            else -> "Light_novel_(English)"
+        }
+        return "https://$domain/project/index.php?title=Category:$category"
     }
 
     private fun parseList(doc: Document): List<Content> {
