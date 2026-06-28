@@ -1,0 +1,79 @@
+package org.skepsun.kototoro.parsers.site.en
+
+import org.jsoup.nodes.Document
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.config.ConfigKey
+import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.model.Content
+import org.skepsun.kototoro.parsers.model.ContentChapter
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
+import org.skepsun.kototoro.parsers.model.ContentPage
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentType
+import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
+import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.util.generateUid
+import org.skepsun.kototoro.parsers.util.parseHtml
+import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
+import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.util.EnumSet
+import okhttp3.Headers
+
+@ContentSourceParser("ANIMETSU", "Animetsu", "en", type = ContentType.VIDEO)
+internal class Animetsu(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.ANIMETSU, pageSize = 24) {
+
+    override val configKeyDomain = ConfigKey.Domain("animetsu.live")
+
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
+
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(isSearchSupported = true)
+
+    override suspend fun getFilterOptions() = ContentListFilterOptions(
+        availableContentTypes = EnumSet.of(ContentType.VIDEO),
+    )
+
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+        val q = filter.query?.urlEncoded() ?: ""
+        val url = if (q.isNotEmpty()) "https://$domain/search?query=$q"
+        else "https://$domain/?page=$page"
+        val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+        return parseList(doc)
+    }
+
+    override suspend fun getDetails(manga: Content) = manga.copy(contentRating = ContentRating.SAFE)
+
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
+        context.requestBrowserAction(this, chapter.url.toAbsoluteUrl(domain))
+        return emptyList()
+    }
+
+    override fun getRequestHeaders() = Headers.Builder()
+        .add("User-Agent", context.getDefaultUserAgent()).build()
+
+    private fun parseList(doc: Document): List<Content> {
+        val items = ArrayList<Content>()
+        val seen = LinkedHashSet<String>()
+        for (link in doc.select("a[href*=/anime/], a[href*=/watch/]")) {
+            val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
+            val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
+            if (!seen.add(absoluteUrl)) continue
+            val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
+                ?: link.text().trim().ifEmpty { continue }
+            items.add(Content(
+                id = generateUid(absoluteUrl),
+                url = absoluteUrl.removePrefix("https://$domain"),
+                publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
+                coverUrl = null, largeCoverUrl = null,
+                authors = emptySet(), tags = emptySet(), state = null, description = null,
+                contentRating = ContentRating.SAFE, source = source, rating = RATING_UNKNOWN,
+            ))
+        }
+        return items
+    }
+}
