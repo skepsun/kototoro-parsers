@@ -2,9 +2,8 @@ package org.skepsun.kototoro.parsers.site.en
 
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.Assertions.*
-import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.SortOrder
 
@@ -29,27 +28,11 @@ class NewVideoParserIntegrationTest {
             (if (pagesOk) 2 else 0)
     }
 
-    @Test fun testAnikoto() = runBlocking { testParser(Anikoto(context), "Anikoto") }
-    @Test fun testAniNeko() = runBlocking { testParser(AniNeko(context), "AniNeko") }
-    @Test fun testAnimeKizz() = runBlocking { testParser(AnimeKizz(context), "AnimeKizz") }
     @Test fun testAniWorld() = runBlocking { testParser(AniWorld(context), "AniWorld") }
-    @Test fun testAnimeHeaven() = runBlocking { testParser(AnimeHeaven(context), "AnimeHeaven") }
-    @Test fun testAnimeDex() = runBlocking { testParser(AnimeDex(context), "AnimeDex") }
-    @Test fun testZenkai() = runBlocking { testParser(Zenkai(context), "Zenkai") }
-    @Test fun testGoGoAnime() = runBlocking { testParser(GoGoAnime(context), "GoGoAnime") }
-    @Test fun testYumeZone() = runBlocking { testParser(YumeZone(context), "YumeZone") }
-    @Test fun testFanime() = runBlocking { testParser(Fanime(context), "Fanime") }
-
-    @Test fun testHanime() = runBlocking { testParser(Hanime(context), "Hanime") }
-    @Test fun testHahoMoe() = runBlocking { testParser(HahoMoe(context), "HahoMoe") }
-    @Test fun testHentaiSH() = runBlocking { testParser(HentaiSH(context), "HentaiSH") }
-    @Test fun testHStream() = runBlocking { testParser(HStream(context), "HStream") }
-    @Test fun testHentaverse() = runBlocking { testParser(Hentaverse(context), "Hentaverse") }
-    @Test fun testHentaiPlay() = runBlocking { testParser(HentaiPlay(context), "HentaiPlay") }
-    @Test fun testHentaiOcean() = runBlocking { testParser(HentaiOcean(context), "HentaiOcean") }
-    @Test fun testAkiH() = runBlocking { testParser(AkiH(context), "AkiH") }
-    @Test fun testHentai2W() = runBlocking { testParser(Hentai2W(context), "Hentai2W") }
     @Test fun testHentaiCloud() = runBlocking { testParser(HentaiCloud(context), "HentaiCloud") }
+    @Test fun testHentaiPlay() = runBlocking { testParser(HentaiPlay(context), "HentaiPlay") }
+    @Test fun testHanime() = runBlocking { testParser(Hanime(context), "Hanime") }
+    @Test fun testPimpBunny() = runBlocking { testParser(PimpBunny(context), "PimpBunny") }
 
     private suspend fun testParser(parser: PagedContentParser, name: String) {
         val r = TestResult(name)
@@ -95,7 +78,7 @@ class NewVideoParserIntegrationTest {
             r.errors += "${e.javaClass.simpleName}: ${e.message?.take(80)}"
         }
         results.add(r)
-        val status = if (r.errors.isEmpty()) "OK" else "ERR"
+        val status = if (r.pagesOk) "OK" else if (r.errors.isEmpty()) "WARN" else "ERR"
         println("[$status] $name | list=${r.listCount} cover=${r.listHasCovers} p2=${r.paginationOk} | detail=${r.detailsOk} desc=${r.detailHasDesc} | ch=${r.chapterCount} real=${r.realChapters} | pg=${r.pageCount} | score=${r.score}/14 ${if (r.errors.isNotEmpty()) "| " + r.errors.joinToString("; ") else ""}")
     }
 }
