@@ -65,10 +65,17 @@ internal class GoGoAnime(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val chapterLinks = doc.select("a[href*=/category/], a[href*=/episode/], a[href*=/watch/]")
+        val selfUrl = manga.url.trimEnd('/')
+        val chapterLinks = doc.select("a[href*=-episode-], a[href*=/episode/], a[href*=/watch/]").filter { el ->
+            val href = el.attr("href").trimEnd('/')
+            el.text().trim().isNotBlank() &&
+                href != selfUrl &&
+                href.count { it == '/' } >= 2 &&
+                !href.contains("/genre/") && !href.contains("/tag/") && !href.contains("/category/")
+        }
         val chapters = chapterLinks.mapIndexed { index, link ->
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: return@mapIndexed null
-            val chTitle = link.text().trim().ifBlank { "Episode ${index + 1}" }
+            val chTitle = link.ownText().trim().ifBlank { "Episode ${index + 1}" }
             val absoluteUrl = href.toAbsoluteUrl(domain)
             ContentChapter(
                 id = generateUid(absoluteUrl),

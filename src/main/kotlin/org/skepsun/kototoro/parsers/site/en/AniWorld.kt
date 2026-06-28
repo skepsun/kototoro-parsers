@@ -73,17 +73,33 @@ internal class AniWorld(context: ContentLoaderContext) :
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
 
-        val chapters = doc.select("a[href*=/episode-]").mapIndexed { index, el ->
-            val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
-                ?: el.attr("href").toAbsoluteUrl(domain)
-            val epNum = el.text().trim().filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
-            ContentChapter(
-                id = generateUid(epUrl),
-                url = epUrl.removePrefix("https://$domain"),
-                title = "Episode $epNum", number = index + 1f,
-                uploadDate = 0L, volume = 0, branch = null, scanlator = null, source = source,
-            )
-        }.toList()
+        val episodeLinks = doc.select("a[href*=/episode-], a[href*=/staffel-], a[href*=-folge-]").filter { el ->
+            el.selectFirst("img") == null && el.ownText().isNotBlank() &&
+                !el.ownText().contains("Next", ignoreCase = true) &&
+                !el.ownText().contains("Prev", ignoreCase = true) &&
+                !el.ownText().contains("Filter", ignoreCase = true)
+        }
+        val chapters = if (episodeLinks.isNotEmpty()) {
+            episodeLinks.mapIndexed { index, el ->
+                val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
+                    ?: el.attr("href").toAbsoluteUrl(domain)
+                val epText = el.ownText().trim()
+                val epNum = epText.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
+                ContentChapter(
+                    id = generateUid(epUrl),
+                    url = epUrl.removePrefix("https://$domain"),
+                    title = epText.ifBlank { "Episode $epNum" },
+                    number = index + 1f,
+                    uploadDate = 0L, volume = 0, branch = null, scanlator = null, source = source,
+                )
+            }.toList()
+        } else {
+            listOf(ContentChapter(
+                id = generateUid(manga.url), url = manga.url, title = "Watch",
+                number = 1f, uploadDate = 0L, volume = 0,
+                branch = null, scanlator = null, source = source,
+            ))
+        }
 
         return manga.copy(
             title = title, description = description ?: manga.description,

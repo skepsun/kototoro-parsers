@@ -64,10 +64,17 @@ internal class AnimeKizz(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val chapterLinks = doc.select("a[href*=/watch/]")
+        val selfUrl = manga.url.trimEnd('/')
+        val chapterLinks = doc.select("a[href*=/watch/], a[href*=-episode-]").filter { el ->
+            val href = el.attr("href").trimEnd('/')
+            el.text().trim().isNotBlank() &&
+                href != selfUrl &&
+                href.count { it == '/' } >= 2 &&
+                !href.contains("/genre/") && !href.contains("/tag/") && !href.contains("/category/")
+        }
         val chapters = chapterLinks.mapIndexed { index, link ->
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: return@mapIndexed null
-            val chTitle = link.text().trim().ifBlank { "Episode ${index + 1}" }
+            val chTitle = link.ownText().trim().ifBlank { "Episode ${index + 1}" }
             val absoluteUrl = href.toAbsoluteUrl(domain)
             ContentChapter(
                 id = generateUid(absoluteUrl),
@@ -87,7 +94,13 @@ internal class AnimeKizz(context: ContentLoaderContext) :
             coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover,
             contentRating = ContentRating.SAFE,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
-            chapters = chapters.ifEmpty { manga.chapters },
+            chapters = chapters.ifEmpty {
+                listOf(ContentChapter(
+                    id = generateUid(manga.url), url = manga.url, title = "Watch",
+                    number = 1f, uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                ))
+            },
         )
     }
 

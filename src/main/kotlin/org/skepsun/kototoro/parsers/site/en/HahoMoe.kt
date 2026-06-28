@@ -88,19 +88,24 @@ internal class HahoMoe(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val episodeLinks = doc.select("a[href*=/episode/], a[href*=/ep-], a[href*=/anime/]").filter {
-            it.selectFirst("img") == null && it.text().trim().length < 80
+        val selfUrl = manga.url.trimEnd('/')
+        val episodeLinks = doc.select("a[href*=/anime/]").filter { el ->
+            val href = el.attr("href").trimEnd('/')
+            el.selectFirst("img") == null && el.ownText().isNotBlank() &&
+                href.count { it == '/' } >= 3 &&
+                href.substringAfterLast("/").any { it.isDigit() } &&
+                href != selfUrl
         }
         val chapters = if (episodeLinks.isNotEmpty()) {
             episodeLinks.mapIndexed { index, el ->
                 val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
                     ?: el.attr("href").toAbsoluteUrl(domain)
-                val epNum = el.selectFirst("[data-episode]")?.attr("data-episode")
-                    ?: el.text().trim().filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
+                val epText = el.ownText().trim()
+                val epNum = epText.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
                 ContentChapter(
                     id = generateUid(epUrl),
                     url = epUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
-                    title = "Episode $epNum", number = index + 1f,
+                    title = epText.ifBlank { "Episode $epNum" }, number = index + 1f,
                     uploadDate = 0L, volume = 0, branch = null, scanlator = null, source = source,
                 )
             }.toList()

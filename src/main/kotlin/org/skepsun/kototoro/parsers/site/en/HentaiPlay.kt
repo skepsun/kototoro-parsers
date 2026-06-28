@@ -88,14 +88,14 @@ internal class HentaiPlay(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val episodeLinks = doc.select("a[href*=/hentai/episodes/]").filter {
-            it.selectFirst("img") == null && it.text().trim().length < 80
+        val episodeLinks = doc.select("a[href*=-episode-]").filter { el ->
+            el.selectFirst("img") == null && el.ownText().isNotBlank()
         }
         val chapters = if (episodeLinks.isNotEmpty()) {
             episodeLinks.mapIndexed { index, el ->
                 val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
                     ?: el.attr("href").toAbsoluteUrl(domain)
-                val text = el.text().trim()
+                val text = el.ownText().trim()
                 val epNum = text.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
                 ContentChapter(
                     id = generateUid(epUrl),

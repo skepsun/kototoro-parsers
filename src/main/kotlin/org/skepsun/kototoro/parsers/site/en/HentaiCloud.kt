@@ -75,24 +75,49 @@ internal class HentaiCloud(context: ContentLoaderContext) :
             } else null
         }.toSet()
 
-        val chapter = ContentChapter(
-            id = generateUid("${manga.url}|video"),
-            url = manga.url,
-            title = "Watch",
-            number = 1f,
-            uploadDate = 0L,
-            volume = 0,
-            branch = null,
-            scanlator = null,
-            source = source,
-        )
+        val videoLinks = doc.select("a[href*=/video/]").filter { el ->
+            val href = el.attr("href")
+            el.selectFirst("img") == null && href.contains("episode", ignoreCase = true) &&
+                el.ownText().isNotBlank()
+        }
+        val chapters = if (videoLinks.isNotEmpty()) {
+            videoLinks.mapIndexed { index, el ->
+                val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
+                    ?: el.attr("href").toAbsoluteUrl(domain)
+                val epText = el.ownText().trim()
+                val epNum = epText.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
+                ContentChapter(
+                    id = generateUid(epUrl),
+                    url = epUrl.removePrefix("https://$domain"),
+                    title = epText.ifBlank { "Episode $epNum" },
+                    number = index + 1f,
+                    uploadDate = 0L,
+                    volume = 0,
+                    branch = null,
+                    scanlator = null,
+                    source = source,
+                )
+            }.toList()
+        } else {
+            listOf(ContentChapter(
+                id = generateUid("${manga.url}|video"),
+                url = manga.url,
+                title = "Watch",
+                number = 1f,
+                uploadDate = 0L,
+                volume = 0,
+                branch = null,
+                scanlator = null,
+                source = source,
+            ))
+        }
 
         return manga.copy(
             title = title,
             description = description?.ifBlank { null },
             largeCoverUrl = cover ?: manga.largeCoverUrl,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
-            chapters = listOf(chapter),
+            chapters = chapters,
         )
     }
 
