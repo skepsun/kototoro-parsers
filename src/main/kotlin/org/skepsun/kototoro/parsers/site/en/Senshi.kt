@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -32,16 +33,17 @@ internal class Senshi(context: ContentLoaderContext) :
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED, SortOrder.POPULARITY)
 
     override val filterCapabilities: ContentListFilterCapabilities
-        get() = ContentListFilterCapabilities(isSearchSupported = true)
+        get() = ContentListFilterCapabilities(
+            isSearchSupported = true, isMultipleTagsSupported = true,
+        )
 
     override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableContentTypes = EnumSet.of(ContentType.VIDEO),
+        availableTags = buildGenreTags(),
     )
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val q = filter.query?.urlEncoded() ?: ""
-        val url = if (q.isNotEmpty()) "https://$domain/search?q=$q"
-        else "https://$domain/?page=$page"
+        val url = buildListUrl(page, order, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         return parseList(doc)
     }
@@ -55,6 +57,36 @@ internal class Senshi(context: ContentLoaderContext) :
 
     override fun getRequestHeaders() = Headers.Builder()
         .add("User-Agent", context.getDefaultUserAgent()).build()
+
+    private fun buildGenreTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
+        tags += ContentTag("Action", "action", source)
+        tags += ContentTag("Adventure", "adventure", source)
+        tags += ContentTag("Comedy", "comedy", source)
+        tags += ContentTag("Drama", "drama", source)
+        tags += ContentTag("Fantasy", "fantasy", source)
+        tags += ContentTag("Horror", "horror", source)
+        tags += ContentTag("Mecha", "mecha", source)
+        tags += ContentTag("Music", "music", source)
+        tags += ContentTag("Mystery", "mystery", source)
+        tags += ContentTag("Romance", "romance", source)
+        tags += ContentTag("Sci-Fi", "sci-fi", source)
+        tags += ContentTag("Slice of Life", "slice-of-life", source)
+        tags += ContentTag("Sports", "sports", source)
+        tags += ContentTag("Supernatural", "supernatural", source)
+        tags += ContentTag("Thriller", "thriller", source)
+        return tags
+    }
+
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val tagParam = filter.tags.joinToString(",") { it.key }
+        return if (!filter.query.isNullOrBlank()) {
+            val q = filter.query.urlEncoded()
+            "https://$domain/search?q=$q&genre=$tagParam&page=$page"
+        } else {
+            "https://$domain/?page=$page"
+        }
+    }
 
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()

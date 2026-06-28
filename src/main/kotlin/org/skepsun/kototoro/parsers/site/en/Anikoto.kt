@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -31,20 +32,24 @@ internal class Anikoto(context: ContentLoaderContext) :
     override val configKeyDomain = ConfigKey.Domain("anikototv.to")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-        SortOrder.UPDATED,
-        SortOrder.POPULARITY,
-        SortOrder.ALPHABETICAL,
+        SortOrder.UPDATED, SortOrder.POPULARITY, SortOrder.ALPHABETICAL, SortOrder.NEWEST,
     )
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
-            isSearchSupported = true,
-            isMultipleTagsSupported = false,
+            isSearchSupported = true, isMultipleTagsSupported = true,
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val doc = webClient.httpGet("https://$domain/home", getRequestHeaders()).parseHtml()
+        val genres = doc.select("#menu ul.c4 a[href*=/genre/]").mapNotNull { a ->
+            val title = a.attr("title").ifBlank { a.text().trim() }
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (title.isNotBlank() && key.isNotBlank()) ContentTag(title, key, source) else null
+        }
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
+            availableTags = genres.toSet(),
         )
     }
 
@@ -61,8 +66,7 @@ internal class Anikoto(context: ContentLoaderContext) :
 
         val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
             ?.removeSuffix(" - Anikoto")?.trim()
-            ?: doc.selectFirst(".binfo h1.title")?.text()?.trim()
-            ?: manga.title
+            ?: doc.selectFirst(".binfo h1.title")?.text()?.trim() ?: manga.title
 
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
             ?: doc.selectFirst(".binfo .synopsis .content")?.text()?.trim()
@@ -73,39 +77,19 @@ internal class Anikoto(context: ContentLoaderContext) :
         val mangaId = doc.selectFirst("script:containsData(mangaId)")?.data()
             ?.let { Regex("mangaId\\s*=\\s*(\\d+)").find(it)?.groupValues?.get(1) }
 
-        val episodeSections = doc.select("#w-episodes a[href*=/watch/]")
-        val chapters = episodeSections.mapIndexed { index, el ->
-            val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() } ?: el.attr("href").toAbsoluteUrl(domain)
-            val epNum = el.text().trim().removePrefix("EP").trim()
-            ContentChapter(
-                id = generateUid(epUrl),
-                url = epUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
-                title = "Episode $epNum",
-                number = index + 1f,
-                uploadDate = 0L,
-                volume = 0,
-                branch = null,
-                scanlator = null,
-                source = source,
-            )
-        }.toList()
+        val authors = doc.select(".binfo .info .names")?.text()
+            ?.split(";")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
 
-        val fallbackChapters = if (chapters.isEmpty()) {
-            listOf(
-                ContentChapter(
-                    id = generateUid(manga.url),
-                    url = manga.url,
-                    title = "Watch",
-                    number = 1f,
-                    uploadDate = 0L,
-                    volume = 0,
-                    branch = null,
-                    scanlator = null,
-                    source = source,
-                )
-            )
+        val tags = doc.select(".binfo .bmeta a[href*=/genre/]").mapNotNull { a ->
+            val text = a.text().trim()
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
+        }.toSet()
+
+        val chapters = if (mangaId != null) {
+            fetchEpisodeList(mangaId)
         } else {
-            chapters
+            emptyList()
         }
 
         return manga.copy(
@@ -113,8 +97,16 @@ internal class Anikoto(context: ContentLoaderContext) :
             description = description?.ifBlank { null },
             coverUrl = cover ?: manga.coverUrl,
             largeCoverUrl = cover ?: manga.largeCoverUrl,
+            authors = if (authors.isNotEmpty()) authors else manga.authors,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.SAFE,
-            chapters = fallbackChapters,
+            chapters = chapters.ifEmpty {
+                listOf(ContentChapter(
+                    id = generateUid(manga.url), url = manga.url, title = "Watch",
+                    number = 1f, uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                ))
+            },
         )
     }
 
@@ -124,18 +116,14 @@ internal class Anikoto(context: ContentLoaderContext) :
         val doc = response.parseHtml()
 
         val videoEl = doc.selectFirst("video source[src], video[src], iframe[src]")
-        val videoUrl = videoEl?.attr("src")?.takeIf { it.isNotBlank() }
-            ?: videoEl?.attr("data-src")?.takeIf { it.isNotBlank() }
+        val videoUrl = videoEl?.attr("src")?.takeIf { it.startsWith("http") }
+            ?: videoEl?.attr("data-src")?.takeIf { it.startsWith("http") }
 
-        if (videoUrl != null && videoUrl.startsWith("http")) {
-            return listOf(
-                ContentPage(
-                    id = generateUid("video:${chapter.id}"),
-                    url = videoUrl,
-                    preview = null,
-                    source = source,
-                )
-            )
+        if (videoUrl != null) {
+            return listOf(ContentPage(
+                id = generateUid("video:${chapter.id}"),
+                url = videoUrl, preview = null, source = source,
+            ))
         }
 
         context.requestBrowserAction(this, chapterUrl)
@@ -145,17 +133,43 @@ internal class Anikoto(context: ContentLoaderContext) :
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Referer", "https://$domain/")
         .add("User-Agent", context.getDefaultUserAgent())
+        .add("X-Requested-With", "XMLHttpRequest")
         .build()
 
+    private suspend fun fetchEpisodeList(animeId: String): List<ContentChapter> {
+        return try {
+            val url = "https://$domain/ajax/episode/list/$animeId"
+            val response = webClient.httpGet(url, getRequestHeaders())
+            val doc = response.parseHtml()
+            val episodes = doc.select("li a[data-num]")
+            episodes.map { el ->
+                val num = el.attr("data-num")
+                val epId = el.attr("data-id")
+                ContentChapter(
+                    id = generateUid("$animeId|$epId"),
+                    url = "-episode-$num",
+                    title = "Episode $num",
+                    number = num.toFloatOrNull() ?: 0f,
+                    uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val tagParam = filter.tags.joinToString(",") { it.key }
         return if (!filter.query.isNullOrBlank()) {
             val q = filter.query.urlEncoded()
             val sortParam = when (order) {
-                SortOrder.POPULARITY -> "&sort=popular"
-                SortOrder.ALPHABETICAL -> "&sort=az"
-                else -> "&sort=default"
+                SortOrder.POPULARITY -> "popular"
+                SortOrder.ALPHABETICAL -> "az"
+                SortOrder.NEWEST -> "newest"
+                else -> "default"
             }
-            "https://$domain/filter?keyword=$q&type=&status=&season=&language=$sortParam&page=$page"
+            "https://$domain/filter?keyword=$q&type=&status=&season=&language=&genre=$tagParam&sort=$sortParam&page=$page"
         } else {
             "https://$domain/home"
         }
@@ -164,39 +178,23 @@ internal class Anikoto(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-
         val cards = doc.select("a.item[href*=/watch/]")
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
-
             val title = link.selectFirst(".name.d-title")?.text()?.trim()
-                ?: link.selectFirst("img[alt]")?.attr("alt")?.trim()
-                ?: continue
-
+                ?: link.selectFirst("img[alt]")?.attr("alt")?.trim() ?: continue
             val thumb = link.selectFirst(".poster img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
-
-            items.add(
-                Content(
-                    id = generateUid(absoluteUrl),
-                    url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
-                    publicUrl = absoluteUrl,
-                    title = title,
-                    altTitles = emptySet(),
-                    coverUrl = thumb,
-                    largeCoverUrl = thumb,
-                    authors = emptySet(),
-                    tags = emptySet(),
-                    state = null,
-                    description = null,
-                    contentRating = ContentRating.SAFE,
-                    source = source,
-                    rating = RATING_UNKNOWN,
-                ),
-            )
+            items.add(Content(
+                id = generateUid(absoluteUrl),
+                url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
+                coverUrl = thumb, largeCoverUrl = thumb,
+                authors = emptySet(), tags = emptySet(), state = null, description = null,
+                contentRating = ContentRating.SAFE, source = source, rating = RATING_UNKNOWN,
+            ))
         }
-
         return items
     }
 }

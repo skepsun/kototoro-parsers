@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -38,12 +39,13 @@ internal class YumeZone(context: ContentLoaderContext) :
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
             isSearchSupported = true,
-            isMultipleTagsSupported = false,
+            isMultipleTagsSupported = true,
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
+            availableTags = buildFilterTags(),
         )
     }
 
@@ -68,6 +70,12 @@ internal class YumeZone(context: ContentLoaderContext) :
 
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
             ?: doc.selectFirst(".poster img, .cover img")?.attr("src")?.toAbsoluteUrlOrNull(domain)
+
+        val tags = doc.select("a[href*=/genre/]").mapNotNull { a ->
+            val text = a.text().trim()
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
+        }.toSet()
 
         val episodeLinks = doc.select("a[href*=/watch/]")
         val chapters = episodeLinks.mapIndexed { index, el ->
@@ -110,6 +118,7 @@ internal class YumeZone(context: ContentLoaderContext) :
             coverUrl = cover ?: manga.coverUrl,
             largeCoverUrl = cover ?: manga.largeCoverUrl,
             contentRating = ContentRating.SAFE,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
             chapters = fallbackChapters,
         )
     }
@@ -143,16 +152,67 @@ internal class YumeZone(context: ContentLoaderContext) :
         .add("User-Agent", context.getDefaultUserAgent())
         .build()
 
+    private fun buildFilterTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
+        tags += ContentTag("Action", "action", source)
+        tags += ContentTag("Adventure", "adventure", source)
+        tags += ContentTag("Comedy", "comedy", source)
+        tags += ContentTag("Drama", "drama", source)
+        tags += ContentTag("Fantasy", "fantasy", source)
+        tags += ContentTag("Horror", "horror", source)
+        tags += ContentTag("Mecha", "mecha", source)
+        tags += ContentTag("Music", "music", source)
+        tags += ContentTag("Mystery", "mystery", source)
+        tags += ContentTag("Romance", "romance", source)
+        tags += ContentTag("Sci-Fi", "sci-fi", source)
+        tags += ContentTag("Slice of Life", "slice-of-life", source)
+        tags += ContentTag("Sports", "sports", source)
+        tags += ContentTag("Supernatural", "supernatural", source)
+        tags += ContentTag("Thriller", "thriller", source)
+        tags += ContentTag("Shounen", "shounen", source)
+        tags += ContentTag("Seinen", "seinen", source)
+        tags += ContentTag("Shoujo", "shoujo", source)
+        tags += ContentTag("Josei", "josei", source)
+        tags += ContentTag("Ecchi", "ecchi", source)
+        tags += ContentTag("Harem", "harem", source)
+        tags += ContentTag("Isekai", "isekai", source)
+        tags += ContentTag("Magic", "magic", source)
+        tags += ContentTag("Martial Arts", "martial-arts", source)
+        tags += ContentTag("Military", "military", source)
+        tags += ContentTag("School", "school", source)
+        tags += ContentTag("Super Power", "super-power", source)
+        tags += ContentTag("Vampire", "vampire", source)
+        tags += ContentTag("Game", "game", source)
+        tags += ContentTag("Historical", "historical", source)
+        tags += ContentTag("Kids", "kids", source)
+        tags += ContentTag("Parody", "parody", source)
+        tags += ContentTag("Samurai", "samurai", source)
+        tags += ContentTag("Psychological", "psychological", source)
+        tags += ContentTag("Demons", "demons", source)
+        tags += ContentTag("Space", "space", source)
+        tags += ContentTag("Cars", "cars", source)
+        tags += ContentTag("Dementia", "dementia", source)
+        tags += ContentTag("Police", "police", source)
+        tags += ContentTag("Mahou Shoujo", "mahou-shoujo", source)
+        tags += ContentTag("Shoujo Ai", "shoujo-ai", source)
+        tags += ContentTag("Shounen Ai", "shounen-ai", source)
+        return tags
+    }
+
     private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         return if (!filter.query.isNullOrBlank()) {
             val q = filter.query.urlEncoded()
-            "https://$domain/search?q=$q&page=$page"
+            val tagParam = filter.tags.joinToString(",") { it.key }
+            val genreParam = if (tagParam.isNotEmpty()) "&genre=$tagParam" else ""
+            "https://$domain/search?q=$q&page=$page$genreParam"
         } else {
             val sortParam = when (order) {
                 SortOrder.POPULARITY -> "?sort=popular&page=$page"
                 else -> "?page=$page"
             }
-            "https://$domain/$sortParam"
+            val tagParam = filter.tags.joinToString(",") { it.key }
+            val genreParam = if (tagParam.isNotEmpty()) "&genre=$tagParam" else ""
+            "https://$domain/$sortParam$genreParam"
         }
     }
 

@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -39,12 +40,19 @@ internal class Zanora(context: ContentLoaderContext) :
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
             isSearchSupported = true,
-            isMultipleTagsSupported = false,
+            isMultipleTagsSupported = true,
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val doc = webClient.httpGet("https://$domain/home", getRequestHeaders()).parseHtml()
+        val genres = doc.select("#menu ul.c4 a[href*=/genre/]").mapNotNull { a ->
+            val title = a.attr("title").ifBlank { a.text().trim() }
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (title.isNotBlank() && key.isNotBlank()) ContentTag(title, key, source) else null
+        }
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
+            availableTags = genres.toSet(),
         )
     }
 
@@ -72,6 +80,12 @@ internal class Zanora(context: ContentLoaderContext) :
 
         val mangaId = doc.selectFirst("script:containsData(mangaId)")?.data()
             ?.let { Regex("mangaId\\s*=\\s*(\\d+)").find(it)?.groupValues?.get(1) }
+
+        val tags = doc.select(".binfo .bmeta a[href*=/genre/]").mapNotNull { a ->
+            val text = a.text().trim()
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
+        }.toSet()
 
         val episodeSections = doc.select("#w-episodes a[href*=/watch/]")
         val chapters = episodeSections.mapIndexed { index, el ->
@@ -113,6 +127,7 @@ internal class Zanora(context: ContentLoaderContext) :
             description = description?.ifBlank { null },
             coverUrl = cover ?: manga.coverUrl,
             largeCoverUrl = cover ?: manga.largeCoverUrl,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.SAFE,
             chapters = fallbackChapters,
         )
@@ -148,14 +163,15 @@ internal class Zanora(context: ContentLoaderContext) :
         .build()
 
     private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val tagParam = filter.tags.joinToString(",") { it.key }
         return if (!filter.query.isNullOrBlank()) {
             val q = filter.query.urlEncoded()
             val sortParam = when (order) {
-                SortOrder.POPULARITY -> "&sort=popular"
-                SortOrder.ALPHABETICAL -> "&sort=az"
-                else -> "&sort=default"
+                SortOrder.POPULARITY -> "popular"
+                SortOrder.ALPHABETICAL -> "az"
+                else -> "default"
             }
-            "https://$domain/filter?keyword=$q&type=&status=&season=&language=$sortParam&page=$page"
+            "https://$domain/filter?keyword=$q&type=&status=&season=&language=&genre=$tagParam&sort=$sortParam&page=$page"
         } else {
             "https://$domain/home"
         }

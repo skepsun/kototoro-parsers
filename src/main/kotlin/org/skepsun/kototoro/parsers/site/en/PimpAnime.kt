@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -30,19 +31,18 @@ internal class PimpAnime(context: ContentLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("pimpanime.nl")
 
-    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED, SortOrder.POPULARITY)
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED, SortOrder.POPULARITY, SortOrder.ALPHABETICAL, SortOrder.NEWEST)
 
     override val filterCapabilities: ContentListFilterCapabilities
-        get() = ContentListFilterCapabilities(isSearchSupported = true)
+        get() = ContentListFilterCapabilities(isSearchSupported = true, isMultipleTagsSupported = true)
 
     override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableContentTypes = EnumSet.of(ContentType.VIDEO),
+        availableTags = GENRES,
     )
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val q = filter.query?.urlEncoded() ?: ""
-        val url = if (q.isNotEmpty()) "https://$domain/search?q=$q"
-        else "https://$domain/?page=$page"
+        val url = buildListUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         return parseList(doc)
     }
@@ -53,6 +53,11 @@ internal class PimpAnime(context: ContentLoaderContext) :
             ?: manga.title
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
+        val tags = doc.select("a[href*=/genre/], a[href*=/category/]").mapNotNull { a ->
+            val text = a.text().trim()
+            val key = a.attr("href").substringAfterLast("/").trimEnd('/')
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key.lowercase(), source) else null
+        }.toSet()
         val chapters = doc.select("a[href*=/watch/]").mapIndexed { index, el ->
             val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() } ?: el.attr("href").toAbsoluteUrl(domain)
             ContentChapter(
@@ -65,6 +70,7 @@ internal class PimpAnime(context: ContentLoaderContext) :
         return manga.copy(
             title = title, description = description ?: manga.description,
             coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.SAFE,
             chapters = chapters.ifEmpty { listOf(ContentChapter(
                 id = generateUid(manga.url), url = manga.url, title = "Watch",
@@ -102,5 +108,45 @@ internal class PimpAnime(context: ContentLoaderContext) :
             ))
         }
         return items
+    }
+
+    private fun buildListUrl(page: Int, filter: ContentListFilter): String {
+        val tagParam = filter.tags.joinToString(",") { it.key }
+        return if (!filter.query.isNullOrBlank()) {
+            val q = filter.query.urlEncoded()
+            "https://$domain/search?q=$q&genre=$tagParam&page=$page"
+        } else {
+            "https://$domain/?genre=$tagParam&page=$page"
+        }
+    }
+
+    private companion object {
+        val GENRES = setOf(
+            ContentTag("Action", "action", ContentParserSource.PIMPANIME),
+            ContentTag("Adventure", "adventure", ContentParserSource.PIMPANIME),
+            ContentTag("Comedy", "comedy", ContentParserSource.PIMPANIME),
+            ContentTag("Drama", "drama", ContentParserSource.PIMPANIME),
+            ContentTag("Fantasy", "fantasy", ContentParserSource.PIMPANIME),
+            ContentTag("Horror", "horror", ContentParserSource.PIMPANIME),
+            ContentTag("Mecha", "mecha", ContentParserSource.PIMPANIME),
+            ContentTag("Music", "music", ContentParserSource.PIMPANIME),
+            ContentTag("Mystery", "mystery", ContentParserSource.PIMPANIME),
+            ContentTag("Romance", "romance", ContentParserSource.PIMPANIME),
+            ContentTag("Sci-Fi", "sci-fi", ContentParserSource.PIMPANIME),
+            ContentTag("Slice of Life", "slice-of-life", ContentParserSource.PIMPANIME),
+            ContentTag("Sports", "sports", ContentParserSource.PIMPANIME),
+            ContentTag("Supernatural", "supernatural", ContentParserSource.PIMPANIME),
+            ContentTag("Thriller", "thriller", ContentParserSource.PIMPANIME),
+            ContentTag("Shounen", "shounen", ContentParserSource.PIMPANIME),
+            ContentTag("Seinen", "seinen", ContentParserSource.PIMPANIME),
+            ContentTag("Ecchi", "ecchi", ContentParserSource.PIMPANIME),
+            ContentTag("Isekai", "isekai", ContentParserSource.PIMPANIME),
+            ContentTag("Magic", "magic", ContentParserSource.PIMPANIME),
+            ContentTag("Martial Arts", "martial-arts", ContentParserSource.PIMPANIME),
+            ContentTag("School", "school", ContentParserSource.PIMPANIME),
+            ContentTag("Super Power", "super-power", ContentParserSource.PIMPANIME),
+            ContentTag("Game", "game", ContentParserSource.PIMPANIME),
+            ContentTag("Historical", "historical", ContentParserSource.PIMPANIME),
+        )
     }
 }

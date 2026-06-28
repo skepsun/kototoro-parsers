@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -30,19 +31,22 @@ internal class Kaorii(context: ContentLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("kaorii.app")
 
-    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED, SortOrder.POPULARITY)
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+        SortOrder.UPDATED, SortOrder.POPULARITY,
+    )
 
     override val filterCapabilities: ContentListFilterCapabilities
-        get() = ContentListFilterCapabilities(isSearchSupported = true)
+        get() = ContentListFilterCapabilities(
+            isSearchSupported = true, isMultipleTagsSupported = true,
+        )
 
     override suspend fun getFilterOptions() = ContentListFilterOptions(
         availableContentTypes = EnumSet.of(ContentType.VIDEO),
+        availableTags = buildFilterTags(),
     )
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val q = filter.query?.urlEncoded() ?: ""
-        val url = if (q.isNotEmpty()) "https://$domain/search?q=$q"
-        else "https://$domain/?page=$page"
+        val url = buildListUrl(page, order, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         return parseList(doc)
     }
@@ -53,6 +57,13 @@ internal class Kaorii(context: ContentLoaderContext) :
             ?: manga.title
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
+
+        val tags = doc.select("a[href*=/genre/]").mapNotNull { a ->
+            val text = a.text().trim()
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
+        }.toSet()
+
         val chapters = doc.select("a[href*=/watch/]").mapIndexed { index, el ->
             val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() } ?: el.attr("href").toAbsoluteUrl(domain)
             ContentChapter(
@@ -66,6 +77,7 @@ internal class Kaorii(context: ContentLoaderContext) :
             title = title, description = description ?: manga.description,
             coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover,
             contentRating = ContentRating.SAFE,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
             chapters = chapters.ifEmpty { listOf(ContentChapter(
                 id = generateUid(manga.url), url = manga.url, title = "Watch",
                 number = 1f, uploadDate = 0L, volume = 0, branch = null, scanlator = null, source = source,
@@ -74,13 +86,103 @@ internal class Kaorii(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        context.requestBrowserAction(this, chapter.url.toAbsoluteUrl(domain))
+        val chapterUrl = chapter.url.toAbsoluteUrl(domain)
+        val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
+
+        val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
+            ?: doc.selectFirst("iframe[data-src]")?.attr("data-src")
+        if (iframeSrc != null) {
+            return listOf(ContentPage(
+                id = generateUid(chapterUrl),
+                url = iframeSrc.toAbsoluteUrl(domain),
+                preview = null,
+                source = source,
+            ))
+        }
+
+        val videoSrc = doc.selectFirst("video source[src]")?.attr("src")
+            ?: doc.selectFirst("video source[data-src]")?.attr("data-src")
+            ?: doc.selectFirst("video[src]")?.attr("src")
+            ?: doc.selectFirst("video[data-src]")?.attr("data-src")
+        if (videoSrc != null) {
+            return listOf(ContentPage(
+                id = generateUid(chapterUrl),
+                url = videoSrc.toAbsoluteUrl(domain),
+                preview = null,
+                source = source,
+            ))
+        }
+
+        context.requestBrowserAction(this, chapterUrl)
         return emptyList()
     }
 
     override fun getRequestHeaders() = Headers.Builder()
         .add("Referer", "https://$domain/")
         .add("User-Agent", context.getDefaultUserAgent()).build()
+
+    private fun buildFilterTags(): Set<ContentTag> {
+        val tags = LinkedHashSet<ContentTag>()
+        tags += ContentTag("Action", "action", source)
+        tags += ContentTag("Adventure", "adventure", source)
+        tags += ContentTag("Comedy", "comedy", source)
+        tags += ContentTag("Drama", "drama", source)
+        tags += ContentTag("Fantasy", "fantasy", source)
+        tags += ContentTag("Horror", "horror", source)
+        tags += ContentTag("Mecha", "mecha", source)
+        tags += ContentTag("Music", "music", source)
+        tags += ContentTag("Mystery", "mystery", source)
+        tags += ContentTag("Romance", "romance", source)
+        tags += ContentTag("Sci-Fi", "sci-fi", source)
+        tags += ContentTag("Slice of Life", "slice-of-life", source)
+        tags += ContentTag("Sports", "sports", source)
+        tags += ContentTag("Supernatural", "supernatural", source)
+        tags += ContentTag("Thriller", "thriller", source)
+        tags += ContentTag("Shounen", "shounen", source)
+        tags += ContentTag("Seinen", "seinen", source)
+        tags += ContentTag("Shoujo", "shoujo", source)
+        tags += ContentTag("Josei", "josei", source)
+        tags += ContentTag("Ecchi", "ecchi", source)
+        tags += ContentTag("Harem", "harem", source)
+        tags += ContentTag("Isekai", "isekai", source)
+        tags += ContentTag("Magic", "magic", source)
+        tags += ContentTag("Martial Arts", "martial-arts", source)
+        tags += ContentTag("Military", "military", source)
+        tags += ContentTag("School", "school", source)
+        tags += ContentTag("Super Power", "super-power", source)
+        tags += ContentTag("Vampire", "vampire", source)
+        tags += ContentTag("Game", "game", source)
+        tags += ContentTag("Historical", "historical", source)
+        tags += ContentTag("Kids", "kids", source)
+        tags += ContentTag("Parody", "parody", source)
+        tags += ContentTag("Samurai", "samurai", source)
+        tags += ContentTag("Psychological", "psychological", source)
+        tags += ContentTag("Demons", "demons", source)
+        tags += ContentTag("Space", "space", source)
+        tags += ContentTag("Cars", "cars", source)
+        tags += ContentTag("Dementia", "dementia", source)
+        tags += ContentTag("Police", "police", source)
+        tags += ContentTag("Mahou Shoujo", "mahou-shoujo", source)
+        tags += ContentTag("Shoujo Ai", "shoujo-ai", source)
+        tags += ContentTag("Shounen Ai", "shounen-ai", source)
+        return tags
+    }
+
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val q = filter.query?.urlEncoded() ?: ""
+        if (q.isNotEmpty()) {
+            val tagParam = filter.tags.joinToString(",") { it.key }
+            val genreParam = if (tagParam.isNotEmpty()) "&genre=$tagParam" else ""
+            return "https://$domain/search?q=$q&page=$page$genreParam"
+        }
+        val sortParam = when (order) {
+            SortOrder.POPULARITY -> "popular"
+            else -> "latest"
+        }
+        val tagParam = filter.tags.joinToString(",") { it.key }
+        val genreParam = if (tagParam.isNotEmpty()) "&genre=$tagParam" else ""
+        return "https://$domain/?sort=$sortParam&page=$page$genreParam"
+    }
 
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()

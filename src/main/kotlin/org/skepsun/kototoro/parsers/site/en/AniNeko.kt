@@ -13,6 +13,7 @@ import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentRating
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -31,19 +32,35 @@ internal class AniNeko(context: ContentLoaderContext) :
     override val configKeyDomain = ConfigKey.Domain("anineko.to")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-        SortOrder.UPDATED,
-        SortOrder.POPULARITY,
+        SortOrder.UPDATED, SortOrder.POPULARITY, SortOrder.NEWEST, SortOrder.ALPHABETICAL,
     )
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
-            isSearchSupported = true,
-            isMultipleTagsSupported = false,
+            isSearchSupported = true, isMultipleTagsSupported = true,
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val genres = listOf(
+            "Action" to "action", "Adventure" to "adventure", "Cars" to "cars",
+            "Comedy" to "comedy", "Dementia" to "dementia", "Demons" to "demons",
+            "Drama" to "drama", "Ecchi" to "ecchi", "Fantasy" to "fantasy",
+            "Game" to "game", "Harem" to "harem", "Historical" to "historical",
+            "Horror" to "horror", "Isekai" to "isekai", "Josei" to "josei",
+            "Kids" to "kids", "Magic" to "magic", "Mahou Shoujo" to "mahou-shoujo",
+            "Martial Arts" to "martial-arts", "Mecha" to "mecha", "Military" to "military",
+            "Music" to "music", "Mystery" to "mystery", "Parody" to "parody",
+            "Police" to "police", "Psychological" to "psychological", "Romance" to "romance",
+            "Samurai" to "samurai", "School" to "school", "Sci-Fi" to "sci-fi",
+            "Seinen" to "seinen", "Shoujo" to "shoujo", "Shoujo Ai" to "shoujo-ai",
+            "Shounen" to "shounen", "Shounen Ai" to "shounen-ai",
+            "Slice of Life" to "slice-of-life", "Space" to "space", "Sports" to "sports",
+            "Super Power" to "super-power", "Supernatural" to "supernatural",
+            "Thriller" to "thriller", "Vampire" to "vampire",
+        ).map { ContentTag(it.first, it.second, source) }.toSet()
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.VIDEO),
+            availableTags = genres,
         )
     }
 
@@ -69,50 +86,42 @@ internal class AniNeko(context: ContentLoaderContext) :
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
             ?: doc.selectFirst(".nv-info-poster img")?.attr("src")?.toAbsoluteUrlOrNull(domain)
 
-        val episodeLinks = doc.select("a[href*=/ep-]")
-        val chapters = episodeLinks.mapIndexed { index, el ->
-            val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
-                ?: el.attr("href").toAbsoluteUrl(domain)
-            val epNum = el.selectFirst("[data-episode]")?.attr("data-episode")
-                ?: el.text().trim().filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
-            ContentChapter(
-                id = generateUid(epUrl),
-                url = epUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
-                title = "Episode $epNum",
-                number = index + 1f,
-                uploadDate = 0L,
-                volume = 0,
-                branch = null,
-                scanlator = null,
-                source = source,
-            )
-        }.toList()
+        val tags = doc.select(".nv-info-tags a[href*=/genre/]").mapNotNull { a ->
+            val text = a.text().trim()
+            val key = a.attr("href").substringAfterLast("/").trim()
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
+        }.toSet()
 
-        val fallbackChapters = if (chapters.isEmpty()) {
-            listOf(
+        val episodeLinks = doc.select("a[href*=/ep-]")
+        val chapters = if (episodeLinks.isNotEmpty()) {
+            episodeLinks.mapIndexed { index, el ->
+                val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
+                    ?: el.attr("href").toAbsoluteUrl(domain)
+                val epNum = el.selectFirst("[data-episode]")?.attr("data-episode")
+                    ?: el.text().trim().filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
                 ContentChapter(
-                    id = generateUid(manga.url),
-                    url = manga.url,
-                    title = "Watch",
-                    number = 1f,
-                    uploadDate = 0L,
-                    volume = 0,
-                    branch = null,
-                    scanlator = null,
-                    source = source,
+                    id = generateUid(epUrl),
+                    url = epUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                    title = "Episode $epNum", number = index + 1f,
+                    uploadDate = 0L, volume = 0, branch = null, scanlator = null, source = source,
                 )
-            )
+            }.toList()
         } else {
-            chapters
+            emptyList()
         }
 
         return manga.copy(
-            title = title,
-            description = description?.ifBlank { null },
-            coverUrl = cover ?: manga.coverUrl,
-            largeCoverUrl = cover ?: manga.largeCoverUrl,
+            title = title, description = description?.ifBlank { null },
+            coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover ?: manga.largeCoverUrl,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.SAFE,
-            chapters = fallbackChapters,
+            chapters = chapters.ifEmpty {
+                listOf(ContentChapter(
+                    id = generateUid(manga.url), url = manga.url, title = "Watch",
+                    number = 1f, uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                ))
+            },
         )
     }
 
@@ -121,19 +130,28 @@ internal class AniNeko(context: ContentLoaderContext) :
         val response = webClient.httpGet(chapterUrl, getRequestHeaders())
         val doc = response.parseHtml()
 
+        val serverButtons = doc.select("[data-video]")
+        if (serverButtons.isNotEmpty()) {
+            return serverButtons.mapIndexed { index, btn ->
+                val videoUrl = btn.attr("data-video")
+                val tabName = btn.closest(".tab-pane")?.attr("id") ?: "Server"
+                ContentPage(
+                    id = generateUid("${chapter.id}|$index"),
+                    url = videoUrl,
+                    preview = "Server $index",
+                    source = source,
+                )
+            }
+        }
+
         val videoEl = doc.selectFirst("video source[src], video[src], iframe[src]")
         val videoUrl = videoEl?.attr("src")?.takeIf { it.isNotBlank() }
             ?: videoEl?.attr("data-src")?.takeIf { it.isNotBlank() }
-
         if (videoUrl != null && videoUrl.startsWith("http")) {
-            return listOf(
-                ContentPage(
-                    id = generateUid("video:${chapter.id}"),
-                    url = videoUrl,
-                    preview = null,
-                    source = source,
-                )
-            )
+            return listOf(ContentPage(
+                id = generateUid("video:${chapter.id}"),
+                url = videoUrl, preview = null, source = source,
+            ))
         }
 
         context.requestBrowserAction(this, chapterUrl)
@@ -150,18 +168,21 @@ internal class AniNeko(context: ContentLoaderContext) :
             val q = filter.query.urlEncoded()
             "https://$domain/search?keyword=$q&page=$page"
         } else {
+            val tag = filter.tags.firstOrNull()?.key ?: ""
             val sortParam = when (order) {
-                SortOrder.POPULARITY -> "?sort=popular&page=$page"
-                else -> "?page=$page"
+                SortOrder.POPULARITY -> "popular"
+                SortOrder.NEWEST -> "newest"
+                SortOrder.ALPHABETICAL -> "az"
+                else -> "latest"
             }
-            "https://$domain/browse$sortParam"
+            val genreParam = if (tag.isNotEmpty()) "&genre=$tag" else ""
+            "https://$domain/browse?sort=$sortParam$genreParam&page=$page"
         }
     }
 
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-
         val cards = doc.select("a[href*=/watch/]").filter { el ->
             el.selectFirst("img[alt]") != null || el.selectFirst(".title, .name") != null
         }
@@ -170,36 +191,22 @@ internal class AniNeko(context: ContentLoaderContext) :
             if (href.count { it == '/' } < 3) continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
-
             val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
                 ?: link.selectFirst(".title, .name")?.text()?.trim()
                 ?: link.text().trim().ifEmpty { continue }
-
             val thumb = link.selectFirst("img[src]")?.let {
                 val raw = it.attr("data-src").ifBlank { it.attr("src") }
                 raw.toAbsoluteUrlOrNull(domain)
             }
-
-            items.add(
-                Content(
-                    id = generateUid(absoluteUrl),
-                    url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
-                    publicUrl = absoluteUrl,
-                    title = title,
-                    altTitles = emptySet(),
-                    coverUrl = thumb,
-                    largeCoverUrl = thumb,
-                    authors = emptySet(),
-                    tags = emptySet(),
-                    state = null,
-                    description = null,
-                    contentRating = ContentRating.SAFE,
-                    source = source,
-                    rating = RATING_UNKNOWN,
-                ),
-            )
+            items.add(Content(
+                id = generateUid(absoluteUrl),
+                url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
+                coverUrl = thumb, largeCoverUrl = thumb,
+                authors = emptySet(), tags = emptySet(), state = null, description = null,
+                contentRating = ContentRating.SAFE, source = source, rating = RATING_UNKNOWN,
+            ))
         }
-
         return items
     }
 }
