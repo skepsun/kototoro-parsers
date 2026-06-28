@@ -74,16 +74,16 @@ internal class AniWorld(context: ContentLoaderContext) :
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
 
         val episodeLinks = doc.select("a[href*=/episode-], a[href*=/staffel-], a[href*=-folge-]").filter { el ->
-            el.selectFirst("img") == null && el.ownText().isNotBlank() &&
-                !el.ownText().contains("Next", ignoreCase = true) &&
-                !el.ownText().contains("Prev", ignoreCase = true) &&
-                !el.ownText().contains("Filter", ignoreCase = true)
+            val href = el.attr("href")
+            href.count { it == '/' } >= 4 &&
+                !href.contains("/genre/") && !href.contains("/tag/") &&
+                el.text().trim().isNotBlank()
         }
         val chapters = if (episodeLinks.isNotEmpty()) {
             episodeLinks.mapIndexed { index, el ->
                 val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
                     ?: el.attr("href").toAbsoluteUrl(domain)
-                val epText = el.ownText().trim()
+                val epText = el.text().trim()
                 val epNum = epText.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
                 ContentChapter(
                     id = generateUid(epUrl),

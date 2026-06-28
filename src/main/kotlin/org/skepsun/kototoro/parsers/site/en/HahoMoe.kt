@@ -91,16 +91,16 @@ internal class HahoMoe(context: ContentLoaderContext) :
         val selfUrl = manga.url.trimEnd('/')
         val episodeLinks = doc.select("a[href*=/anime/]").filter { el ->
             val href = el.attr("href").trimEnd('/')
-            el.selectFirst("img") == null && el.ownText().isNotBlank() &&
-                href.count { it == '/' } >= 3 &&
+            href.count { it == '/' } >= 3 &&
                 href.substringAfterLast("/").any { it.isDigit() } &&
-                href != selfUrl
+                href != selfUrl &&
+                el.text().trim().isNotBlank()
         }
         val chapters = if (episodeLinks.isNotEmpty()) {
             episodeLinks.mapIndexed { index, el ->
                 val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
                     ?: el.attr("href").toAbsoluteUrl(domain)
-                val epText = el.ownText().trim()
+                val epText = el.text().trim()
                 val epNum = epText.filter { it.isDigit() }.ifEmpty { (index + 1).toString() }
                 ContentChapter(
                     id = generateUid(epUrl),
