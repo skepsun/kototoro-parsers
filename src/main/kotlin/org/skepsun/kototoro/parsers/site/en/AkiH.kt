@@ -36,13 +36,23 @@ internal class AkiH(context: ContentLoaderContext) :
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(isSearchSupported = true, isMultipleTagsSupported = true)
 
-    override suspend fun getFilterOptions() = ContentListFilterOptions(
-        availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
-        availableTags = HENTAI_GENRES,
-    )
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val genres = runCatching {
+            val doc = webClient.httpGet("https://$domain/", getRequestHeaders()).parseHtml()
+            doc.select("a[href*=/genre/]").mapNotNull { a ->
+                val text = a.text().trim().replaceFirstChar { it.uppercase() }
+                val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+                if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
+            }.toSet()
+        }.getOrDefault(HENTAI_GENRES)
+        return ContentListFilterOptions(
+            availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
+            availableTags = genres,
+        )
+    }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val url = buildListUrl(page, filter)
+        val url = buildListUrl(page, order, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         return parseList(doc)
     }
@@ -53,20 +63,40 @@ internal class AkiH(context: ContentLoaderContext) :
             ?: manga.title
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
-        val tags = doc.select("a[href*=/tag/], a[href*=/category/], a[href*=/genre/]").mapNotNull { a ->
-            val text = a.text().trim()
-            val key = a.attr("href").substringAfterLast("/").trimEnd('/')
-            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key.lowercase(), source) else null
+        val tags = doc.select("a[href*=/genre/]").mapNotNull { a ->
+            val text = a.text().trim().replaceFirstChar { it.uppercase() }
+            val key = a.attr("href").substringAfter("/genre/").trimEnd('/')
+            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
+
+        val epLinks = doc.select("a[href*=/episode/], a.film-poster-ahref")
+        val chapters = if (epLinks.isNotEmpty()) {
+            epLinks.mapIndexed { idx, el ->
+                val href = el.attr("abs:href").takeIf { it.isNotBlank() }
+                    ?: el.attr("href").toAbsoluteUrl(domain)
+                ContentChapter(
+                    id = generateUid(href), url = href.removePrefix("https://$domain"),
+                    title = el.text().trim().ifEmpty { "Episode ${idx + 1}" },
+                    number = idx + 1f, uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                )
+            }.toList()
+        } else {
+            emptyList()
+        }
+
         return manga.copy(
             title = title, description = description ?: manga.description,
             coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.ADULT,
-            chapters = listOf(ContentChapter(
-                id = generateUid(manga.url), url = manga.url, title = "Watch",
-                number = 1f, uploadDate = 0L, volume = 0, branch = null, scanlator = null, source = source,
-            )),
+            chapters = chapters.ifEmpty {
+                listOf(ContentChapter(
+                    id = generateUid(manga.url), url = manga.url, title = "Watch",
+                    number = 1f, uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                ))
+            },
         )
     }
 
@@ -94,17 +124,41 @@ internal class AkiH(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        for (item in doc.select(".hst-item")) {
-            val link = item.selectFirst("a[href]") ?: continue
+        val cards = doc.select("a.film-poster-ahref[href], a.dynamic-name[href]")
+        if (cards.isEmpty()) {
+            val fallback = doc.select("a[href]").filter { a ->
+                val h = a.attr("href")
+                h.startsWith("/") && h.count { it == '/' } == 1 && h.length > 3 &&
+                    !h.contains("random") && !h.contains("popular") && !h.contains("genre") &&
+                    !h.contains("filter") && !h.contains("search") && !h.contains("login") &&
+                    !h.contains("cdn.") && !h.contains("static") && !h.contains("assets")
+            }
+            for (link in fallback) {
+                val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
+                val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
+                if (!seen.add(absoluteUrl)) continue
+                val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
+                    ?: link.text().trim().ifEmpty { continue }
+                val thumb = link.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
+                items.add(Content(
+                    id = generateUid(absoluteUrl),
+                    url = absoluteUrl.removePrefix("https://$domain"),
+                    publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
+                    coverUrl = thumb, largeCoverUrl = thumb,
+                    authors = emptySet(), tags = emptySet(), state = null, description = null,
+                    contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
+                ))
+            }
+            return items
+        }
+        for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
-            val title = item.selectFirst("h3, .hst-title, .title")?.text()?.trim()
-                ?: link.selectFirst("img[alt]")?.attr("alt")?.trim()
-                ?: link.text().trim().ifEmpty { continue }
-            val thumb = item.selectFirst("img[src], img[data-src]")?.let {
-                (it.attr("data-src").ifBlank { it.attr("src") }).toAbsoluteUrlOrNull(domain)
-            }
+            val title = link.text().trim().ifEmpty {
+                link.selectFirst("img[alt]")?.attr("alt")?.trim()
+            }?.ifBlank { continue } ?: continue
+            val thumb = link.selectFirst("img[src]")?.attr("src")?.toAbsoluteUrlOrNull(domain)
             items.add(Content(
                 id = generateUid(absoluteUrl),
                 url = absoluteUrl.removePrefix("https://$domain"),
@@ -117,22 +171,24 @@ internal class AkiH(context: ContentLoaderContext) :
         return items
     }
 
-    private fun buildListUrl(page: Int, filter: ContentListFilter): String {
-        val tagParam = filter.tags.joinToString(",") { it.key }
-        return if (!filter.query.isNullOrBlank()) {
-            val q = filter.query.urlEncoded()
-            "https://$domain/search?q=$q&genre=$tagParam&page=$page"
-        } else {
-            "https://$domain/latest?genre=$tagParam&page=$page"
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val tag = filter.tags.firstOrNull()?.key
+        return when {
+            !filter.query.isNullOrBlank() -> "https://$domain/?s=${filter.query.urlEncoded()}&page=$page"
+            tag != null -> "https://$domain/genre/$tag/"
+            order == SortOrder.POPULARITY -> "https://$domain/popular/"
+            else -> "https://$domain/"
         }
     }
 
     private companion object {
         val HENTAI_GENRES = setOf(
+            ContentTag("3D", "3d", ContentParserSource.AKIH),
             ContentTag("Ahegao", "ahegao", ContentParserSource.AKIH),
             ContentTag("Anal", "anal", ContentParserSource.AKIH),
+            ContentTag("BDSM", "bdsm", ContentParserSource.AKIH),
             ContentTag("Big Boobs", "big-boobs", ContentParserSource.AKIH),
-            ContentTag("Blowjob", "blowjob", ContentParserSource.AKIH),
+            ContentTag("Blowjob", "blow-job", ContentParserSource.AKIH),
             ContentTag("Bondage", "bondage", ContentParserSource.AKIH),
             ContentTag("Creampie", "creampie", ContentParserSource.AKIH),
             ContentTag("Futanari", "futanari", ContentParserSource.AKIH),
@@ -151,8 +207,6 @@ internal class AkiH(context: ContentLoaderContext) :
             ContentTag("Threesome", "threesome", ContentParserSource.AKIH),
             ContentTag("Yaoi", "yaoi", ContentParserSource.AKIH),
             ContentTag("Yuri", "yuri", ContentParserSource.AKIH),
-            ContentTag("Monster", "monster", ContentParserSource.AKIH),
-            ContentTag("Femdom", "femdom", ContentParserSource.AKIH),
         )
     }
 }
