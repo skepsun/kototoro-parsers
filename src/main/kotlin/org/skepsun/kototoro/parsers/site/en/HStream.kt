@@ -24,6 +24,10 @@ import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.EnumSet
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.json.JSONObject
+import org.skepsun.kototoro.parsers.util.parseJson
+import java.net.URLDecoder
 
 @ContentSourceParser("HSTREAM", "HStream", "en", type = ContentType.HENTAI_VIDEO)
 internal class HStream(context: ContentLoaderContext) :
@@ -126,6 +130,10 @@ internal class HStream(context: ContentLoaderContext) :
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val chapterUrl = chapter.url.toAbsoluteUrl(domain)
         val response = webClient.httpGet(chapterUrl, getRequestHeaders())
+
+        val pages = extractViaPlayerApi(response, chapterUrl, chapter)
+        if (pages.isNotEmpty()) return pages
+
         val doc = response.parseHtml()
 
         val serverButtons = doc.select("[data-video], [data-url], .server-btn[data-src]")
@@ -151,6 +159,71 @@ internal class HStream(context: ContentLoaderContext) :
 
         context.requestBrowserAction(this, chapterUrl)
         return emptyList()
+    }
+
+    private suspend fun extractViaPlayerApi(
+        response: okhttp3.Response,
+        chapterUrl: String,
+        chapter: ContentChapter,
+    ): List<ContentPage> {
+        val cookies = response.headers.values("Set-Cookie")
+        val cookieHeader = cookies.joinToString("; ") { it.substringBefore(";") }
+        val token = cookies.flatMap { it.split(";") }
+            .find { it.trim().startsWith("XSRF-TOKEN=") }
+            ?.substringAfter("XSRF-TOKEN=")
+            ?.let { URLDecoder.decode(it, "utf-8") }
+            ?: return emptyList()
+
+        val doc = response.parseHtml()
+        val episodeId = doc.selectFirst("input#e_id")?.attr("value")
+            ?: return emptyList()
+
+        val body = JSONObject().apply {
+            put("episode_id", episodeId)
+        }
+
+        val playerHeaders = Headers.Builder()
+            .add("Referer", chapterUrl)
+            .add("Origin", "https://$domain")
+            .add("X-Requested-With", "XMLHttpRequest")
+            .add("X-XSRF-TOKEN", token)
+            .add("Cookie", cookieHeader)
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()
+
+        val playerResponse = webClient.httpPost(
+            "https://$domain/player/api".toHttpUrl(), body, playerHeaders,
+        )
+        val json = playerResponse.parseJson()
+
+        val legacy = json.optInt("legacy", 0)
+        val resolution = json.optString("resolution", "1080")
+        val streamUrl = json.optString("stream_url", "").trimStart('/')
+        val domainsArr = json.optJSONArray("stream_domains") ?: return emptyList()
+        val domains = ArrayList<String>()
+        for (i in 0 until domainsArr.length()) {
+            domainsArr.optString(i)?.takeIf { it.isNotBlank() }?.let { domains.add(it) }
+        }
+        if (domains.isEmpty() || streamUrl.isBlank()) return emptyList()
+
+        val domainRand = domains.random()
+        val urlBase = "$domainRand/$streamUrl"
+
+        val resolutions = listOfNotNull("720", "1080", if (resolution == "4k") "2160" else null)
+
+        return resolutions.map { res ->
+            val videoPath = if (legacy != 0) {
+                if (res == "720") "/x264.720p.mp4" else "/av1.$res.webm"
+            } else {
+                "/$res/manifest.mpd"
+            }
+            ContentPage(
+                id = generateUid("chapterUrl:${chapter.id}|$res"),
+                url = "$urlBase$videoPath",
+                preview = "${res}p",
+                source = source,
+            )
+        }
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()

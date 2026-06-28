@@ -1,5 +1,7 @@
 package org.skepsun.kototoro.parsers.site.en
 
+import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
@@ -112,22 +114,196 @@ internal class Anikoto(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val chapterUrl = chapter.url.toAbsoluteUrl(domain)
-        val response = webClient.httpGet(chapterUrl, getRequestHeaders())
-        val doc = response.parseHtml()
+        val chapterUrl = chapter.url
+        val epUrl = chapterUrl.substringBefore("?").toAbsoluteUrl(domain)
+        val queryPart = chapterUrl.substringAfter("?", "")
+        val dataIds = queryPart.substringAfter("ids=", "").substringBefore("&")
+        val animeId = queryPart.substringAfter("animeId=", "").substringBefore("&")
 
-        val videoEl = doc.selectFirst("video source[src], video[src], iframe[src]")
-        val videoUrl = videoEl?.attr("src")?.takeIf { it.startsWith("http") }
-            ?: videoEl?.attr("data-src")?.takeIf { it.startsWith("http") }
+        if (dataIds.isBlank() || animeId.isBlank()) {
+            return trySimpleExtraction(epUrl)
+        }
 
-        if (videoUrl != null) {
+        val results = mutableListOf<ContentPage>()
+
+        try {
+            val serverIds = fetchServerList(dataIds)
+            for (serverId in serverIds) {
+                try {
+                    val embedUrl = fetchEmbedUrl(serverId)
+                    val videos = extractVideoFromEmbed(embedUrl, epUrl)
+                    results.addAll(videos)
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        if (results.isNotEmpty()) return results
+        return trySimpleExtraction(epUrl)
+    }
+
+    private suspend fun trySimpleExtraction(epUrl: String): List<ContentPage> {
+        try {
+            val response = webClient.httpGet(epUrl, getRequestHeaders())
+            val doc = response.parseHtml()
+
+            val videoEl = doc.selectFirst("video source[src], video[src], iframe[src]")
+            val videoUrl = videoEl?.attr("src")?.takeIf { it.startsWith("http") }
+                ?: videoEl?.attr("data-src")?.takeIf { it.startsWith("http") }
+
+            if (videoUrl != null) {
+                return listOf(ContentPage(
+                    id = generateUid("video:${epUrl}"),
+                    url = videoUrl, preview = null, source = source,
+                ))
+            }
+        } catch (_: Exception) {
+        }
+        return emptyList()
+    }
+
+    private fun getAjaxHeaders(referer: String): Headers = Headers.Builder()
+        .add("Accept", "application/json, text/javascript, */*; q=0.01")
+        .add("Referer", referer)
+        .add("User-Agent", context.getDefaultUserAgent())
+        .add("X-Requested-With", "XMLHttpRequest")
+        .build()
+
+    private suspend fun fetchServerIds(animeId: String, episodeNum: Float): String? {
+        return try {
+            val url = "https://$domain/ajax/episode/list/$animeId"
+            val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/"))
+            val doc = response.parseHtml()
+            val epNumStr = episodeNum.toInt().toString()
+            val element = doc.select("li a[data-num]").firstOrNull { it.attr("data-num") == epNumStr }
+            element?.attr("data-ids")?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun fetchServerList(ids: String): List<String> {
+        val url = "https://$domain/ajax/server/list?servers=$ids"
+        val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/"))
+        val raw = response.body.string()
+        val html = try {
+            JSONObject(raw).getString("result")
+        } catch (_: Exception) {
+            raw
+        }
+        val doc = Jsoup.parse(html)
+        return doc.select("li[data-link-id]").mapNotNull { el ->
+            el.attr("data-link-id").takeIf { it.isNotBlank() }
+        }
+    }
+
+    private suspend fun fetchEmbedUrl(serverId: String): String {
+        val url = "https://$domain/ajax/server?get=$serverId"
+        val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/"))
+        val json = JSONObject(response.body.string())
+        return json.getJSONObject("result").getString("url")
+    }
+
+    private suspend fun extractVideoFromEmbed(embedUrl: String, referer: String): List<ContentPage> {
+        val host = try {
+            embedUrl.substringAfter("://").substringBefore("/")
+        } catch (_: Exception) {
+            ""
+        }
+        val origin = if (host.isNotEmpty()) "https://$host" else "https://$domain"
+
+        val pageHeaders = Headers.Builder()
+            .add("Referer", referer)
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()
+
+        val pageBody = webClient.httpGet(embedUrl, pageHeaders).body.string()
+
+        val dataId = Regex("""data-id="([^"]+)"""").find(pageBody)?.groupValues?.get(1)
+        if (dataId != null) {
+            return extractFromApi(dataId, host, embedUrl, referer, origin)
+        }
+
+        val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"""").find(pageBody)?.groupValues?.get(1)
+        if (iframeSrc != null) {
+            val resolvedSrc = if (iframeSrc.startsWith("http")) iframeSrc
+            else embedUrl.substringBeforeLast("/") + "/" + iframeSrc.trimStart('/')
+            return extractVideoFromEmbed(resolvedSrc, embedUrl)
+        }
+
+        val directM3u8 = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(pageBody)?.groupValues?.get(0)
+        if (directM3u8 != null) {
             return listOf(ContentPage(
-                id = generateUid("video:${chapter.id}"),
-                url = videoUrl, preview = null, source = source,
+                id = generateUid("m3u8:$embedUrl"), url = directM3u8,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
             ))
         }
 
-        context.requestBrowserAction(this, chapterUrl)
+        val sourceSrc = Regex("""<source[^>]+src="([^"]+\.m3u8[^"]*)"""").find(pageBody)?.groupValues?.get(1)
+        if (sourceSrc != null) {
+            return listOf(ContentPage(
+                id = generateUid("source:$embedUrl"), url = sourceSrc,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
+        val jsVarUrl = Regex(
+            """(?:var|let|const)\s+\w+\s*=\s*["']([^"']*(?:\.m3u8|/stream/)[^"']*)["']""" +
+                """|(?:file|source|url|src)\s*[:=]\s*["']([^"']*(?:\.m3u8|/stream/)[^"']*)["']"""
+        ).find(pageBody)?.let { match ->
+            match.groupValues.getOrNull(1)?.takeIf(String::isNotEmpty)
+                ?: match.groupValues.getOrNull(2)?.takeIf(String::isNotEmpty)
+        }
+        if (jsVarUrl != null) {
+            val resolved = if (jsVarUrl.startsWith("http")) jsVarUrl
+            else embedUrl.substringBeforeLast("/") + "/" + jsVarUrl.trimStart('/')
+            return listOf(ContentPage(
+                id = generateUid("jsvar:$embedUrl"), url = resolved,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
+        return emptyList()
+    }
+
+    private suspend fun extractFromApi(
+        dataId: String, host: String, embedUrl: String,
+        referer: String, origin: String,
+    ): List<ContentPage> {
+        val apiHeaders = Headers.Builder()
+            .add("Accept", "*/*")
+            .add("Referer", embedUrl)
+            .add("Origin", origin)
+            .add("User-Agent", context.getDefaultUserAgent())
+            .add("X-Requested-With", "XMLHttpRequest")
+            .build()
+
+        val m3u8Url = try {
+            val response = webClient.httpGet("https://$host/stream/getSources?id=$dataId&id=$dataId", apiHeaders)
+            val json = JSONObject(response.body.string())
+            json.getString("sources")
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            val response = webClient.httpGet("https://$host/stream/getSourcesNew?id=$dataId&id=$dataId", apiHeaders)
+            val json = JSONObject(response.body.string())
+            json.getString("sources")
+        } catch (_: Exception) {
+            null
+        }
+
+        if (m3u8Url != null && m3u8Url.startsWith("http")) {
+            return listOf(ContentPage(
+                id = generateUid("api:$embedUrl"), url = m3u8Url,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
         return emptyList()
     }
 
@@ -140,15 +316,16 @@ internal class Anikoto(context: ContentLoaderContext) :
     private suspend fun fetchEpisodeList(animeId: String, animeSlug: String): List<ContentChapter> {
         return try {
             val url = "https://$domain/ajax/episode/list/$animeId"
-            val response = webClient.httpGet(url, getRequestHeaders())
+            val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/watch/$animeSlug"))
             val doc = response.parseHtml()
             val episodes = doc.select("li a[data-num]")
             episodes.map { el ->
                 val num = el.attr("data-num")
                 val epId = el.attr("data-id")
+                val dataIds = el.attr("data-ids")
                 ContentChapter(
                     id = generateUid("$animeId|$epId"),
-                    url = "/watch/$animeSlug-episode-$num",
+                    url = "/watch/$animeSlug-episode-$num?ids=$dataIds&animeId=$animeId",
                     title = "Episode $num",
                     number = num.toFloatOrNull() ?: 0f,
                     uploadDate = 0L, volume = 0,
