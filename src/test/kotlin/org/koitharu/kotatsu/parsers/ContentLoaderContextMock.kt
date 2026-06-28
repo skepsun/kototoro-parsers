@@ -6,11 +6,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.HttpUrl
 import okhttp3.Protocol
 import org.skepsun.kototoro.parsers.bitmap.Bitmap
 import org.skepsun.kototoro.parsers.config.ContentSourceConfig
 import org.skepsun.kototoro.parsers.model.ContentSource
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.newParser
 import org.skepsun.kototoro.parsers.network.UserAgents
+import org.skepsun.kototoro.parsers.util.LinkResolver
 import org.skepsun.kototoro.parsers.util.await
 import org.skepsun.kototoro.parsers.util.requireBody
 import org.skepsun.kototoro.parsers.util.insertCookies
@@ -203,4 +207,11 @@ internal object ContentLoaderContextMock : ContentLoaderContext() {
         return Proxy(type, InetSocketAddress(host, port))
     }
 
+    override fun newParserInstance(source: ContentSource): ContentParser {
+        return (source as ContentParserSource).newParser(this)
+    }
+
+    override fun newLinkResolver(link: HttpUrl): LinkResolver {
+        throw UnsupportedOperationException("LinkResolver not available in test")
+    }
 }

@@ -147,7 +147,7 @@ internal class HentaiCloud(context: ContentLoaderContext) :
             val tag = filter.tags.first().key.urlEncoded()
             "$base/genre/$tag?page=$page"
         } else {
-            "$base/popular?page=$page"
+            "$base/videos?page=$page"
         }
     }
 

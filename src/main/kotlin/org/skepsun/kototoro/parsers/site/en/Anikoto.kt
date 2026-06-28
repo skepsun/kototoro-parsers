@@ -86,8 +86,9 @@ internal class Anikoto(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
+        val mangaSlug = manga.publicUrl.substringAfterLast('/').ifBlank { mangaId ?: "" }
         val chapters = if (mangaId != null) {
-            fetchEpisodeList(mangaId)
+            fetchEpisodeList(mangaId, mangaSlug)
         } else {
             emptyList()
         }
@@ -136,7 +137,7 @@ internal class Anikoto(context: ContentLoaderContext) :
         .add("X-Requested-With", "XMLHttpRequest")
         .build()
 
-    private suspend fun fetchEpisodeList(animeId: String): List<ContentChapter> {
+    private suspend fun fetchEpisodeList(animeId: String, animeSlug: String): List<ContentChapter> {
         return try {
             val url = "https://$domain/ajax/episode/list/$animeId"
             val response = webClient.httpGet(url, getRequestHeaders())
@@ -147,7 +148,7 @@ internal class Anikoto(context: ContentLoaderContext) :
                 val epId = el.attr("data-id")
                 ContentChapter(
                     id = generateUid("$animeId|$epId"),
-                    url = "-episode-$num",
+                    url = "/watch/$animeSlug-episode-$num",
                     title = "Episode $num",
                     number = num.toFloatOrNull() ?: 0f,
                     uploadDate = 0L, volume = 0,

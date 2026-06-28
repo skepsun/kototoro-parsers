@@ -186,7 +186,7 @@ internal class Zenkai(context: ContentLoaderContext) :
         }
         val tagParam = filter.tags.joinToString(",") { it.key }
         val genreParam = if (tagParam.isNotEmpty()) "&genre=$tagParam" else ""
-        return "https://$domain/home?sort=$sortParam&page=$page$genreParam"
+        return "https://$domain/?sort=$sortParam&page=$page$genreParam"
     }
 
     private fun parseList(doc: Document): List<Content> {

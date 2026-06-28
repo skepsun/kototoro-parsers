@@ -4,12 +4,16 @@ import com.koushikdutta.quack.QuackContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.HttpUrl
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.skepsun.kototoro.parsers.bitmap.Bitmap
 import org.skepsun.kototoro.parsers.config.ContentSourceConfig
 import org.skepsun.kototoro.parsers.model.ContentSource
+import org.skepsun.kototoro.parsers.model.ContentParserSource
+import org.skepsun.kototoro.parsers.newParser
 import org.skepsun.kototoro.parsers.network.NoCookiesCookieJar
+import org.skepsun.kototoro.parsers.util.LinkResolver
 import org.skepsun.kototoro.parsers.InMemoryCookieJar
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.await
@@ -58,11 +62,19 @@ internal object ContentLoaderContextIsolated : ContentLoaderContext() {
     override fun getDefaultUserAgent(): String = UserAgents.FIREFOX_MOBILE
 
     override fun redrawImageResponse(response: Response, redraw: (Bitmap) -> Bitmap): Response {
-        val srcImage = response.requireBody().byteStream().use(ImageIO::read)
-        checkNotNull(srcImage) { "Cannot decode image" }
-        val resImage = (redraw(BitmapTestImpl(srcImage)) as BitmapTestImpl)
+        val image = BitmapTestImpl(ImageIO.read(response.requireBody().byteStream()))
+        val resImage = redraw(image)
         return response.newBuilder().body(resImage.compress("png").toResponseBody("image/png".toMediaTypeOrNull())).build()
     }
+
+    override fun newParserInstance(source: ContentSource): ContentParser {
+        return (source as ContentParserSource).newParser(this)
+    }
+
+    override fun newLinkResolver(link: HttpUrl): LinkResolver {
+        throw UnsupportedOperationException("LinkResolver not available in test")
+    }
+}
 
     override fun createBitmap(width: Int, height: Int): Bitmap {
         return BitmapTestImpl(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB))

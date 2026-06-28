@@ -166,7 +166,7 @@ internal class HentaiSH(context: ContentLoaderContext) :
         } else {
             val tag = filter.tags.firstOrNull()?.key ?: ""
             val genreParam = if (tag.isNotEmpty()) "&genre=$tag" else ""
-            "https://$domain/videos/?page=$page$genreParam"
+            "https://$domain/?page=$page$genreParam"
         }
     }
 

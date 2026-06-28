@@ -132,7 +132,7 @@ internal class Hentai2W(context: ContentLoaderContext) :
             val q = filter.query.urlEncoded()
             "https://$domain/search?q=$q&genre=$tagParam&page=$page"
         } else {
-            "https://$domain/video?genre=$tagParam&page=$page"
+            "https://$domain/?genre=$tagParam&page=$page"
         }
     }
 
