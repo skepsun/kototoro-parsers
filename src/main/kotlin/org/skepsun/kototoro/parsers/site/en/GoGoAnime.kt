@@ -1,5 +1,7 @@
 package org.skepsun.kototoro.parsers.site.en
 
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.ContentLoaderContext
@@ -23,7 +25,11 @@ import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.util.Base64
 import java.util.EnumSet
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import okhttp3.Headers
 
 @ContentSourceParser("GOGOANIME", "GoGoAnime", "en", type = ContentType.VIDEO)
@@ -103,95 +109,114 @@ internal class GoGoAnime(context: ContentLoaderContext) :
         val chapterUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
 
-        val plainUrlIframe = doc.selectFirst("iframe[data-plain-url]")
-        if (plainUrlIframe != null) {
-            val plainUrl = plainUrlIframe.attr("data-plain-url").takeIf { it.isNotBlank() }
-            if (plainUrl != null) {
-                try {
-                    val iframeDoc = webClient.httpGet(plainUrl.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
-                    val sources = extractVideoSources(iframeDoc)
-                    if (sources.isNotEmpty()) {
-                        return sources.mapIndexed { index, src ->
-                            ContentPage(
-                                id = generateUid("${chapterUrl}|$index"),
-                                url = src,
-                                preview = null,
-                                source = source,
-                            )
-                        }
-                    }
-                } catch (_: Exception) {
-                }
-            }
-        }
-
-        val embedIframe = doc.selectFirst("iframe[src*=/embed]")
-        if (embedIframe != null) {
-            val embedUrl = embedIframe.attr("src").toAbsoluteUrl(domain)
-            try {
-                val embedDoc = webClient.httpGet(embedUrl, getRequestHeaders()).parseHtml()
-                val sources = extractVideoSources(embedDoc)
-                if (sources.isNotEmpty()) {
-                    return sources.mapIndexed { index, src ->
-                        ContentPage(
-                            id = generateUid("${chapterUrl}|$index"),
-                            url = src,
-                            preview = null,
-                            source = source,
-                        )
-                    }
-                }
-            } catch (_: Exception) {
-            }
-        }
-
-        val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
-            ?: doc.selectFirst("iframe[data-src]")?.attr("data-src")
-        if (iframeSrc != null) {
-            return listOf(ContentPage(
-                id = generateUid(chapterUrl),
-                url = iframeSrc.toAbsoluteUrl(domain),
-                preview = null,
-                source = source,
-            ))
-        }
-
-        val videoSrc = doc.selectFirst("video source[src]")?.attr("src")
-            ?: doc.selectFirst("video source[data-src]")?.attr("data-src")
-            ?: doc.selectFirst("video[src]")?.attr("src")
-            ?: doc.selectFirst("video[data-src]")?.attr("data-src")
-        if (videoSrc != null) {
-            return listOf(ContentPage(
-                id = generateUid(chapterUrl),
-                url = videoSrc.toAbsoluteUrl(domain),
-                preview = null,
-                source = source,
-            ))
+        val gogoIframe = doc.selectFirst("div.play-video iframe[src]")
+            ?: doc.selectFirst("iframe[src*='gogoplay']")
+            ?: doc.selectFirst("iframe[src*='streaming.php']")
+        if (gogoIframe != null) {
+            val iframeSrc = gogoIframe.attr("src").takeIf { it.isNotBlank() } ?: return emptyList()
+            val pages = tryExtractFromGogoPlay(iframeSrc, chapterUrl, doc)
+            if (pages.isNotEmpty()) return pages
         }
 
         context.requestBrowserAction(this, chapterUrl)
         return emptyList()
     }
 
-    private fun extractVideoSources(doc: Document): List<String> {
-        val sources = LinkedHashSet<String>()
+    private suspend fun tryExtractFromGogoPlay(
+        iframeSrc: String,
+        chapterUrl: String,
+        doc: Document,
+    ): List<ContentPage> {
+        val id = Regex("id=([^&]+)").find(iframeSrc)?.groupValues?.get(1) ?: return emptyList()
+        val host = Regex("//([^/]+)").find(iframeSrc)?.groupValues?.get(1) ?: return emptyList()
 
-        doc.select("video source[src]").forEach { src ->
-            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
-        }
-        doc.select("source[src]").forEach { src ->
-            src.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
-        }
-        doc.select("video[src]").forEach { v ->
-            v.attr("src").takeIf { it.isNotBlank() }?.let { sources.add(it.toAbsoluteUrl(domain)) }
+        val encryptedId = cryptoHandler(id, IV, SECRET_KEY, encrypt = true)
+
+        val scriptData = doc.select("script[data-name='episode']").attr("data-value")
+        if (scriptData.isBlank()) return emptyList()
+
+        val headersDecrypted = cryptoHandler(scriptData, IV, SECRET_KEY, encrypt = false)
+        val query = "id=$encryptedId&alias=$id&${headersDecrypted.substringAfter("&")}"
+
+        val ajaxHeaders = Headers.Builder()
+            .add("X-Requested-With", "XMLHttpRequest")
+            .add("Referer", "https://$host/")
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()
+
+        val ajaxResponse = try {
+            webClient.httpGet("https://$host/encrypt-ajax.php?$query", ajaxHeaders)
+        } catch (_: Exception) {
+            return emptyList()
         }
 
-        val html = doc.outerHtml()
-        Regex("https?://[^\"'\\s>]+\\.(?:m3u8|mp4)", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
-            sources.add(m.value)
+        val json = try {
+            JSONObject(ajaxResponse.body.string())
+        } catch (_: Exception) {
+            return emptyList()
         }
 
-        return sources.toList()
+        val dataEncrypted = json.optString("data", "")
+        if (dataEncrypted.isBlank()) return emptyList()
+
+        val decryptedData = cryptoHandler(dataEncrypted, IV, SECRET_DECRYPT_KEY, encrypt = false)
+        val videoJson = try {
+            JSONObject(decryptedData)
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val sources = mutableListOf<ContentPage>()
+        val sourceArr = videoJson.optJSONArray("source") ?: return emptyList()
+        for (i in 0 until sourceArr.length()) {
+            val srcObj = sourceArr.optJSONObject(i) ?: continue
+            val file = srcObj.optString("file", "")
+            if (file.isNotBlank()) {
+                sources.add(ContentPage(
+                    id = generateUid("${chapterUrl}|$i"),
+                    url = file,
+                    preview = null,
+                    source = source,
+                ))
+            }
+        }
+
+        val sourceBkArr = videoJson.optJSONArray("sourceBk")
+        if (sourceBkArr != null) {
+            for (i in 0 until sourceBkArr.length()) {
+                val srcObj = sourceBkArr.optJSONObject(i) ?: continue
+                val file = srcObj.optString("file", "")
+                if (file.isNotBlank()) {
+                    sources.add(ContentPage(
+                        id = generateUid("${chapterUrl}|bk$i"),
+                        url = file,
+                        preview = null,
+                        source = source,
+                    ))
+                }
+            }
+        }
+
+        return sources
+    }
+
+    companion object {
+        private const val IV = "3134003223491201"
+        private const val SECRET_KEY = "37911490979715163134003223491201"
+        private const val SECRET_DECRYPT_KEY = "54674138327930866480207815084989"
+
+        private fun cryptoHandler(string: String, iv: String, secretKeyString: String, encrypt: Boolean): String {
+            val ivParameterSpec = IvParameterSpec(iv.toByteArray())
+            val secretKey = SecretKeySpec(secretKeyString.toByteArray(), "AES")
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            return if (!encrypt) {
+                cipher.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec)
+                String(cipher.doFinal(Base64.getDecoder().decode(string)))
+            } else {
+                cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivParameterSpec)
+                Base64.getEncoder().encodeToString(cipher.doFinal(string.toByteArray()))
+            }
+        }
     }
 
     override fun getRequestHeaders() = Headers.Builder()

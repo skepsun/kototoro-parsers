@@ -168,6 +168,40 @@ internal class HahoMoe(context: ContentLoaderContext) :
             }
         }
 
+        val mirrorItems = doc.select("[aria-labelledby=\"mirror-dropdown\"] > li > a.dropdown-item")
+        if (mirrorItems.isNotEmpty()) {
+            val pages = mutableListOf<ContentPage>()
+            for (it in mirrorItems) {
+                val mirrorId = it.attr("href").substringAfter("v=").substringBefore("&")
+                if (mirrorId.isBlank()) continue
+                val embedUrl = "https://$domain/embed?v=$mirrorId"
+                try {
+                    val mirrorHeaders = Headers.Builder()
+                        .add("Referer", chapterUrl)
+                        .add("User-Agent", context.getDefaultUserAgent())
+                        .build()
+                    val mirrorDoc = webClient.httpGet(embedUrl, mirrorHeaders).parseHtml()
+                    val sources = mirrorDoc.select("video#player > source")
+                    for (src in sources) {
+                        val srcUrl = src.attr("src")
+                        if (srcUrl.isNotBlank()) {
+                            val quality = src.attr("title").ifBlank { null }
+                            pages.add(ContentPage(
+                                id = generateUid("mirror:${chapter.id}|${mirrorId}|${srcUrl}"),
+                                url = srcUrl.toAbsoluteUrl(domain),
+                                preview = quality,
+                                source = source,
+                            ))
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            if (pages.isNotEmpty()) {
+                return pages
+            }
+        }
+
         val serverButtons = doc.select("[data-video], [data-url]")
         if (serverButtons.isNotEmpty()) {
             return serverButtons.mapIndexed { index, btn ->

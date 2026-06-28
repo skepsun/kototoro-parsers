@@ -1,5 +1,7 @@
 package org.skepsun.kototoro.parsers.site.en
 
+import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
@@ -52,11 +54,22 @@ internal class Zenkai(context: ContentLoaderContext) :
     }
 
     override suspend fun getDetails(manga: Content): Content {
-        val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
-        val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            ?: manga.title
-        val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
+        val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
+        val doc = response.parseHtml()
+
+        val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
+            ?.removeSuffix(" - Zenkai")?.trim()
+            ?: doc.selectFirst(".binfo h1.title")?.text()?.trim() ?: manga.title
+
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: doc.selectFirst(".binfo .synopsis .content")?.text()?.trim()
+
+        val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
+            ?: doc.selectFirst(".binfo .poster img")?.attr("src")?.toAbsoluteUrlOrNull(domain)
+
+        val mangaId = doc.selectFirst("script:containsData(mangaId)")?.data()
+            ?.let { Regex("mangaId\\s*=\\s*(\\d+)").find(it)?.groupValues?.get(1) }
+            ?: doc.selectFirst("[data-id]")?.attr("data-id")
 
         val tags = doc.select("a[href*=/genre/]").mapNotNull { a ->
             val text = a.text().trim()
@@ -64,69 +77,253 @@ internal class Zenkai(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val chapterLinks = doc.select("a[href*=/watch/]")
-        val chapters = chapterLinks.mapIndexed { index, link ->
-            val href = link.attr("href").takeIf { it.isNotBlank() } ?: return@mapIndexed null
-            val chTitle = link.text().trim().ifBlank { "Episode ${index + 1}" }
-            val absoluteUrl = href.toAbsoluteUrl(domain)
-            ContentChapter(
-                id = generateUid(absoluteUrl),
-                title = chTitle,
-                number = (index + 1).toFloat(),
-                volume = 0,
-                url = absoluteUrl.removePrefix("https://$domain"),
-                scanlator = null,
-                uploadDate = 0L,
-                branch = null,
-                source = source,
-            )
-        }.filterNotNull()
+        val mangaSlug = manga.publicUrl.substringAfterLast('/').ifBlank { mangaId ?: "" }
+        val chapters = if (mangaId != null) {
+            fetchEpisodeList(mangaId, mangaSlug)
+        } else {
+            emptyList()
+        }
 
         return manga.copy(
-            title = title, description = description,
-            coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover,
+            title = title,
+            description = description?.ifBlank { null },
+            coverUrl = cover ?: manga.coverUrl,
+            largeCoverUrl = cover ?: manga.largeCoverUrl,
             contentRating = ContentRating.SAFE,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
-            chapters = chapters.ifEmpty { manga.chapters },
+            chapters = chapters.ifEmpty {
+                listOf(ContentChapter(
+                    id = generateUid(manga.url), url = manga.url, title = "Watch",
+                    number = 1f, uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                ))
+            },
         )
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val chapterUrl = chapter.url.toAbsoluteUrl(domain)
-        val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
+        val chapterUrl = chapter.url
+        val epUrl = chapterUrl.substringBefore("?").toAbsoluteUrl(domain)
+        val queryPart = chapterUrl.substringAfter("?", "")
+        val dataIds = queryPart.substringAfter("ids=", "").substringBefore("&")
+        val animeId = queryPart.substringAfter("animeId=", "").substringBefore("&")
 
-        val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
-            ?: doc.selectFirst("iframe[data-src]")?.attr("data-src")
-        if (iframeSrc != null) {
-            return listOf(ContentPage(
-                id = generateUid(chapterUrl),
-                url = iframeSrc.toAbsoluteUrl(domain),
-                preview = null,
-                source = source,
-            ))
+        if (dataIds.isBlank() || animeId.isBlank()) {
+            return trySimpleExtraction(epUrl)
         }
 
-        val videoSrc = doc.selectFirst("video source[src]")?.attr("src")
-            ?: doc.selectFirst("video source[data-src]")?.attr("data-src")
-            ?: doc.selectFirst("video[src]")?.attr("src")
-            ?: doc.selectFirst("video[data-src]")?.attr("data-src")
-        if (videoSrc != null) {
-            return listOf(ContentPage(
-                id = generateUid(chapterUrl),
-                url = videoSrc.toAbsoluteUrl(domain),
-                preview = null,
-                source = source,
-            ))
+        val results = mutableListOf<ContentPage>()
+
+        try {
+            val serverIds = fetchServerList(dataIds)
+            for (serverId in serverIds) {
+                try {
+                    val embedUrl = fetchEmbedUrl(serverId)
+                    val videos = extractVideoFromEmbed(embedUrl, epUrl)
+                    results.addAll(videos)
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
         }
 
-        context.requestBrowserAction(this, chapterUrl)
+        if (results.isNotEmpty()) return results
+        return trySimpleExtraction(epUrl)
+    }
+
+    private suspend fun trySimpleExtraction(epUrl: String): List<ContentPage> {
+        try {
+            val response = webClient.httpGet(epUrl, getRequestHeaders())
+            val doc = response.parseHtml()
+
+            val videoEl = doc.selectFirst("video source[src], video[src], iframe[src]")
+            val videoUrl = videoEl?.attr("src")?.takeIf { it.startsWith("http") }
+                ?: videoEl?.attr("data-src")?.takeIf { it.startsWith("http") }
+
+            if (videoUrl != null) {
+                return listOf(ContentPage(
+                    id = generateUid("video:${epUrl}"),
+                    url = videoUrl, preview = null, source = source,
+                ))
+            }
+        } catch (_: Exception) {
+        }
         return emptyList()
     }
 
-    override fun getRequestHeaders() = Headers.Builder()
+    private fun getAjaxHeaders(referer: String): Headers = Headers.Builder()
+        .add("Accept", "application/json, text/javascript, */*; q=0.01")
+        .add("Referer", referer)
+        .add("User-Agent", context.getDefaultUserAgent())
+        .add("X-Requested-With", "XMLHttpRequest")
+        .build()
+
+    private suspend fun fetchServerIds(animeId: String, episodeNum: Float): String? {
+        return try {
+            val url = "https://$domain/ajax/episode/list/$animeId"
+            val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/"))
+            val doc = response.parseHtml()
+            val epNumStr = episodeNum.toInt().toString()
+            val element = doc.select("li a[data-num]").firstOrNull { it.attr("data-num") == epNumStr }
+            element?.attr("data-ids")?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun fetchServerList(ids: String): List<String> {
+        val url = "https://$domain/ajax/server/list?servers=$ids"
+        val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/"))
+        val raw = response.body.string()
+        val html = try {
+            JSONObject(raw).getString("result")
+        } catch (_: Exception) {
+            raw
+        }
+        val doc = Jsoup.parse(html)
+        return doc.select("li[data-link-id]").mapNotNull { el ->
+            el.attr("data-link-id").takeIf { it.isNotBlank() }
+        }
+    }
+
+    private suspend fun fetchEmbedUrl(serverId: String): String {
+        val url = "https://$domain/ajax/server?get=$serverId"
+        val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/"))
+        val json = JSONObject(response.body.string())
+        return json.getJSONObject("result").getString("url")
+    }
+
+    private suspend fun extractVideoFromEmbed(embedUrl: String, referer: String): List<ContentPage> {
+        val host = try {
+            embedUrl.substringAfter("://").substringBefore("/")
+        } catch (_: Exception) {
+            ""
+        }
+        val origin = if (host.isNotEmpty()) "https://$host" else "https://$domain"
+
+        val pageHeaders = Headers.Builder()
+            .add("Referer", referer)
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()
+
+        val pageBody = webClient.httpGet(embedUrl, pageHeaders).body.string()
+
+        val dataId = Regex("""data-id="([^"]+)"""").find(pageBody)?.groupValues?.get(1)
+        if (dataId != null) {
+            return extractFromApi(dataId, host, embedUrl, referer, origin)
+        }
+
+        val iframeSrc = Regex("""<iframe[^>]+src="([^"]+)"""").find(pageBody)?.groupValues?.get(1)
+        if (iframeSrc != null) {
+            val resolvedSrc = if (iframeSrc.startsWith("http")) iframeSrc
+            else embedUrl.substringBeforeLast("/") + "/" + iframeSrc.trimStart('/')
+            return extractVideoFromEmbed(resolvedSrc, embedUrl)
+        }
+
+        val directM3u8 = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(pageBody)?.groupValues?.get(0)
+        if (directM3u8 != null) {
+            return listOf(ContentPage(
+                id = generateUid("m3u8:$embedUrl"), url = directM3u8,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
+        val sourceSrc = Regex("""<source[^>]+src="([^"]+\.m3u8[^"]*)"""").find(pageBody)?.groupValues?.get(1)
+        if (sourceSrc != null) {
+            return listOf(ContentPage(
+                id = generateUid("source:$embedUrl"), url = sourceSrc,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
+        val jsVarUrl = Regex(
+            """(?:var|let|const)\s+\w+\s*=\s*["']([^"']*(?:\.m3u8|/stream/)[^"']*)["']""" +
+                """|(?:file|source|url|src)\s*[:=]\s*["']([^"']*(?:\.m3u8|/stream/)[^"']*)["']"""
+        ).find(pageBody)?.let { match ->
+            match.groupValues.getOrNull(1)?.takeIf(String::isNotEmpty)
+                ?: match.groupValues.getOrNull(2)?.takeIf(String::isNotEmpty)
+        }
+        if (jsVarUrl != null) {
+            val resolved = if (jsVarUrl.startsWith("http")) jsVarUrl
+            else embedUrl.substringBeforeLast("/") + "/" + jsVarUrl.trimStart('/')
+            return listOf(ContentPage(
+                id = generateUid("jsvar:$embedUrl"), url = resolved,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
+        return emptyList()
+    }
+
+    private suspend fun extractFromApi(
+        dataId: String, host: String, embedUrl: String,
+        referer: String, origin: String,
+    ): List<ContentPage> {
+        val apiHeaders = Headers.Builder()
+            .add("Accept", "*/*")
+            .add("Referer", embedUrl)
+            .add("Origin", origin)
+            .add("User-Agent", context.getDefaultUserAgent())
+            .add("X-Requested-With", "XMLHttpRequest")
+            .build()
+
+        val m3u8Url = try {
+            val response = webClient.httpGet("https://$host/stream/getSources?id=$dataId&id=$dataId", apiHeaders)
+            val json = JSONObject(response.body.string())
+            json.getString("sources")
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            val response = webClient.httpGet("https://$host/stream/getSourcesNew?id=$dataId&id=$dataId", apiHeaders)
+            val json = JSONObject(response.body.string())
+            json.getString("sources")
+        } catch (_: Exception) {
+            null
+        }
+
+        if (m3u8Url != null && m3u8Url.startsWith("http")) {
+            return listOf(ContentPage(
+                id = generateUid("api:$embedUrl"), url = m3u8Url,
+                preview = null, source = source,
+                headers = mapOf("Referer" to origin, "Origin" to origin),
+            ))
+        }
+
+        return emptyList()
+    }
+
+    override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Referer", "https://$domain/")
         .add("User-Agent", context.getDefaultUserAgent())
+        .add("X-Requested-With", "XMLHttpRequest")
         .build()
+
+    private suspend fun fetchEpisodeList(animeId: String, animeSlug: String): List<ContentChapter> {
+        return try {
+            val url = "https://$domain/ajax/episode/list/$animeId"
+            val response = webClient.httpGet(url, getAjaxHeaders("https://$domain/watch/$animeSlug"))
+            val doc = response.parseHtml()
+            val episodes = doc.select("li a[data-num]")
+            episodes.map { el ->
+                val num = el.attr("data-num")
+                val epId = el.attr("data-id")
+                val dataIds = el.attr("data-ids")
+                ContentChapter(
+                    id = generateUid("$animeId|$epId"),
+                    url = "/watch/$animeSlug-episode-$num?ids=$dataIds&animeId=$animeId",
+                    title = "Episode $num",
+                    number = num.toFloatOrNull() ?: 0f,
+                    uploadDate = 0L, volume = 0,
+                    branch = null, scanlator = null, source = source,
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
 
     private fun buildFilterTags(): Set<ContentTag> {
         val tags = LinkedHashSet<ContentTag>()

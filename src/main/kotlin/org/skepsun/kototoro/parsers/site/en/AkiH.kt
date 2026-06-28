@@ -103,6 +103,40 @@ internal class AkiH(context: ContentLoaderContext) :
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val chapterUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
+
+        val displayvideoRegex = Regex("""displayvideo\(\d+,\s*(\d+)\)""")
+        val script = doc.select("script").find { it.html().contains("displayvideo") }
+        if (script != null) {
+            val id = displayvideoRegex.find(script.html())?.groupValues?.get(1)
+            if (id != null) {
+                val embedId = fetchEmbedId(id, chapterUrl)
+                if (embedId != null) {
+                    val playUrl = fetchPlayUrl(embedId)
+                    if (playUrl != null) {
+                        val finalUrl = fetchFinalUrl(playUrl)
+                        if (finalUrl != null) {
+                            return listOf(ContentPage(
+                                id = generateUid(finalUrl),
+                                url = finalUrl,
+                                preview = null,
+                                source = source,
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        val gofileHref = doc.selectFirst("div.server-item[data-type=dl] a.btn[href*=\"gofile.io\"]")?.attr("href")
+        if (gofileHref != null && gofileHref.startsWith("http")) {
+            return listOf(ContentPage(
+                id = generateUid(gofileHref),
+                url = gofileHref,
+                preview = null,
+                source = source,
+            ))
+        }
+
         val videoEl = doc.selectFirst("video source[src], video[src], iframe[src]")
         val videoUrl = videoEl?.attr("src")?.takeIf { it.isNotBlank() }
             ?: videoEl?.attr("data-src")?.takeIf { it.isNotBlank() }
@@ -114,6 +148,39 @@ internal class AkiH(context: ContentLoaderContext) :
         }
         context.requestBrowserAction(this, chapterUrl)
         return emptyList()
+    }
+
+    private suspend fun fetchEmbedId(id: String, referer: String): String? {
+        val url = "https://v.aki-h.com/v/$id"
+        val body = webClient.httpGet(url, Headers.Builder()
+            .add("Referer", referer)
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()).body.string()
+        return Regex("""var vid\s*=\s*'(.*?)'""").find(body)?.groupValues?.get(1)
+    }
+
+    private suspend fun fetchPlayUrl(embedId: String): String? {
+        val url = "https://v.aki-h.com/f/$embedId"
+        val body = webClient.httpGet(url, Headers.Builder()
+            .add("Referer", "https://v.aki-h.com/")
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()).body.string()
+        return Regex("""src="(https://streaming\.aki\.today/playback/[^"]+)"""").find(body)?.groupValues?.get(1)
+    }
+
+    private suspend fun fetchFinalUrl(playUrl: String): String? {
+        val body = webClient.httpGet(playUrl, Headers.Builder()
+            .add("Referer", "https://v.aki-h.com/")
+            .add("User-Agent", context.getDefaultUserAgent())
+            .build()).body.string()
+        val iframeSrc = Regex("""<iframe[^>]+class="embed-responsive-item"[^>]+src="([^"]+)"""")
+            .find(body)?.groupValues?.get(1)
+            ?: Regex("""<iframe[^>]+src="([^"]+aki-h\.stream[^"]*)"""")
+                .find(body)?.groupValues?.get(1)
+            ?: return null
+        val sid = iframeSrc.substringAfterLast("/")
+        if (sid.isBlank()) return null
+        return "https://aki-h.stream/file/$sid/"
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
