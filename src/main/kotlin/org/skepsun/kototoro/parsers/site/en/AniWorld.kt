@@ -73,12 +73,11 @@ internal class AniWorld(context: ContentLoaderContext) :
         val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
 
-        val episodeLinks = doc.select("a[href*=/episode-], a[href*=/staffel-], a[href*=-folge-]").filter { el ->
+        val episodeUrls = LinkedHashSet<String>()
+        val episodeLinks = doc.select("a[href*=/episode-]").filter { el ->
             val href = el.attr("href")
-            href.count { it == '/' } >= 4 &&
-                !href.contains("/genre/") && !href.contains("/tag/") &&
-                el.text().trim().isNotBlank()
-        }
+            href.contains("/staffel-") && href.contains("/episode-") && href.count { it == '/' } >= 5
+        }.filter { episodeUrls.add(it.attr("abs:href").takeIf { u -> u.isNotBlank() } ?: it.attr("href").toAbsoluteUrl(domain)) }
         val chapters = if (episodeLinks.isNotEmpty()) {
             episodeLinks.mapIndexed { index, el ->
                 val epUrl = el.attr("abs:href").takeIf { it.isNotBlank() }
@@ -220,20 +219,7 @@ internal class AniWorld(context: ContentLoaderContext) :
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        var cards = doc.select("a.film-poster-ahref[href], a.item[href], .card a[href], .video-item a[href], .video-card a[href], article a[href], .post a[href]").toList()
-        if (cards.isEmpty()) {
-            cards = doc.select("a[href]").filter { a ->
-                val h = a.attr("href")
-                val hasContent = a.selectFirst("img") != null || a.selectFirst("h3,h2,h4,.title,.name") != null
-                val notNav = !h.contains("genre") && !h.contains("category") && !h.contains("tag") &&
-                    !h.contains("login") && !h.contains("signup") && !h.contains("random") &&
-                    !h.contains("cdn") && !h.contains("static") && !h.contains("assets") &&
-                    !h.contains("javascript") && !h.contains("facebook") && !h.contains("twitter") &&
-                    h.startsWith("/") && h.count { it == '/' } >= 2 && h.length > 5
-                hasContent || notNav
-            }
-        }
-        for (link in cards) {
+        for (link in doc.select("a[href*=/anime/stream/]")) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
