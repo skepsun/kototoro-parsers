@@ -28,7 +28,7 @@ import okhttp3.Headers
 
 @ContentSourceParser("PIMPBUNNY", "PimpBunny", "en", type = ContentType.HENTAI_VIDEO)
 internal class PimpBunny(context: ContentLoaderContext) :
-    PagedContentParser(context, ContentParserSource.PIMPBUNNY, pageSize = 24) {
+    PagedContentParser(context, ContentParserSource.PIMPBUNNY, pageSize = 32) {
 
     override val configKeyDomain = ConfigKey.Domain("pimpbunny.com")
 
@@ -217,16 +217,19 @@ internal class PimpBunny(context: ContentLoaderContext) :
         .build()
 
     private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val sortBy = when (order) {
+            SortOrder.POPULARITY -> "video_viewed"
+            SortOrder.RATING -> "rating"
+            else -> "post_date"
+        }
         val tag = filter.tags.firstOrNull()?.key
         return when {
             !filter.query.isNullOrBlank() -> {
                 val q = filter.query.urlEncoded()
                 "https://$domain/search/?q=$q&page=$page"
             }
-            tag != null -> "https://$domain/categories/$tag/?page=$page"
-            order == SortOrder.POPULARITY -> "https://$domain/videos/?sort_by=video_viewed&page=$page"
-            order == SortOrder.RATING -> "https://$domain/videos/?sort_by=rating&page=$page"
-            else -> "https://$domain/$page/"
+            tag != null -> "https://$domain/categories/$tag/$page/?videos_per_page=$pageSize&sort_by=$sortBy"
+            else -> "https://$domain/videos/$page/?videos_per_page=$pageSize&sort_by=$sortBy"
         }
     }
 
@@ -234,13 +237,8 @@ internal class PimpBunny(context: ContentLoaderContext) :
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
 
-        val container = doc.selectFirst("div[class*=featured], section[class*=featured]")
-            ?: doc.selectFirst("div:contains(Featured Videos)")
-            ?: doc
-        val cards = container.select("a.ui-card-link__KxRw6l[href*=/videos/]").ifEmpty {
-            container.select("a[href*=/videos/][class*=card], a[href*=/videos/][class*=video]")
-        }.ifEmpty {
-            doc.select("a.ui-card-link__KxRw6l[href*=/videos/]")
+        val cards = doc.select("a.ui-card-link__KxRw6l[href*=/videos/]").ifEmpty {
+            doc.select("a[href*=/videos/][class*=card], a[href*=/videos/][class*=video]")
         }
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
