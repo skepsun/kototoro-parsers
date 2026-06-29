@@ -39,7 +39,7 @@ internal class Hanime(context: ContentLoaderContext) :
     override val configKeyDomain = ConfigKey.Domain("hanime.tv")
 
     private val apiBase = "https://search.htv-services.com"
-    private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
+    private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net", "streamable.cloud")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY, SortOrder.RATING,
@@ -376,8 +376,7 @@ internal class Hanime(context: ContentLoaderContext) :
         val tagRegex = Regex("""\{id:\d+,text:"([^"]*)"""")
         tagRegex.findAll(arrayStr).forEach { m ->
             val text = m.groupValues[1]
-            val key = text.lowercase().replace(" ", "-")
-            result.add(ContentTag(text.replaceFirstChar { it.uppercase() }, key, source))
+            result.add(ContentTag(text.replaceFirstChar { it.uppercase() }, text, source))
         }
         return result
     }
@@ -385,14 +384,14 @@ internal class Hanime(context: ContentLoaderContext) :
     private fun defaultTags(): Set<ContentTag> = linkedSetOf(
         ContentTag("3D", "3d", source), ContentTag("Ahegao", "ahegao", source),
         ContentTag("Anal", "anal", source), ContentTag("BDSM", "bdsm", source),
-        ContentTag("Big Boobs", "big-boobs", source), ContentTag("Blowjob", "blow-job", source),
+        ContentTag("Big Boobs", "big boobs", source), ContentTag("Blow Job", "blow job", source),
         ContentTag("Bondage", "bondage", source), ContentTag("Censored", "censored", source),
         ContentTag("Cosplay", "cosplay", source), ContentTag("Creampie", "creampie", source),
         ContentTag("Futanari", "futanari", source), ContentTag("Gangbang", "gangbang", source),
         ContentTag("Harem", "harem", source), ContentTag("Incest", "incest", source),
         ContentTag("Loli", "loli", source), ContentTag("MILF", "milf", source),
-        ContentTag("NTR", "ntr", source), ContentTag("Schoolgirl", "schoolgirl", source),
-        ContentTag("Tentacles", "tentacles", source), ContentTag("Threesome", "threesome", source),
+        ContentTag("NTR", "ntr", source), ContentTag("School Girl", "school girl", source),
+        ContentTag("Tentacle", "tentacle", source), ContentTag("Threesome", "threesome", source),
         ContentTag("Uncensored", "uncensored", source), ContentTag("Virgin", "virgin", source),
         ContentTag("Yuri", "yuri", source),
     )
