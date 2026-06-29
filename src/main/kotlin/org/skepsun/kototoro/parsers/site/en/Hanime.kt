@@ -22,11 +22,13 @@ import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseJson
+import org.skepsun.kototoro.parsers.util.parseJsonArray
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.EnumSet
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
 @ContentSourceParser("HANIME", "Hanime", "en", type = ContentType.HENTAI_VIDEO)
 internal class Hanime(context: ContentLoaderContext) :
@@ -38,7 +40,7 @@ internal class Hanime(context: ContentLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("hanime.tv")
 
-    private val apiBase = "https://search.htv-services.com"
+    private val apiBase = "https://cached.freeanimehentai.net/api/v10/search_hvs"
     private val manifestsBase = "https://cached.freeanimehentai.net/api/v8/guest/videos"
     private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
 
@@ -302,29 +304,32 @@ internal class Hanime(context: ContentLoaderContext) :
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
+        .add("Origin", "https://$domain")
         .add("Referer", "https://$domain/")
         .add("User-Agent", context.getDefaultUserAgent())
         .build()
 
     private suspend fun fetchListByApi(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val body = JSONObject().apply {
-            put("search_text", filter.query ?: "")
-            put("tags", JSONArray(filter.tags.map { it.key }))
-            put("tags_mode", "AND")
-            put("brands", JSONArray())
-            put("blacklist", JSONArray())
-            put("order_by", when (order) {
+        val url = apiBase.toHttpUrl().newBuilder().apply {
+            addQueryParameter("search_text", filter.query ?: "")
+            for (tag in filter.tags) {
+                addQueryParameter("tags[]", tag.key)
+            }
+            addQueryParameter("tags_mode", "AND")
+            addQueryParameter("order_by", when (order) {
                 SortOrder.POPULARITY -> "views"
                 SortOrder.RATING -> "rating"
                 SortOrder.UPDATED -> "released_at_unix"
                 else -> "created_at_unix"
             })
-            put("ordering", "desc")
-            put("page", page)
-        }
+            addQueryParameter("ordering", "desc")
+            addQueryParameter("page", page.toString())
+        }.build()
 
-        val json = webClient.httpPost(apiBase, body).parseJson()
-        val hits = runCatching { JSONArray(json.getString("hits")) }.getOrElse { JSONArray() }
+        val headers = getRequestHeaders()
+        val hits = runCatching {
+            webClient.httpGet(url, headers).parseJsonArray()
+        }.getOrElse { JSONArray() }
         val list = ArrayList<Content>(hits.length())
         for (i in 0 until hits.length()) {
             val o = hits.optJSONObject(i) ?: continue
@@ -358,18 +363,16 @@ internal class Hanime(context: ContentLoaderContext) :
     )
 
     private suspend fun fetchVideoDetail(slug: String): VideoDetailData? {
-        val body = JSONObject().apply {
-            put("search_text", slug)
-            put("tags", JSONArray())
-            put("tags_mode", "AND")
-            put("brands", JSONArray())
-            put("blacklist", JSONArray())
-            put("order_by", "created_at_unix")
-            put("ordering", "desc")
-            put("page", 0)
-        }
-        val json = webClient.httpPost(apiBase, body).parseJson()
-        val hits = runCatching { JSONArray(json.getString("hits")) }.getOrElse { JSONArray() }
+        val url = apiBase.toHttpUrl().newBuilder().apply {
+            addQueryParameter("search_text", slug)
+            addQueryParameter("order_by", "created_at_unix")
+            addQueryParameter("ordering", "desc")
+            addQueryParameter("page", "0")
+        }.build()
+        val headers = getRequestHeaders()
+        val hits = runCatching {
+            webClient.httpGet(url, headers).parseJsonArray()
+        }.getOrElse { JSONArray() }
         if (hits.length() == 0) return null
         val o = hits.optJSONObject(0) ?: return null
         val title = o.optString("name").takeIf { it.isNotBlank() }
