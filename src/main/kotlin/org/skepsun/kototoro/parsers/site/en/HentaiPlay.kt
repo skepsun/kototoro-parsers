@@ -96,7 +96,8 @@ internal class HentaiPlay(context: ContentLoaderContext) :
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
 
-        val episodeLinks = doc.select("a[href*=-episode-]").filter { el ->
+        val episodeContainer = doc.selectFirst(".entry-content, div[class*=episode], div[class*=chapter], ul[class*=episode], ul[class*=chapter]") ?: doc
+        val episodeLinks = episodeContainer.select("a[href*=-episode-]").filter { el ->
             el.selectFirst("img") == null && el.ownText().isNotBlank()
         }
         val chapters = if (episodeLinks.isNotEmpty()) {
@@ -210,7 +211,8 @@ internal class HentaiPlay(context: ContentLoaderContext) :
                 "https://$domain/hentai/episodes/new-release/page/$page/$orderby"
             }
             else -> {
-                "https://$domain/page/$page/"
+                if (page <= 1) "https://$domain/"
+                else "https://$domain/page/$page/"
             }
         }
     }
@@ -224,15 +226,17 @@ internal class HentaiPlay(context: ContentLoaderContext) :
             doc.select("h2.entry-title a[href]")
         }.ifEmpty {
             doc.select("article a[href*=/hentai/]")
-        }.ifEmpty {
-            doc.select("a[href*=/hentai/][title]")
         }
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
             if (!seen.add(absoluteUrl)) continue
             val title = link.text().trim().ifEmpty { continue }
-            val thumb = link.closest("article")?.selectFirst("img[src]")?.let {
+            val parent = link.closest("article") ?: link.parents().select("article").firstOrNull()
+            val thumb = parent?.selectFirst("img[data-src], img[data-original], img[src]")?.let {
+                val raw = it.attr("data-src").ifBlank { it.attr("data-original").ifBlank { it.attr("src") } }
+                raw.toAbsoluteUrlOrNull(domain)
+            } ?: link.selectFirst("img[data-src], img[src]")?.let {
                 val raw = it.attr("data-src").ifBlank { it.attr("src") }
                 raw.toAbsoluteUrlOrNull(domain)
             }
