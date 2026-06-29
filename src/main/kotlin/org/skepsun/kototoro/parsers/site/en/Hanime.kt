@@ -30,7 +30,7 @@ import okhttp3.Headers
 
 @ContentSourceParser("HANIME", "Hanime", "en", type = ContentType.HENTAI_VIDEO)
 internal class Hanime(context: ContentLoaderContext) :
-    PagedContentParser(context, ContentParserSource.HANIME, pageSize = 24) {
+    PagedContentParser(context, ContentParserSource.HANIME, pageSize = 48) {
 
     init {
         setFirstPage(0)
@@ -40,7 +40,6 @@ internal class Hanime(context: ContentLoaderContext) :
 
     private val apiBase = "https://search.htv-services.com"
     private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
-    private val knownCdnHosts = setOf("streamable.cloud")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY, SortOrder.RATING,
@@ -138,6 +137,9 @@ internal class Hanime(context: ContentLoaderContext) :
 
         val pages = mutableListOf<ContentPage>()
 
+        val nuxPages = parsePagesFromNux(doc)
+        if (nuxPages.isNotEmpty()) return nuxPages
+
         doc.select("video source[src]").forEach { src ->
             val url = src.attr("src").takeIf { it.isNotBlank() } ?: return@forEach
             if (url.startsWith("http") && disallowedStreamHosts.none { url.contains(it) }) {
@@ -151,70 +153,43 @@ internal class Hanime(context: ContentLoaderContext) :
             }
         }
 
-        doc.select("script[type=application/ld+json]").forEach { script ->
-            runCatching {
-                val json = JSONObject(script.data())
-                json.optString("contentUrl").takeIf { it.isNotBlank() }?.let { url ->
-                    if (url.startsWith("http")) {
-                        pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+        if (pages.isNotEmpty()) return pages
+
+        context.requestBrowserAction(this, watchUrl)
+        return emptyList()
+    }
+
+    private fun parsePagesFromNux(doc: Document): List<ContentPage> {
+        val html = doc.outerHtml()
+        val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
+        val match = nuxRegex.find(html) ?: return emptyList()
+        val body = match.groupValues[1].replace("\\u002F", "/")
+
+        val result = mutableListOf<ContentPage>()
+        val manifestStart = body.indexOf("videos_manifest:{")
+        if (manifestStart >= 0) {
+            val manifestObjStart = body.indexOf('{', manifestStart)
+            val manifestObjEnd = findMatchingBrace(body, manifestObjStart)
+            if (manifestObjEnd != null) {
+                val manifestStr = body.substring(manifestObjStart, manifestObjEnd + 1)
+                val streamUrlRegex = Regex("""url:"(https?://[^"]+)"""")
+                streamUrlRegex.findAll(manifestStr).forEach { m ->
+                    val url = m.groupValues[1]
+                    if (disallowedStreamHosts.none { url.contains(it) }) {
+                        result.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
                     }
                 }
             }
         }
 
-        val docHtml = doc.outerHtml().replace("\\u002F", "/").replace("\\/", "/")
-        Regex("https?://[^\"'\\s<>]+\\.m3u8", RegexOption.IGNORE_CASE).findAll(docHtml).forEach { m ->
-            val url = m.value
-            if (disallowedStreamHosts.none { url.contains(it) }) {
-                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+        if (result.isEmpty()) {
+            val dlRegex = Regex("""dl_url:"(https?://[^"]+)"""")
+            dlRegex.find(body)?.let { m ->
+                result.add(ContentPage(id = generateUid(m.groupValues[1]), url = m.groupValues[1], preview = null, source = source))
             }
         }
 
-        doc.select("script:not([type])").forEach { script ->
-            val data = script.data()
-            if (data.contains("__NUXT__") || data.contains("window.__NUXT__")) {
-                runCatching {
-                    val jsonStr = data
-                        .substringAfter("__NUXT__")
-                        .substringAfter("=")
-                        .substringBefore(";\n")
-                        .substringBefore(";")
-                        .trim()
-                    Regex("https?://[^\"'\\\\]+m3u8[^\"'\\\\]*", RegexOption.IGNORE_CASE)
-                        .findAll(jsonStr)
-                        .forEach { m ->
-                            val url = m.value.replace("\\/", "/").replace("\\u002F", "/")
-                            if (disallowedStreamHosts.none { url.contains(it) }) {
-                                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
-                            }
-                        }
-                }
-            }
-        }
-
-        if (pages.isNotEmpty()) return pages
-
-        val respBody = webClient.httpGet(watchUrl, getRequestHeaders())
-        val html = respBody.toString()
-        Regex("https?://[^\"'\\s>]+\\.m3u8", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
-            val url = m.value
-            if (disallowedStreamHosts.none { url.contains(it) }) {
-                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
-            }
-        }
-        if (pages.isEmpty()) {
-            Regex("https?://[^\"'\\s>]+\\.mp4", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
-                val url = m.value
-                if (disallowedStreamHosts.none { url.contains(it) }) {
-                    pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
-                }
-            }
-        }
-
-        if (pages.isNotEmpty()) return pages
-
-        context.requestBrowserAction(this, watchUrl)
-        return emptyList()
+        return result
     }
 
     private fun parseListFromNux(doc: Document): List<Content> {
@@ -373,12 +348,38 @@ internal class Hanime(context: ContentLoaderContext) :
     }
 
     private suspend fun fetchTagsFromBrowse(): Set<ContentTag> {
-        val doc = webClient.httpGet("https://$domain/browse/tags", getRequestHeaders()).parseHtml()
+        val doc = webClient.httpGet("https://$domain/browse", getRequestHeaders()).parseHtml()
+        val nuxTags = parseTagsFromNux(doc)
+        if (nuxTags.isNotEmpty()) return nuxTags
         return doc.select("a[href*=/browse/tags/]").mapNotNull { a ->
             val text = a.text().trim().replaceFirstChar { it.uppercase() }
             val key = a.attr("href").substringAfterLast('/').trim()
             if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
         }.toSet()
+    }
+
+    private fun parseTagsFromNux(doc: Document): Set<ContentTag> {
+        val html = doc.outerHtml()
+        val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
+        val match = nuxRegex.find(html) ?: return emptySet()
+        val body = match.groupValues[1]
+
+        val tagsStart = body.indexOf("hentai_tags:[")
+        if (tagsStart < 0) return emptySet()
+
+        val arrayStart = body.indexOf('[', tagsStart)
+        if (arrayStart < 0) return emptySet()
+        val arrayEnd = findMatchingBracket(body, arrayStart) ?: return emptySet()
+        val arrayStr = body.substring(arrayStart, arrayEnd + 1)
+
+        val result = LinkedHashSet<ContentTag>()
+        val tagRegex = Regex("""\{id:\d+,text:"([^"]*)"""")
+        tagRegex.findAll(arrayStr).forEach { m ->
+            val text = m.groupValues[1]
+            val key = text.lowercase().replace(" ", "-")
+            result.add(ContentTag(text.replaceFirstChar { it.uppercase() }, key, source))
+        }
+        return result
     }
 
     private fun defaultTags(): Set<ContentTag> = linkedSetOf(
