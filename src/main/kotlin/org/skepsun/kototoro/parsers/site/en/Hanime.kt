@@ -32,6 +32,10 @@ import okhttp3.Headers
 internal class Hanime(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.HANIME, pageSize = 24) {
 
+    init {
+        setFirstPage(0)
+    }
+
     override val configKeyDomain = ConfigKey.Domain("hanime.tv")
 
     private val apiBase = "https://search.htv-services.com"
@@ -62,7 +66,18 @@ internal class Hanime(context: ContentLoaderContext) :
 
         val url = buildBrowseUrl(page, filter)
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-        return parseList(doc)
+        val htmlItems = parseList(doc)
+        if (htmlItems.isNotEmpty()) return htmlItems
+
+        if (filter.tags.isEmpty() && filter.query.isNullOrBlank()) {
+            val trendingDoc = webClient.httpGet(
+                "https://$domain/browse/trending", getRequestHeaders(),
+            ).parseHtml()
+            val trendingItems = parseList(trendingDoc)
+            if (trendingItems.isNotEmpty()) return trendingItems
+        }
+
+        return emptyList()
     }
 
     override suspend fun getDetails(manga: Content): Content {
@@ -200,6 +215,77 @@ internal class Hanime(context: ContentLoaderContext) :
 
         context.requestBrowserAction(this, watchUrl)
         return emptyList()
+    }
+
+    private fun parseListFromNux(doc: Document): List<Content> {
+        val html = doc.outerHtml()
+        val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
+        val match = nuxRegex.find(html) ?: return emptyList()
+        val body = match.groupValues[1]
+
+        val vidStart = body.indexOf("hentai_videos:[")
+        if (vidStart < 0) return emptyList()
+
+        val arrayStart = body.indexOf('[', vidStart)
+        if (arrayStart < 0) return emptyList()
+        val arrayEnd = findMatchingBracket(body, arrayStart) ?: return emptyList()
+        val arrayStr = body.substring(arrayStart, arrayEnd + 1)
+            .replace("\\u002F", "/")
+
+        val items = ArrayList<Content>()
+        var pos = 1
+        while (pos < arrayStr.length) {
+            val objStart = arrayStr.indexOf("{id:", pos)
+            if (objStart < 0) break
+            val objEnd = findMatchingBrace(arrayStr, objStart) ?: break
+            val objStr = arrayStr.substring(objStart, objEnd + 1)
+
+            val slug = Regex("""slug:"([^"]*)"""").find(objStr)?.groupValues?.get(1) ?: run {
+                pos = objEnd + 1; continue
+            }
+            val name = Regex("""name:"([^"]*)"""").find(objStr)?.groupValues?.get(1) ?: "Untitled"
+            val cover = Regex("""(?:cover_url|poster_url):"([^"]*)"""").find(objStr)?.groupValues?.get(1)
+
+            items.add(Content(
+                id = generateUid(slug),
+                url = "/hentai-videos/$slug",
+                publicUrl = "https://$domain/hentai-videos/$slug",
+                title = name, altTitles = emptySet(),
+                coverUrl = cover, largeCoverUrl = cover,
+                authors = emptySet(), tags = emptySet(), state = null, description = null,
+                contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
+            ))
+            pos = objEnd + 1
+        }
+        return items
+    }
+
+    private fun findMatchingBracket(s: String, start: Int): Int? {
+        var depth = 0
+        for (i in start until s.length) {
+            when (s[i]) {
+                '[' -> depth++
+                ']' -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return null
+    }
+
+    private fun findMatchingBrace(s: String, start: Int): Int? {
+        var depth = 0
+        for (i in start until s.length) {
+            when (s[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+        }
+        return null
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
@@ -345,6 +431,7 @@ internal class Hanime(context: ContentLoaderContext) :
                 contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
             ))
         }
-        return items
+        if (items.isNotEmpty()) return items
+        return parseListFromNux(doc)
     }
 }
