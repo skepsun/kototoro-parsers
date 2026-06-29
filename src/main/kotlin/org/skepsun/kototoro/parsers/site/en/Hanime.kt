@@ -39,7 +39,8 @@ internal class Hanime(context: ContentLoaderContext) :
     override val configKeyDomain = ConfigKey.Domain("hanime.tv")
 
     private val apiBase = "https://search.htv-services.com"
-    private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net", "streamable.cloud")
+    private val manifestsBase = "https://cached.freeanimehentai.net/api/v8/guest/videos"
+    private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY, SortOrder.RATING,
@@ -135,60 +136,92 @@ internal class Hanime(context: ContentLoaderContext) :
         val watchUrl = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(watchUrl, getRequestHeaders()).parseHtml()
 
-        val pages = mutableListOf<ContentPage>()
-
-        val nuxPages = parsePagesFromNux(doc)
-        if (nuxPages.isNotEmpty()) return nuxPages
-
-        doc.select("video source[src]").forEach { src ->
-            val url = src.attr("src").takeIf { it.isNotBlank() } ?: return@forEach
-            if (url.startsWith("http") && disallowedStreamHosts.none { url.contains(it) }) {
-                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+        val videoId = parseVideoIdFromNux(doc)
+        if (videoId != null) {
+            val manifestUrl = "$manifestsBase/$videoId/manifest"
+            val manifest = runCatching {
+                webClient.httpGet(manifestUrl, getRequestHeaders()).parseJson()
+            }.getOrNull()
+            if (manifest != null) {
+                val pages = parsePagesFromManifest(manifest)
+                if (pages.isNotEmpty()) return pages
             }
         }
-
-        doc.selectFirst("video[src]")?.attr("src")?.takeIf { it.startsWith("http") }?.let { url ->
-            if (disallowedStreamHosts.none { url.contains(it) }) {
-                pages.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
-            }
-        }
-
-        if (pages.isNotEmpty()) return pages
 
         context.requestBrowserAction(this, watchUrl)
         return emptyList()
     }
 
-    private fun parsePagesFromNux(doc: Document): List<ContentPage> {
+    private fun parseVideoIdFromNux(doc: Document): Int? {
         val html = doc.outerHtml()
-        val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
-        val match = nuxRegex.find(html) ?: return emptyList()
-        val body = match.groupValues[1].replace("\\u002F", "/")
+        val nuxRegex = Regex("""window\.__NUXT__=\(function\(([^)]*)\)\{return (.+?)\}\((.*?)\)\)""")
+        val match = nuxRegex.find(html) ?: return null
+        val paramNames = match.groupValues[1].split(",").map { it.trim() }
+        val body = match.groupValues[2]
+        val argsStr = match.groupValues[3]
 
+        val idStart = body.indexOf("hentai_video:{id:")
+        if (idStart < 0) return null
+        val afterId = body.substring(idStart + "hentai_video:{id:".length)
+        val varName = afterId.takeWhile { it.isLetter() }
+        if (varName.isEmpty()) return afterId.takeWhile { it.isDigit() }.toIntOrNull()
+
+        val args = parseNuxArgs(argsStr)
+        val idx = paramNames.indexOf(varName)
+        return if (idx >= 0 && idx < args.size) args[idx].toIntOrNull() else null
+    }
+
+    private fun parseNuxArgs(argsStr: String): List<String> {
+        val args = mutableListOf<String>()
+        var depth = 0
+        val current = StringBuilder()
+        var inString = false
+        var stringChar: Char? = null
+        for (ch in argsStr) {
+            if (inString) {
+                current.append(ch)
+                if (ch == stringChar && (current.length < 2 || current[current.length - 2] != '\\')) {
+                    inString = false
+                }
+                continue
+            }
+            when {
+                ch == '"' || ch == '\'' -> {
+                    inString = true; stringChar = ch; current.append(ch)
+                }
+                ch == '[' || ch == '{' || ch == '(' -> {
+                    depth++; current.append(ch)
+                }
+                ch == ']' || ch == '}' || ch == ')' -> {
+                    depth--; current.append(ch)
+                }
+                ch == ',' && depth == 0 -> {
+                    args.add(current.toString().trim()); current.clear()
+                }
+                else -> current.append(ch)
+            }
+        }
+        if (current.isNotEmpty()) args.add(current.toString().trim())
+        return args
+    }
+
+    private fun parsePagesFromManifest(json: JSONObject): List<ContentPage> {
         val result = mutableListOf<ContentPage>()
-        val manifestStart = body.indexOf("videos_manifest:{")
-        if (manifestStart >= 0) {
-            val manifestObjStart = body.indexOf('{', manifestStart)
-            val manifestObjEnd = findMatchingBrace(body, manifestObjStart)
-            if (manifestObjEnd != null) {
-                val manifestStr = body.substring(manifestObjStart, manifestObjEnd + 1)
-                val streamUrlRegex = Regex("""url:"(https?://[^"]+)"""")
-                streamUrlRegex.findAll(manifestStr).forEach { m ->
-                    val url = m.groupValues[1]
-                    if (disallowedStreamHosts.none { url.contains(it) }) {
-                        result.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
-                    }
+        val manifest = json.optJSONObject("videos_manifest") ?: return result
+        val servers = manifest.optJSONArray("servers") ?: return result
+        for (si in 0 until servers.length()) {
+            val server = servers.optJSONObject(si) ?: continue
+            val streams = server.optJSONArray("streams") ?: continue
+            for (ti in 0 until streams.length()) {
+                val stream = streams.optJSONObject(ti) ?: continue
+                val url = stream.optString("url").takeIf { it.isNotBlank() } ?: continue
+                if (disallowedStreamHosts.none { url.contains(it) }) {
+                    val quality = stream.optString("height").takeIf { it.isNotBlank() }
+                    val label = if (quality != null) "${quality}p" else null
+                    result.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
                 }
             }
         }
-
-        if (result.isEmpty()) {
-            val dlRegex = Regex("""dl_url:"(https?://[^"]+)"""")
-            dlRegex.find(body)?.let { m ->
-                result.add(ContentPage(id = generateUid(m.groupValues[1]), url = m.groupValues[1], preview = null, source = source))
-            }
-        }
-
         return result
     }
 
