@@ -19,16 +19,18 @@ import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.util.attrOrNull
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseJson
 import org.skepsun.kototoro.parsers.util.parseJsonArray
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
+import org.skepsun.kototoro.parsers.util.toRelativeUrl
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.util.LinkedHashSet
 import java.util.EnumSet
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrl
 
 @ContentSourceParser("HANIME", "Hanime", "en", type = ContentType.HENTAI_VIDEO)
 internal class Hanime(context: ContentLoaderContext) :
@@ -43,6 +45,7 @@ internal class Hanime(context: ContentLoaderContext) :
     private val apiBase = "https://cached.freeanimehentai.net/api/v10/search_hvs"
     private val manifestsBase = "https://cached.freeanimehentai.net/api/v8/guest/videos"
     private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
+    private var allVideosCache: List<JSONObject>? = null
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY, SortOrder.RATING,
@@ -141,17 +144,29 @@ internal class Hanime(context: ContentLoaderContext) :
         val videoId = parseVideoIdFromNux(doc)
         if (videoId != null) {
             val manifestUrl = "$manifestsBase/$videoId/manifest"
-            val manifestHeaders = Headers.Builder()
-                .add("Origin", "https://$domain")
-                .add("Referer", "https://$domain/")
-                .add("User-Agent", context.getDefaultUserAgent())
-                .build()
             val manifest = runCatching {
-                webClient.httpGet(manifestUrl, manifestHeaders).parseJson()
+                webClient.httpGet(manifestUrl, getRequestHeaders()).parseJson()
             }.getOrNull()
             if (manifest != null) {
                 val pages = parsePagesFromManifest(manifest)
                 if (pages.isNotEmpty()) return pages
+            }
+        }
+
+        val fromVideoTag = extractFromVideoTag(doc)
+        val fromLdJson = extractFromLdJson(doc)
+        val fromRegex = extractByRegex(doc)
+        val streams = (fromVideoTag + fromLdJson + fromRegex).distinct()
+        if (streams.isNotEmpty()) {
+            val poster = doc.selectFirst("video[poster]")?.attrOrNull("poster")
+                ?: doc.selectFirst("meta[property=og:image]")?.attrOrNull("content")
+            return streams.map { s ->
+                ContentPage(
+                    id = generateUid(s.toRelativeUrl(domain)),
+                    url = s,
+                    preview = poster,
+                    source = source,
+                )
             }
         }
 
@@ -232,6 +247,58 @@ internal class Hanime(context: ContentLoaderContext) :
         return result
     }
 
+    private fun extractFromVideoTag(doc: Document): List<String> {
+        val res = ArrayList<String>()
+        val video = doc.selectFirst("video")
+        if (video != null) {
+            val sources = doc.select("video source[src]")
+            for (src in sources) {
+                val u = src.attrOrNull("src")
+                if (!u.isNullOrBlank()) {
+                    res.add(u)
+                }
+            }
+            video.attrOrNull("src")?.let { res.add(it) }
+        }
+        return res
+    }
+
+    private fun extractFromLdJson(doc: Document): List<String> {
+        val res = ArrayList<String>()
+        val scripts = doc.select("script[type=application/ld+json]")
+        for (s in scripts) {
+            val raw = s.data().trim()
+            if (raw.isEmpty()) continue
+            runCatching {
+                val node = if (raw.startsWith("[")) JSONArray(raw) else JSONObject(raw)
+                when (node) {
+                    is JSONObject -> {
+                        node.optString("contentUrl").takeIf { it.isNotBlank() }?.let { res.add(it) }
+                        node.optJSONObject("mainEntity")?.optString("contentUrl")
+                            ?.takeIf { it.isNotBlank() }?.let(res::add)
+                    }
+                    is JSONArray -> {
+                        for (i in 0 until node.length()) {
+                            val obj = node.optJSONObject(i) ?: continue
+                            obj.optString("contentUrl").takeIf { it.isNotBlank() }?.let { res.add(it) }
+                        }
+                    }
+                }
+            }.getOrElse { }
+        }
+        return res
+    }
+
+    private fun extractByRegex(doc: Document): List<String> {
+        val res = ArrayList<String>()
+        val html = doc.outerHtml()
+        val hls = Regex("https?://[^\"'\\s>]+\\.m3u8", RegexOption.IGNORE_CASE)
+        val mp4 = Regex("https?://[^\"'\\s>]+\\.mp4", RegexOption.IGNORE_CASE)
+        hls.findAll(html).forEach { m -> res.add(m.value) }
+        mp4.findAll(html).forEach { m -> res.add(m.value) }
+        return res
+    }
+
     private fun parseListFromNux(doc: Document): List<Content> {
         val html = doc.outerHtml()
         val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
@@ -309,52 +376,81 @@ internal class Hanime(context: ContentLoaderContext) :
         .add("User-Agent", context.getDefaultUserAgent())
         .build()
 
-    private suspend fun fetchListByApi(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val url = apiBase.toHttpUrl().newBuilder().apply {
-            addQueryParameter("search_text", filter.query ?: "")
-            for (tag in filter.tags) {
-                addQueryParameter("tags[]", tag.key)
-            }
-            addQueryParameter("tags_mode", "AND")
-            addQueryParameter("order_by", when (order) {
-                SortOrder.POPULARITY -> "views"
-                SortOrder.RATING -> "rating"
-                SortOrder.UPDATED -> "released_at_unix"
-                else -> "created_at_unix"
-            })
-            addQueryParameter("ordering", "desc")
-            addQueryParameter("page", page.toString())
-        }.build()
-
-        val headers = getRequestHeaders()
+    private suspend fun fetchAllVideos(): List<JSONObject> {
+        allVideosCache?.let { return it }
         val hits = runCatching {
-            webClient.httpGet(url, headers).parseJsonArray()
+            webClient.httpGet(apiBase, getRequestHeaders()).parseJsonArray()
         }.getOrElse { JSONArray() }
-        val list = ArrayList<Content>(hits.length())
+        val list = ArrayList<JSONObject>(hits.length())
         for (i in 0 until hits.length()) {
-            val o = hits.optJSONObject(i) ?: continue
-            val slug = o.optString("slug").takeIf { it.isNotBlank() } ?: continue
-            val title = o.optString("name").takeIf { it.isNotBlank() } ?: "Untitled"
-            val cover = o.optString("cover_url").takeIf { it.isNotBlank() }
-                ?: o.optString("poster_url").takeIf { it.isNotBlank() }
-            val tags = o.optJSONArray("tags") ?: JSONArray()
-            val tagSet = LinkedHashSet<ContentTag>(tags.length())
-            for (j in 0 until tags.length()) {
-                val tag = tags.optString(j).takeIf { it.isNotBlank() } ?: continue
-                tagSet.add(ContentTag(tag.replaceFirstChar { it.uppercase() }, tag, source))
-            }
-            list.add(Content(
-                id = generateUid(slug),
-                url = "/hentai-videos/$slug",
-                publicUrl = "https://$domain/hentai-videos/$slug",
-                title = title, altTitles = emptySet(),
-                coverUrl = cover, largeCoverUrl = cover,
-                authors = emptySet(), tags = tagSet, state = null,
-                description = o.optString("description").takeIf { it.isNotBlank() },
-                contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
-            ))
+            hits.optJSONObject(i)?.let { list.add(it) }
         }
+        allVideosCache = list
         return list
+    }
+
+    private fun parseVideoItem(o: JSONObject): Content? {
+        val slug = o.optString("slug").takeIf { it.isNotBlank() } ?: return null
+        val title = o.optString("name").takeIf { it.isNotBlank() } ?: "Untitled"
+        val cover = o.optString("cover_url").takeIf { it.isNotBlank() }
+            ?: o.optString("poster_url").takeIf { it.isNotBlank() }
+        val tags = o.optJSONArray("tags") ?: JSONArray()
+        val tagSet = LinkedHashSet<ContentTag>(tags.length())
+        for (j in 0 until tags.length()) {
+            val tag = tags.optString(j).takeIf { it.isNotBlank() } ?: continue
+            tagSet.add(ContentTag(tag.replaceFirstChar { it.uppercase() }, tag, source))
+        }
+        return Content(
+            id = generateUid(slug),
+            url = "/hentai-videos/$slug",
+            publicUrl = "https://$domain/hentai-videos/$slug",
+            title = title, altTitles = emptySet(),
+            coverUrl = cover, largeCoverUrl = cover,
+            authors = emptySet(), tags = tagSet, state = null,
+            description = o.optString("description").takeIf { it.isNotBlank() },
+            contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
+        )
+    }
+
+    private suspend fun fetchListByApi(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+        val all = fetchAllVideos()
+        if (all.isEmpty()) return emptyList()
+
+        var filtered: List<JSONObject> = all
+
+        val query = filter.query
+        if (!query.isNullOrBlank()) {
+            val q = query.lowercase()
+            filtered = filtered.filter { obj ->
+                obj.optString("name").lowercase().contains(q) ||
+                obj.optString("search_titles").lowercase().contains(q)
+            }
+        }
+
+        val tagKeys = filter.tags.map { it.key.lowercase() }.toSet()
+        if (tagKeys.isNotEmpty()) {
+            filtered = filtered.filter { obj ->
+                val objTags = obj.optJSONArray("tags") ?: return@filter false
+                val set = LinkedHashSet<String>(objTags.length())
+                for (j in 0 until objTags.length()) {
+                    set.add(objTags.optString(j).lowercase())
+                }
+                tagKeys.all { it in set }
+            }
+        }
+
+        val comparator = when (order) {
+            SortOrder.POPULARITY -> compareByDescending<JSONObject> { it.optInt("views", 0) }
+            SortOrder.RATING -> compareByDescending { it.optInt("likes", 0) }
+            SortOrder.UPDATED -> compareByDescending { it.optLong("released_at_unix", 0) }
+            else -> compareByDescending { it.optLong("created_at_unix", 0) }
+        }
+        filtered = filtered.sortedWith(comparator)
+
+        val start = page * pageSize
+        if (start >= filtered.size) return emptyList()
+        val end = minOf(start + pageSize, filtered.size)
+        return filtered.subList(start, end).mapNotNull { parseVideoItem(it) }
     }
 
     private data class VideoDetailData(
@@ -363,18 +459,8 @@ internal class Hanime(context: ContentLoaderContext) :
     )
 
     private suspend fun fetchVideoDetail(slug: String): VideoDetailData? {
-        val url = apiBase.toHttpUrl().newBuilder().apply {
-            addQueryParameter("search_text", slug)
-            addQueryParameter("order_by", "created_at_unix")
-            addQueryParameter("ordering", "desc")
-            addQueryParameter("page", "0")
-        }.build()
-        val headers = getRequestHeaders()
-        val hits = runCatching {
-            webClient.httpGet(url, headers).parseJsonArray()
-        }.getOrElse { JSONArray() }
-        if (hits.length() == 0) return null
-        val o = hits.optJSONObject(0) ?: return null
+        val all = fetchAllVideos()
+        val o = all.find { it.optString("slug") == slug } ?: return null
         val title = o.optString("name").takeIf { it.isNotBlank() }
         val desc = o.optString("description").takeIf { it.isNotBlank() }
         val cover = o.optString("cover_url").takeIf { it.isNotBlank() }
