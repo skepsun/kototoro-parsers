@@ -145,7 +145,7 @@ internal class HentaiCloud(context: ContentLoaderContext) :
             "$base/search?q=$q&page=$page"
         } else if (filter.tags.isNotEmpty()) {
             val tag = filter.tags.first().key.urlEncoded()
-            "$base/genre/$tag?page=$page"
+            "$base/videos/$tag?page=$page"
         } else {
             "$base/videos?page=$page"
         }

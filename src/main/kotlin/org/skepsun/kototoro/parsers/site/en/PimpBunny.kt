@@ -226,7 +226,7 @@ internal class PimpBunny(context: ContentLoaderContext) :
             tag != null -> "https://$domain/categories/$tag/?page=$page"
             order == SortOrder.POPULARITY -> "https://$domain/videos/?sort_by=video_viewed&page=$page"
             order == SortOrder.RATING -> "https://$domain/videos/?sort_by=rating&page=$page"
-            else -> "https://$domain/?page=$page"
+            else -> "https://$domain/$page/"
         }
     }
 
@@ -234,7 +234,14 @@ internal class PimpBunny(context: ContentLoaderContext) :
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
 
-        val cards = doc.select("a.ui-card-link__KxRw6l[href*=/videos/]")
+        val container = doc.selectFirst("div[class*=featured], section[class*=featured]")
+            ?: doc.selectFirst("div:contains(Featured Videos)")
+            ?: doc
+        val cards = container.select("a.ui-card-link__KxRw6l[href*=/videos/]").ifEmpty {
+            container.select("a[href*=/videos/][class*=card], a[href*=/videos/][class*=video]")
+        }.ifEmpty {
+            doc.select("a.ui-card-link__KxRw6l[href*=/videos/]")
+        }
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             if (!href.contains("/videos/")) continue

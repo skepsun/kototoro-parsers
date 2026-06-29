@@ -9,6 +9,7 @@ import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentChapter
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.ContentListFilterCapabilities
+import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.ContentListFilterOptions
 import org.skepsun.kototoro.parsers.model.ContentPage
 import org.skepsun.kototoro.parsers.model.ContentParserSource
@@ -41,6 +42,10 @@ internal class HentaiPlay(context: ContentLoaderContext) :
     )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val categories = listOf(
+            "Uncensored" to "hentai-uncensored",
+            "English Subbed" to "hentai-english-subbed",
+        ).map { ContentTag(it.first, it.second, source) }.toSet()
         val genres = listOf(
             "3D" to "3d", "Ahegao" to "ahegao", "Anal" to "anal",
             "Big Boobs" to "big-boobs", "Blowjob" to "blowjob", "Creampie" to "creampie",
@@ -54,7 +59,10 @@ internal class HentaiPlay(context: ContentLoaderContext) :
         ).map { ContentTag(it.first, it.second, source) }.toSet()
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
-            availableTags = genres,
+            tagGroups = listOf(
+                ContentTagGroup("Categories", categories, isExclusive = true),
+                ContentTagGroup("Genres", genres),
+            ),
         )
     }
 
@@ -175,21 +183,50 @@ internal class HentaiPlay(context: ContentLoaderContext) :
         .add("User-Agent", context.getDefaultUserAgent())
         .build()
 
+    private val categoryTagKeys = setOf("hentai-uncensored", "hentai-english-subbed")
+
     private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
-        return if (!filter.query.isNullOrBlank()) {
+        if (!filter.query.isNullOrBlank()) {
             val q = filter.query.urlEncoded()
-            "https://$domain/?s=$q&page=$page"
-        } else {
-            val tag = filter.tags.firstOrNull()?.key ?: ""
-            val genreParam = if (tag.isNotEmpty()) "&genre=$tag" else ""
-            "https://$domain/page/$page/$genreParam"
+            return "https://$domain/?s=$q&page=$page"
+        }
+        val categoryTags = filter.tags.filter { it.key in categoryTagKeys }.toSet()
+        val normalTags = filter.tags.filter { it.key !in categoryTagKeys }.toSet()
+        return when {
+            categoryTags.isNotEmpty() -> {
+                val category = categoryTags.first().key
+                val orderby = if (order == SortOrder.POPULARITY) "?orderby=views" else ""
+                "https://$domain/hentai/episodes/$category/page/$page/$orderby"
+            }
+            normalTags.isNotEmpty() -> {
+                val tagPath = normalTags.joinToString("+") { it.key.urlEncoded() }
+                "https://$domain/tag/$tagPath/page/$page/"
+            }
+            order == SortOrder.ALPHABETICAL -> {
+                "https://$domain/hentai-index/page/$page/"
+            }
+            order == SortOrder.NEWEST || order == SortOrder.POPULARITY -> {
+                val orderby = if (order == SortOrder.POPULARITY) "?orderby=views" else ""
+                "https://$domain/hentai/episodes/new-release/page/$page/$orderby"
+            }
+            else -> {
+                "https://$domain/page/$page/"
+            }
         }
     }
 
     private fun parseList(doc: Document): List<Content> {
         val items = ArrayList<Content>()
         val seen = LinkedHashSet<String>()
-        val cards = doc.select("article.item.item-post h2.entry-title a[href]")
+        val cards = doc.select("article.item.item-post h2.entry-title a[href]").ifEmpty {
+            doc.select("article.item h2.entry-title a[href]")
+        }.ifEmpty {
+            doc.select("h2.entry-title a[href]")
+        }.ifEmpty {
+            doc.select("article a[href*=/hentai/]")
+        }.ifEmpty {
+            doc.select("a[href*=/hentai/][title]")
+        }
         for (link in cards) {
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
