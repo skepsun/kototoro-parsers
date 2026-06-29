@@ -139,8 +139,13 @@ internal class Hanime(context: ContentLoaderContext) :
         val videoId = parseVideoIdFromNux(doc)
         if (videoId != null) {
             val manifestUrl = "$manifestsBase/$videoId/manifest"
+            val manifestHeaders = Headers.Builder()
+                .add("Origin", "https://$domain")
+                .add("Referer", "https://$domain/")
+                .add("User-Agent", context.getDefaultUserAgent())
+                .build()
             val manifest = runCatching {
-                webClient.httpGet(manifestUrl, getRequestHeaders()).parseJson()
+                webClient.httpGet(manifestUrl, manifestHeaders).parseJson()
             }.getOrNull()
             if (manifest != null) {
                 val pages = parsePagesFromManifest(manifest)
