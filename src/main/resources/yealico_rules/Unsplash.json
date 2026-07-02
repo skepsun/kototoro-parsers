@@ -1,0 +1,59 @@
+{
+  "categories": [
+    {
+      "cid": 1,
+      "title": "全部的",
+      "url": "https://api.unsplash.com/photos?client_id=bbd2cdd943c795c2ea90230d1b04552168b1e4ddc81bd87d60f7bcac3ed53bf5&page={page:1}"
+    },
+    {
+      "cid": 2,
+      "title": "最新的",
+      "url": "https://api.unsplash.com/photos/curated?order_by=latest&client_id=bbd2cdd943c795c2ea90230d1b04552168b1e4ddc81bd87d60f7bcac3ed53bf5&page={page:1}"
+    },
+    {
+      "cid": 3,
+      "title": "热门的",
+      "url": "https://api.unsplash.com/photos/curated?order_by=popular&client_id=bbd2cdd943c795c2ea90230d1b04552168b1e4ddc81bd87d60f7bcac3ed53bf5&page={page:1}"
+    },
+    {
+      "cid": 4,
+      "title": "最旧的",
+      "url": "https://api.unsplash.com/photos/curated?order_by=oldest&client_id=bbd2cdd943c795c2ea90230d1b04552168b1e4ddc81bd87d60f7bcac3ed53bf5&page={page:1}"
+    }
+  ],
+  "flag": "noTitle|noRating|noTag|waterfallAsList",
+  "indexRule": {
+    "pictureRule": {
+      "item": {
+        "path": "$.urls"
+      },
+      "thumbnail": {
+        "path": "$.thumb"
+      },
+      "url": {
+        "path": "raw"
+      }
+    },
+    "cover": {
+      "path": "$.urls.thumb"
+    },
+    "idCode": {
+      "path": "$.id"
+    },
+    "item": {
+      "path": "$"
+    },
+    "uploader": {
+      "regex": "(.+)",
+      "replacement": "Photo by: $1",
+      "path": "$.user.name"
+    },
+    "datetime": {
+      "path": "$.created_at"
+    }
+  },
+  "indexUrl": "https://api.unsplash.com/photos?client_id=bbd2cdd943c795c2ea90230d1b04552168b1e4ddc81bd87d60f7bcac3ed53bf5&page={page:1}",
+  "searchUrl": "https://api.unsplash.com/photos/search/?client_id=bbd2cdd943c795c2ea90230d1b04552168b1e4ddc81bd87d60f7bcac3ed53bf5&page={page:1}&query={keyword:}",
+  "sid": 3,
+  "title": "Unsplash"
+}

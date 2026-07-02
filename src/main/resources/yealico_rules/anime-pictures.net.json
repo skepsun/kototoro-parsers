@@ -1,0 +1,111 @@
+{
+  "categories": [
+    {
+      "url": "https://anime-pictures.net/pictures/view_posts/{page:0}?lang=en",
+      "title": "最新图片",
+      "cid": 1
+    },
+    {
+      "url": "https://anime-pictures.net/pictures/view_posts/{page:0}?order_by=rating&lang=en",
+      "title": "最多好评",
+      "cid": 2
+    },
+    {
+      "url": "https://anime-pictures.net/pictures/view_posts/{page:0}?order_by=views&lang=en",
+      "title": "最多点击",
+      "cid": 3
+    },
+    {
+      "url": "https://anime-pictures.net/pictures/view_posts/{page:0}?order_by=size&lang=en",
+      "title": "图片大小",
+      "cid": 4
+    },
+    {
+      "url": "https://anime-pictures.net/pictures/view_posts/{page:0}?order_by=tag_num&lang=en",
+      "title": "最多标签",
+      "cid": 5
+    }
+  ],
+  "flag": "noRating|preloadGallery",
+  "galleryRule": {
+    "pictureRule": {
+      "thumbnail": {
+        "fun": "attr",
+        "param": "href",
+        "regex": "(.+)",
+        "replacement": "https://anime-pictures.net$1",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "href",
+        "regex": "(.+)",
+        "replacement": "https://anime-pictures.net$1",
+        "selector": "this"
+      },
+      "item": {
+        "selector": "a.download_icon"
+      }
+    },
+    "tagRule": {
+      "item": {
+        "selector": "#post_tags > ul.tags > li > a"
+      },
+      "title": {
+        "fun": "text",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "text",
+        "regex": "(.*)",
+        "replacement": "https://anime-pictures.net/pictures/view_posts/{page:0}?search_tag=$1&lang=en",
+        "selector": "this"
+      }
+    },
+    "description": {
+      "fun": "html",
+      "selector": "#tags_descriptions"
+    },
+    "uploader": {
+      "fun": "text",
+      "selector": "div.post_content_avatar > a.user_link"
+    }
+  },
+  "galleryUrl": "https://anime-pictures.net{idCode:}?lang=en",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "srcset",
+      "selector": "a > picture > source"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "selector": "a"
+    },
+    "item": {
+      "selector": "#posts > div.posts_block > span.img_block_big"
+    },
+    "title": {
+      "fun": "attr",
+      "param": "title",
+      "selector": "div.img_block_text > a"
+    },
+    "datetime": {
+      "fun": "attr",
+      "param": "data-pubtime",
+      "regex": "(\\d+-\\d+-\\d+) (\\d+:\\d+:\\d+)",
+      "replacement": "$1 $2",
+      "selector": "this"
+    },
+    "category": {
+      "fun": "text",
+      "selector": "div.img_block_text > a"
+    }
+  },
+  "indexUrl": "https://anime-pictures.net/pictures/view_posts/{page:0}?lang=en",
+  "loginUrl": "https://anime-pictures.net/login/login?lang=en",
+  "searchUrl": "https://anime-pictures.net/pictures/view_posts/{page:0}?search_tag={keyword:}&lang=en",
+  "sid": 301,
+  "title": "anime-pictures.net"
+}

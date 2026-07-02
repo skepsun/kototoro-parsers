@@ -1,0 +1,71 @@
+{
+  "flag": "noRating|noTitle|preloadGallery",
+  "galleryRule": {
+    "pictureRule": {
+      "thumbnail": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "a.pan > img"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "href",
+        "selector": "a[download]"
+      },
+      "item": {
+        "selector": "body"
+      }
+    },
+    "datetime": {
+      "fun": "text",
+      "regex": "(\\d+).(\\d+).(\\d+)",
+      "replacement": "$3-$2-$1",
+      "selector": "ul.details > li:eq(3) > span:eq(1)"
+    },
+    "uploader": {
+      "fun": "text",
+      "selector": "span.photo-taken-user"
+    },
+    "tagRule": {
+      "item": {
+        "selector": "a.tag"
+      },
+      "title": {
+        "fun": "text",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "href",
+        "regex": "(.*)",
+        "replacement": "$1{page:1}/",
+        "selector": "this"
+      }
+    }
+  },
+  "galleryUrl": "http://wallls.com{idCode:}",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "div.photo-preview > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "selector": "div.photo > a"
+    },
+    "item": {
+      "selector": "div.images > div.col-sm-3.col-xs-12"
+    },
+    "category": {
+      "fun": "text",
+      "selector": "div.prevrez.rig"
+    }
+  },
+  "indexUrl": "http://wallls.com/page/{page:1}/",
+  "loginUrl": "http://wallls.com/login/",
+  "header": "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:52.0) Gecko/20100101 Firefox/52.0.2",
+  "sid": 516,
+  "title": "wallls"
+}

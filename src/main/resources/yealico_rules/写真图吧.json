@@ -1,0 +1,113 @@
+{
+  "categories": [
+    {
+      "url": "http://www.zdt8.com/listinfo-1-{page:0}.html",
+      "title": "最新图片",
+      "cid": 1
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/xingganmeinv/{pageStr:index_{page:1}.html}",
+      "title": "性感美女",
+      "cid": 2
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/siwameitui/{pageStr:index_{page:1}.html}",
+      "title": "丝袜美腿",
+      "cid": 3
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/weimeixiezhen/{pageStr:index_{page:1}.html}",
+      "title": "唯美写真",
+      "cid": 4
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/wangluomeinv/{pageStr:index_{page:1}.html}",
+      "title": "网络美女",
+      "cid": 5
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/gaoqingmeinv/{pageStr:index_{page:1}.html}",
+      "title": "高清美女",
+      "cid": 6
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/motemeinv/{pageStr:index_{page:1}.html}",
+      "title": "模特美女",
+      "cid": 7
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/tiyumeinv/{pageStr:index_{page:1}.html}",
+      "title": "体育美女",
+      "cid": 8
+    },
+    {
+      "url": "http://www.zdt8.com/meitu/dongmanmeinv/{pageStr:index_{page:1}.html}",
+      "title": "动漫美女",
+      "cid": 9
+    },
+    {
+      "url": "http://www.zdt8.com/mingxing/nvxingxiezhen/{pageStr:index_{page:1}.html}",
+      "title": "女星写真",
+      "cid": 10
+    },
+    {
+      "url": "http://www.zdt8.com/mingxing/nanxingtupian/{pageStr:index_{page:1}.html}",
+      "title": "男星图片",
+      "cid": 11
+    }
+  ],
+  "flag": "preloadGallery|noRating",
+  "galleryRule": {
+    "pictureRule": {
+      "url": {
+        "fun": "attr",
+        "param": "lazysrc",
+        "selector": "this"
+      },
+      "thumbnail": {
+        "fun": "attr",
+        "param": "lazysrc",
+        "selector": "this"
+      },
+      "item": {
+        "selector": "#p img"
+      }
+    },
+    "description": {
+      "fun": "html",
+      "selector": ".pictext"
+    },
+    "tags": {
+      "fun": "text",
+      "selector": "div.picbottomline > p.pleft > span > a"
+    }
+  },
+  "galleryUrl": "{idCode:}{pageStr:_{page:1}}.html",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "lazysrc",
+      "selector": "a > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "regex": "(.+).html",
+      "selector": "a"
+    },
+    "item": {
+      "selector": "div.piclist > ul > li"
+    },
+    "datetime": {
+      "fun": "text",
+      "selector": "b.b1"
+    },
+    "title": {
+      "fun": "text",
+      "selector": "a > span"
+    }
+  },
+  "indexUrl": "http://www.zdt8.com/listinfo-1-{page:0}.html",
+  "sid": 101,
+  "title": "写真图吧"
+}

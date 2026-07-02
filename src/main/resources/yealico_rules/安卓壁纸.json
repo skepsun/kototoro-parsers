@@ -1,0 +1,82 @@
+{
+  "categories": [
+    {
+      "cid": 1,
+      "title": "最新壁纸",
+      "url": "http://service2.adesk.com/img/list?limit=20&skip={page:0:20}"
+    },
+    {
+      "cid": 2,
+      "title": "热门壁纸",
+      "url": "http://service2.adesk.com/img/list?limit=20&order=rank&skip={page:0:20}"
+    },
+    {
+      "cid": 3,
+      "title": "动漫壁纸",
+      "url": "http://service2.adesk.com/img/listcate?cid=4e4d610cdf714d2966000003&limit=20&order=rank&skip={page:0:20}"
+    },
+    {
+      "cid": 4,
+      "title": "美女壁纸",
+      "url": "http://service2.adesk.com/img/listcate?cid=4e4d610cdf714d2966000000&limit=20&order=rank&skip={page:0:20}"
+    },
+    {
+      "cid": 5,
+      "title": "帅哥壁纸",
+      "url": "http://service2.adesk.com/img/listcate?cid=4e4d610cdf714d2966000006&limit=20&order=rank&skip={page:0:20}"
+    },
+    {
+      "cid": 6,
+      "title": "动物壁纸",
+      "url": "http://service2.adesk.com/img/listcate?cid=4e4d610cdf714d2966000001&limit=20&order=rank&skip={page:0:20}"
+    },
+    {
+      "cid": 7,
+      "title": "游戏壁纸",
+      "url": "http://service2.adesk.com/img/listcate?cid=4e4d610cdf714d2966000007&limit=20&order=rank&skip={page:0:20}"
+    },
+    {
+      "cid": 8,
+      "title": "风景壁纸",
+      "url": "http://service2.adesk.com/img/listcate?cid=4e4d610cdf714d2966000002&limit=20&order=rank&skip={page:0:20}"
+    }
+  ],
+  "flag": "onePicGallery|noRating|noTag|noTitle",
+  "indexRule": {
+    "pictureRule": {
+      "thumbnail": {
+        "path": "$.thumb_fobj",
+        "regex": "(.+)",
+        "replacement": "http://img0.adesk.com/download/$1"
+      },
+      "url": {
+        "path": "$.fobjs._origin",
+        "regex": "(.+)",
+        "replacement": "http://img0.adesk.com/download/$1"
+      }
+    },
+    "cover": {
+      "path": "$.thumb_fobj",
+      "regex": "(.+)",
+      "replacement": "http://img0.adesk.com/download/$1"
+    },
+    "idCode": {
+      "path": "$._id"
+    },
+    "item": {
+      "path": "$.resp.images"
+    },
+    "title": {
+      "path": "$.title"
+    },
+    "description": {
+      "path": "$.desc"
+    },
+    "uploader": {
+      "path": "$.nickname"
+    }
+  },
+  "indexUrl": "http://service2.adesk.com/img/list?limit=20&skip={page:0:20}",
+  "sid": 3,
+  "title": "安卓壁纸"
+}

@@ -1,0 +1,65 @@
+{
+  "categories": [
+    {
+      "url": "https://zh.wikipedia.org/w/api.php?action=featuredfeed&feed=potd&feedformat=atom",
+      "title": "简体中文",
+      "cid": 1
+    },
+    {
+      "url": "https://en.wikipedia.org/w/api.php?action=featuredfeed&feed=potd&feedformat=atom",
+      "title": "英文",
+      "cid": 2
+    }
+  ],
+  "flag": "preloadGallery|noRating|waterfallAsList",
+  "galleryRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "div.thumb > div > a.image > img"
+    },
+    "pictureRule": {
+      "thumbnail": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "this"
+      },
+      "item": {
+        "selector": "div.thumb > div > a.image > img"
+      }
+    }
+  },
+  "galleryUrl": "{idCode:}",
+  "indexRule": {
+    "idCode": {
+      "fun": "html",
+      "selector": "id"
+    },
+    "item": {
+      "selector": "entry"
+    },
+    "title": {
+      "fun": "html",
+      "selector": "title"
+    },
+    "description": {
+      "fun": "html",
+      "selector": "summary"
+    },
+    "datetime": {
+      "fun": "html",
+      "regex": "(\\d+-\\d+-\\d+)",
+      "selector": "updated"
+    }
+  },
+  "indexUrl": "https://zh.wikipedia.org/w/api.php?action=featuredfeed&feed=potd&feedformat=atom",
+  "loginUrl": "https://zh.wikipedia.org/w/index.php?title=Special:%E7%94%A8%E6%88%B7%E7%99%BB%E5%BD%95",
+  "header": "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:52.0) Gecko/20100101 Firefox/52.0.2",
+  "sid": 515,
+  "title": "维基百科每日图片"
+}

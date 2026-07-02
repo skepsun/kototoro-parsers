@@ -1,0 +1,115 @@
+{
+  "categories": [
+    {
+      "url": "http://www.designerspics.com/page/{page:1}",
+      "title": "首页",
+      "cid": 1
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/architecture/page/{page:1}",
+      "title": "Architecture",
+      "cid": 2
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/business-2/page/{page:1}",
+      "title": "Business",
+      "cid": 3
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/concepts-2/page/{page:1}",
+      "title": "Concepts",
+      "cid": 4
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/food-drinks/page/{page:1}",
+      "title": "Food & drinks",
+      "cid": 5
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/nature/page/{page:1}",
+      "title": "Nature",
+      "cid": 6
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/people-2/page/{page:1}",
+      "title": "People",
+      "cid": 7
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/technology/page/{page:1}",
+      "title": "Technology",
+      "cid": 8
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/things/page/{page:1}",
+      "title": "Things",
+      "cid": 9
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/uncategorised/page/{page:1}",
+      "title": "Uncategorised",
+      "cid": 10
+    },
+    {
+      "url": "http://www.designerspics.com/photocategory/wild-life/page/{page:1}",
+      "title": "Wild life",
+      "cid": 11
+    }
+  ],
+  "flag": "noRating|preloadGallery|onePicGallery",
+  "galleryRule": {
+    "pictureRule": {
+      "thumbnail": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "img.attachment-large.size-large.wp-post-image"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "onclick",
+        "regex": "location.href='(.+)'",
+        "selector": "a.wpdm-download-link"
+      }
+    },
+    "tags": {
+      "fun": "html",
+      "selector": "div.photo-tags > a"
+    },
+    "datetime": {
+      "fun": "html",
+      "selector": "span.label.label-default"
+    },
+    "category": {
+      "fun": "html",
+      "regex": "Image size:(.+)",
+      "selector": "div.photo-content > p"
+    },
+    "uploader": {
+      "fun": "html",
+      "selector": "div.photo-credentials > b > a.home-link"
+    }
+  },
+  "galleryUrl": "{idCode:}",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "div.photograph > div.photos > a > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "selector": "div.photograph > div.photos > a"
+    },
+    "item": {
+      "selector": "div.home-body > div.photograph-wrapper"
+    },
+    "title": {
+      "fun": "html",
+      "selector": "div.photograph > h5.photo-title"
+    }
+  },
+  "indexUrl": "http://www.designerspics.com/page/{page:1}",
+  "sid": 1,
+  "title": "DesignersPics"
+}
