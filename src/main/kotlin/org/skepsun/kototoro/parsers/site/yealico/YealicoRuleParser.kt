@@ -165,8 +165,13 @@ internal open class YealicoRuleParser(
     }
 
     private fun parseItemFromElement(el: Element, ir: JSONObject): Content? {
-        val title = extractHtml(el, ir.optJSONObject("title")) ?: return null
-        val idCode = extractHtml(el, ir.optJSONObject("idCode")) ?: title
+        val rawId = extractHtml(el, ir.optJSONObject("idCode"))
+        val idCode = rawId
+            ?: el.selectFirst("a")?.attr("href")?.let { Regex("/(\\d+)$").find(it)?.groupValues?.get(1) }
+            ?: System.identityHashCode(el).toString()
+        val title = extractHtml(el, ir.optJSONObject("title"))
+            ?: rawId ?: "Post #${el.elementSiblingIndex() + 1}"
+
         val cover = extractHtml(el, ir.optJSONObject("cover"))
         val detailUrl = buildDetailUrl(idCode)
 
