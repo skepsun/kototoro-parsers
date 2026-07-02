@@ -337,30 +337,9 @@ internal open class YealicoRuleParser(
     // ---- Resource loading ----
 
     companion object {
-        private val DOMAIN_RE = Regex("https?://([^/:]+)")
+        @JvmStatic
+        fun loadRuleJson(ruleFileName: String): JSONObject = YealicoRuleData.loadRule(ruleFileName)
 
-        fun loadRuleJson(ruleFileName: String): JSONObject? {
-            val resourcePath = "yealico_rules/$ruleFileName"
-            val stream = YealicoRuleParser::class.java.classLoader
-                .getResourceAsStream(resourcePath) ?: return null
-            return stream.use { JSONObject(it.bufferedReader().readText()) }
-        }
-
-        fun listAvailableRules(): List<String> {
-            val resourceDir = "yealico_rules"
-            val classLoader = YealicoRuleParser::class.java.classLoader
-            val names = mutableListOf<String>()
-            try {
-                val url = classLoader.getResource(resourceDir) ?: return names
-                if (url.protocol == "file") {
-                    java.io.File(url.toURI()).listFiles()?.forEach { f ->
-                        if (f.name.endsWith(".json") && !f.name.startsWith("_")) {
-                            names.add(f.name)
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-            return names.sorted()
-        }
+        fun listAvailableRules(): List<String> = YealicoRuleData.allFileNames.toList().sorted()
     }
 }
