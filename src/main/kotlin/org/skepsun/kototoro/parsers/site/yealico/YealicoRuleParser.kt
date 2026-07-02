@@ -43,6 +43,14 @@ internal open class YealicoRuleParser(
             isYearSupported = false,
         )
 
+    // ---- NSFW handling ----
+
+
+    private fun contentRating(): ContentRating? = when (source.contentType) {
+        ContentType.HENTAI_MANGA, ContentType.HENTAI_VIDEO -> ContentRating.ADULT
+        else -> null
+    }
+
     // ---- Rule introspection ----
 
     private val flags: String = ruleJson.optString("flag", "")
@@ -182,7 +190,7 @@ internal open class YealicoRuleParser(
                 ?.let { setOf(it) } ?: emptySet(),
             state = null,
             source = source,
-            contentRating = if (isNsfwSource) ContentRating.ADULT else null,
+            contentRating = contentRating(),
         )
     }
 
@@ -205,7 +213,7 @@ internal open class YealicoRuleParser(
             authors = extractJson(obj, ir.optJSONObject("uploader"), "brand")?.let { setOf(it) } ?: emptySet(),
             state = null,
             source = source,
-            contentRating = if (isNsfwSource) ContentRating.ADULT else null,
+            contentRating = contentRating(),
         )
     }
 

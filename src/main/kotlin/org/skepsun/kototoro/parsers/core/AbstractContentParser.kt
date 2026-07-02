@@ -34,13 +34,13 @@ public abstract class AbstractContentParser @InternalParsersApi constructor(
 		get() = if (source.locale.isEmpty()) Locale.ROOT else Locale(source.locale)
 
 	protected val sourceContentRating: ContentRating?
-		get() = if (source.contentType == ContentType.HENTAI_MANGA) {
+		get() = if (source.contentType == ContentType.HENTAI_MANGA || source.contentType == ContentType.HENTAI_VIDEO) {
 			ContentRating.ADULT
 		} else {
 			null
 		}
 
-	protected val isNsfwSource: Boolean = source.contentType == ContentType.HENTAI_MANGA
+	protected val isNsfwSource: Boolean = source.contentType == ContentType.HENTAI_MANGA || source.contentType == ContentType.HENTAI_VIDEO
 
 	protected open val userAgentKey: ConfigKey.UserAgent = ConfigKey.UserAgent(context.getDefaultUserAgent())
 
