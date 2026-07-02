@@ -1,0 +1,62 @@
+{
+  "cookie": "",
+  "flag": "preloadGallery",
+  "galleryRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "data-preview-file-url",
+      "selector": "section > article.post-preview:eq(0)"
+    },
+    "description": {
+      "fun": "html",
+      "selector": "div#a-show > div#description"
+    },
+    "pictureRule": {
+      "item": {
+        "selector": "section > article.post-preview"
+      },
+      "thumbnail": {
+        "fun": "attr",
+        "param": "data-preview-file-url",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "data-large-file-url",
+        "selector": "this"
+      },
+      "highRes": {
+        "fun": "attr",
+        "param": "data-file-url",
+        "selector": "this"
+      }
+    }
+  },
+  "galleryUrl": "https://danbooru.donmai.us/pools/{idCode:}?page={page:1}",
+  "indexRule": {
+    "category": {
+      "fun": "html",
+      "regex": "(\\d+)",
+      "replacement": "共 $1 页",
+      "selector": "td:eq(2)"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "regex": "/pools/(\\d+)",
+      "selector": "td > a:eq(0)"
+    },
+    "item": {
+      "selector": "#a-index > table.striped > tbody > tr"
+    },
+    "title": {
+      "fun": "html",
+      "selector": "td > a:eq(0)"
+    }
+  },
+  "indexUrl": "https://danbooru.donmai.us/pools?page={page:1}",
+  "loginUrl": "https://danbooru.donmai.us/session/new",
+  "searchUrl": "https://danbooru.donmai.us/pools?page={page:1}&search%5Bname_matches%5D={keyword:}&utf8=%E2%9C%93",
+  "sid": 36,
+  "title": "Danbooru Pool"
+}

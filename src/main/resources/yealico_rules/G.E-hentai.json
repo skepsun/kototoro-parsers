@@ -1,0 +1,162 @@
+{
+  "categories": [
+    {
+      "cid": 1,
+      "title": "首页",
+      "url": "https://e-hentai.org/?page={page:0}"
+    },
+    {
+      "cid": 2,
+      "title": "同人志",
+      "url": "https://e-hentai.org/doujinshi/{page:0}"
+    },
+    {
+      "cid": 3,
+      "title": "漫画",
+      "url": "https://e-hentai.org/manga/{page:0}"
+    },
+    {
+      "cid": 4,
+      "title": "同人CG",
+      "url": "https://e-hentai.org/artistcg/{page:0}"
+    },
+    {
+      "cid": 5,
+      "title": "游戏CG",
+      "url": "https://e-hentai.org/gamecg/{page:0}"
+    },
+    {
+      "cid": 6,
+      "title": "欧美",
+      "url": "https://e-hentai.org/western/{page:0}"
+    },
+    {
+      "cid": 7,
+      "title": "Non-H",
+      "url": "https://e-hentai.org/non-h/{page:0}"
+    },
+    {
+      "cid": 8,
+      "title": "图集",
+      "url": "https://e-hentai.org/imageset/{page:0}"
+    },
+    {
+      "cid": 9,
+      "title": "Cosplay",
+      "url": "https://e-hentai.org/cosplay/{page:0}"
+    },
+    {
+      "cid": 10,
+      "title": "亚洲AV",
+      "url": "https://e-hentai.org/asianporn/{page:0}"
+    },
+    {
+      "cid": 11,
+      "title": "MISC",
+      "url": "https://e-hentai.org/misc/{page:0}"
+    }
+  ],
+  "disableHProxy": false,
+  "extraRule": {
+    "pictureRule": {
+      "url": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "div.sni a img[style]"
+      }
+    }
+  },
+  "flag": "singlePageBigPicture|repeatedThumbnail|preloadGallery",
+  "galleryRule": {
+    "commentRule": {
+      "author": {
+        "fun": "html",
+        "selector": "div.c3 > a:first-child"
+      },
+      "content": {
+        "fun": "html",
+        "selector": "div.c6"
+      },
+      "datetime": {
+        "fun": "html",
+        "regex": "Posted on (.*?) UTC by",
+        "selector": "div.c3"
+      },
+      "item": {
+        "selector": "div#cdiv > div.c1"
+      }
+    },
+    "pictureRule": {
+      "item": {
+        "selector": "div.gdtl,div.gdtm"
+      },
+      "thumbnail": {
+        "regex": "(https?://[^\"<>]*?\\.jpg)",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "href",
+        "selector": "div a"
+      }
+    },
+    "tags": {
+      "fun": "attr",
+      "param": "id",
+      "regex": "td_(.*)",
+      "selector": "div#taglist table tbody tr td:eq(1) div"
+    },
+    "title": {
+      "fun": "html",
+      "selector": "h1#gj"
+    }
+  },
+  "galleryUrl": "https://e-hentai.org/g/{idCode:}/?p={page:0}&hc=1",
+  "gid": 5,
+  "index": 0,
+  "indexRule": {
+    "category": {
+      "fun": "text",
+      "selector": ".cn[class*=\"ct\"],.cs[class*=\"ct\"]"
+    },
+    "cover": {
+      "regex": "(https?://[^\"<>]*?\\.jpg)",
+      "selector": "this"
+    },
+    "datetime": {
+      "regex": "(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})",
+      "selector": "this"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "regex": "/g/(.*)",
+      "selector": "a"
+    },
+    "item": {
+      "selector": ".itg>tbody>tr,.itg>div"
+    },
+    "rating": {
+      "fun": "attr",
+      "param": "style",
+      "regex": "background-position:-?(\\d+)px -?(\\d+)px",
+      "replacement": "5-$1/16-($2-1)/40",
+      "selector": ".ir"
+    },
+    "title": {
+      "fun": "text",
+      "selector": ".glink"
+    },
+    "uploader": {
+      "regex": "/uploader/([^\"<>]*)",
+      "selector": "this"
+    }
+  },
+  "indexUrl": "https://e-hentai.org/?page={page:0}",
+  "isGrid": false,
+  "loginUrl": "https://forums.e-hentai.org/index.php?act=Login",
+  "searchUrl": "https://e-hentai.org/?f_search={keyword:}&f_sh=on&page={page:0}",
+  "sid": 43,
+  "title": "G.E-hentai",
+  "versionCode": 6
+}

@@ -1,0 +1,99 @@
+{
+  "categories": [
+    {
+      "url": "http://www.gayhub.com/videos/page{page:1}.html",
+      "title": "最新",
+      "cid": 1
+    },
+    {
+      "url": "http://www.gayhub.com/most-viewed/page{page:1}.html",
+      "title": "最受关注",
+      "cid": 2
+    },
+    {
+      "url": "http://www.gayhub.com/top-rated/page{page:1}.html",
+      "title": "最受好评",
+      "cid": 3
+    },
+    {
+      "url": "http://www.gayhub.com/most-discussed/page{page:1}.html",
+      "title": "最多讨论",
+      "cid": 4
+    },
+    {
+      "url": "http://www.gayhub.com/longest/page{page:1}.html",
+      "title": "最长视频",
+      "cid": 5
+    }
+  ],
+  "flag": "preloadGallery",
+  "galleryRule": {
+    "videoRule": {
+      "content": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "source"
+      },
+      "thumbnail": {
+        "fun": "attr",
+        "param": "poster",
+        "selector": "this"
+      },
+      "item": {
+        "selector": "video"
+      }
+    },
+    "datetime": {
+      "fun": "text",
+      "selector": ".stats-list > li:eq(2) > .sub-label"
+    },
+    "description": {
+      "fun": "text",
+      "selector": ".main-description"
+    },
+    "uploader": {
+      "fun": "text",
+      "selector": "span.user-name"
+    },
+    "tags": {
+      "fun": "text",
+      "selector": ".d-container:eq(2) > .tags-block > a"
+    },
+    "rating": {
+      "fun": "text",
+      "regex": "(.+)%",
+      "replacement": "$1/20",
+      "selector": ".li-vote-percent.vote-count.score"
+    }
+  },
+  "galleryUrl": "{idCode:}",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "a > span.image > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "selector": "a[class!='add-to-fav']"
+    },
+    "item": {
+      "selector": "div.inner-box-container > div.row > div.item-col.col > div.item-inner-col.inner-col"
+    },
+    "title": {
+      "fun": "attr",
+      "param": "alt",
+      "selector": "a > span.image > img"
+    },
+    "category": {
+      "fun": "text",
+      "selector": "a > span.image > span.time"
+    }
+  },
+  "indexUrl": "http://www.gayhub.com/videos/page{page:1}.html",
+  "searchUrl": "http://www.gayhub.com/search/videos/{keyword:}/page{page:1}.html",
+  "loginUrl": "http://www.gayhub.com/login",
+  "sid": 603,
+  "title": "GayHub"
+}

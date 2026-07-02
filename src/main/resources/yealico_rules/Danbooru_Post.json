@@ -1,0 +1,107 @@
+{
+  "categories": [
+    {
+      "cid": 1,
+      "title": "首页",
+      "url": "https://danbooru.donmai.us/post{pageStr:?page={page:1}}"
+    },
+    {
+      "cid": 2,
+      "title": "随机",
+      "url": "https://danbooru.donmai.us/post?{pageStr:page={page:1}&}tags=order%3Arandom"
+    },
+    {
+      "cid": 3,
+      "title": "评级：安全",
+      "url": "https://danbooru.donmai.us/post?tags=rating%3Asafe{pageStr:&page={page:1}}"
+    },
+    {
+      "cid": 4,
+      "title": "评级：存疑",
+      "url": "https://danbooru.donmai.us/post?tags=rating%3Aquestionable{pageStr:&page={page:1}}"
+    },
+    {
+      "cid": 5,
+      "title": "评级：露骨",
+      "url": "https://danbooru.donmai.us/post?tags=rating%3Aexplicit{pageStr:&page={page:1}}"
+    },
+    {
+      "cid": 6,
+      "title": "当前热门",
+      "url": "https://danbooru.donmai.us/posts?{pageStr:page={page:1}&}tags=order%3Arank"
+    }
+  ],
+  "flag": "preloadGallery",
+  "galleryRule": {
+    "pictureRule": {
+      "highRes": {
+        "fun": "attr",
+        "param": "data-file-url",
+        "selector": "this"
+      },
+      "item": {
+        "selector": "#image-container"
+      },
+      "thumbnail": {
+        "fun": "attr",
+        "param": "data-preview-file-url",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "data-large-file-url",
+        "selector": "this"
+      }
+    },
+    "datetime": {
+      "fun": "html",
+      "selector": "section#post-information time"
+    },
+    "tagRule": {
+      "item": {
+        "selector": "ul.general-tag-list a.search-tag"
+      },
+      "title": {
+        "fun": "text",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "href",
+        "regex": "tags=(.*)",
+        "replacement": "/posts?page={page:1}&tags=$1",
+        "selector": "this"
+      }
+    },
+    "title": {
+      "fun": "html",
+      "selector": "p.desc"
+    },
+    "uploader": {
+      "fun": "html",
+      "selector": "ul.artist-tag-list a.search-tag"
+    }
+  },
+  "galleryUrl": "https://danbooru.donmai.us/posts/{idCode:}?{pageStr:page={page:1}}",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "data-preview-file-url",
+      "selector": "this"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "data-id",
+      "selector": "this"
+    },
+    "item": {
+      "selector": "div#posts > div > article"
+    }
+  },
+  "indexUrl": "https://danbooru.donmai.us/posts{pageStr:?page={page:1}}}",
+  "loginUrl": "https://danbooru.donmai.us/session/new",
+  "searchUrl": "https://danbooru.donmai.us/post?tags={keyword:}{pageStr:&page={page:1}}",
+  "sid": 35,
+  "title": "Danbooru Post",
+  "versionCode": 0
+}

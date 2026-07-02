@@ -1,0 +1,122 @@
+{
+  "categories": [
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?page={page:1}",
+      "title": "时间-最新",
+      "cid": 1
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=image_created_a&page={page:1}",
+      "title": "时间-最旧",
+      "cid": 2
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=comment_created&page={page:1}",
+      "title": "评论-最近",
+      "cid": 3
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=comment_created_a&page={page:1}",
+      "title": "评论-最远",
+      "cid": 4
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=comment_count&page={page:1}",
+      "title": "评论-最多",
+      "cid": 5
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=comment_count_a&page={page:1}",
+      "title": "评论-最少",
+      "cid": 6
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=clip_created&page={page:1}",
+      "title": "插画更新-最近",
+      "cid": 7
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=clip_created_a&page={page:1}",
+      "title": "插画更新-最远",
+      "cid": 8
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=clip_count&page={page:1}",
+      "title": "插画更新-最多",
+      "cid": 9
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=clip_count_a&page={page:1}",
+      "title": "插画更新-最少",
+      "cid": 10
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=image_view&page={page:1}",
+      "title": "阅览数-最多",
+      "cid": 11
+    },
+    {
+      "url": "http://seiga.nicovideo.jp/illust/list?sort=image_view_a&page={page:1}",
+      "title": "阅览数-最少",
+      "cid": 12
+    }
+  ],
+  "flag": "preloadGallery|noRating|noTag|loginRequired|waterfallAsList",
+  "galleryRule": {
+    "pictureRule": {
+      "thumbnail": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "this"
+      },
+      "url": {
+        "fun": "attr",
+        "param": "src",
+        "selector": "this"
+      },
+      "item": {
+        "selector": "a#illust_link > img"
+      }
+    },
+    "datetime": {
+      "fun": "text",
+      "selector": "li.date > span.created"
+    },
+    "description": {
+      "fun": "html",
+      "selector": "p.discription"
+    }
+  },
+  "galleryUrl": "{idCode:}",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "span.thum > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "regex": "(.*)",
+      "replacement": "http://seiga.nicovideo.jp$1",
+      "selector": "this"
+    },
+    "item": {
+      "selector": "li.list_item > a"
+    },
+    "title": {
+      "fun": "text",
+      "selector": "ul.illust_info > li.title"
+    },
+    "uploader": {
+      "fun": "text",
+      "selector": "ul.illust_info > li.user"
+    }
+  },
+  "indexUrl": "http://seiga.nicovideo.jp/illust/list?page={page:1}",
+  "loginUrl": "http://seiga.nicovideo.jp/login/redirect?next_url=%2F%3Fheader",
+  "searchUrl": "http://seiga.nicovideo.jp/search/{keyword:}?page={page:1}&target=illust&sort=image_created",
+  "header": "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:52.0) Gecko/20100101 Firefox/52.0.2",
+  "sid": 515,
+  "title": "niconico插画"
+}

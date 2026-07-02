@@ -1,0 +1,165 @@
+{
+  "categories": [
+    {
+      "url": "https://tuchong.com/photos/recent/?page={page:1}",
+      "title": "最新",
+      "cid": 1
+    },
+    {
+      "url": "https://tuchong.com/tags/%E9%A3%8E%E5%85%89/?type=new",
+      "title": "(题材)风光",
+      "cid": 2
+    },
+    {
+      "url": "https://tuchong.com/tags/%E4%BA%BA%E5%83%8F/?type=new",
+      "title": "(题材)人像",
+      "cid": 3
+    },
+    {
+      "url": "https://tuchong.com/tags/%E9%9D%99%E7%89%A9/?type=new",
+      "title": "(题材)静物",
+      "cid": 4
+    },
+    {
+      "url": "https://tuchong.com/tags/%E6%97%85%E8%A1%8C/?type=new",
+      "title": "(题材)旅行",
+      "cid": 5
+    },
+    {
+      "url": "https://tuchong.com/tags/%E5%B0%91%E5%A5%B3/?type=new",
+      "title": "(题材)少女",
+      "cid": 6
+    },
+    {
+      "url": "https://tuchong.com/tags/%E6%A0%A1%E5%9B%AD/?type=new",
+      "title": "(题材)校园",
+      "cid": 7
+    },
+    {
+      "url": "https://tuchong.com/tags/%E7%A7%81%E6%88%BF/?type=new",
+      "title": "(题材)私房",
+      "cid": 8
+    },
+    {
+      "url": "https://tuchong.com/tags/%E8%89%B2%E5%BD%A9/?type=new",
+      "title": "(风格)色彩",
+      "cid": 9
+    },
+    {
+      "url": "https://tuchong.com/tags/%E6%97%A5%E7%B3%BB/?type=new",
+      "title": "(风格)日系",
+      "cid": 10
+    },
+    {
+      "url": "https://tuchong.com/tags/%E4%BD%B3%E8%83%BD/?type=new",
+      "title": "(器材)佳能",
+      "cid": 11
+    },
+    {
+      "url": "https://tuchong.com/tags/%E5%B0%BC%E5%BA%B7/?type=new",
+      "title": "(器材)尼康",
+      "cid": 12
+    },
+    {
+      "url": "https://tuchong.com/tags/%E6%89%8B%E6%9C%BA/?type=new",
+      "title": "(器材)手机",
+      "cid": 13
+    }
+  ],
+  "flag": "preloadGallery|noRating|waterfallAsList",
+  "galleryRule": {
+    "datetime": {
+      "path": "$.post.published_at"
+    },
+    "pictureRule": {
+      "item": {
+        "path": "$.images"
+      },
+      "thumbnail": {
+        "regex": "\"img_id\":(\\d+),\"user_id\":(\\d+),",
+        "replacement": "https://photo.tuchong.com/$2/f/$1.jpg",
+        "path": "$"
+      },
+      "url": {
+        "regex": "\"img_id\":(\\d+),\"user_id\":(\\d+),",
+        "replacement": "https://photo.tuchong.com/$2/f/$1.jpg",
+        "path": "$"
+      }
+    },
+    "description": {
+      "path": "$.post.excerpt"
+    },
+    "tags": {
+      "path": "$.post.tags[*].tag_name"
+    }
+  },
+  "galleryUrl": "https://tuchong.com/rest/posts/{idCode:}",
+  "indexRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "div.post-collage > a.theatre-view > figure.main-collage > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "regex": "https://tuchong.com/(\\d+)/(\\d+)",
+      "replacement": "$2",
+      "selector": "div.post-collage > a.theatre-view"
+    },
+    "item": {
+      "selector": "div.post-collage"
+    },
+    "datetime": {
+      "fun": "attr",
+      "param": "data-published-at",
+      "selector": "div.post-collage"
+    },
+    "title": {
+      "fun": "attr",
+      "param": "title",
+      "selector": "div.post-collage > div.caption > h3 > a.theatre-view"
+    },
+    "uploader": {
+      "fun": "attr",
+      "param": "title",
+      "selector": "div.post-collage > div.caption > div.author-info > a.site-anchor"
+    }
+  },
+  "indexUrl": "https://tuchong.com/photos/recent/?page={page:1}",
+  "searchRule": {
+    "cover": {
+      "fun": "attr",
+      "param": "src",
+      "selector": "div.post-collage > a.theatre-view > figure.main-collage > img"
+    },
+    "idCode": {
+      "fun": "attr",
+      "param": "href",
+      "regex": "https://tuchong.com/(\\d+)/(\\d+)",
+      "replacement": "$2",
+      "selector": "div.post-collage > a.theatre-view"
+    },
+    "item": {
+      "selector": "div.post-collage"
+    },
+    "datetime": {
+      "fun": "attr",
+      "param": "data-published-at",
+      "selector": "div.post-collage"
+    },
+    "title": {
+      "fun": "attr",
+      "param": "title",
+      "selector": "div.post-collage > div.caption > h3 > a.theatre-view"
+    },
+    "uploader": {
+      "fun": "attr",
+      "param": "title",
+      "selector": "div.post-collage > div.caption > div.author-info > a.site-anchor"
+    }
+  },
+  "searchUrl": "https://tuchong.com/search/tag/?query={keyword:}",
+  "sid": 1,
+  "title": "图虫网"
+}
