@@ -98,6 +98,7 @@ class ParserProcessor(
 
         factoryWriter?.write(
             """
+				else -> throw IllegalArgumentException("Unknown content source: ${'$'}this")
 			}.let {
 				require(it.source == this) {
 					"Cannot instantiate content parser: ${'$'}name mapped to ${'$'}{it.source}"

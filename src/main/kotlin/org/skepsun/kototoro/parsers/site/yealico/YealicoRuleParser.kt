@@ -19,6 +19,9 @@ import java.util.*
  *
  * Loads a JSON rule from bundled resources and dynamically extracts content
  * using CSS selectors (HTML) or JSONPath (API), plus regex transforms.
+ *
+ * Filter support: converts Yealico `categories` to ContentTag options,
+ * `flags` to filterCapabilities, `searchUrl` to search support.
  */
 internal open class YealicoRuleParser(
     context: ContentLoaderContext,
@@ -28,38 +31,97 @@ internal open class YealicoRuleParser(
 
     override val configKeyDomain = ConfigKey.Domain(extractDomain())
 
-    override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+        SortOrder.UPDATED, SortOrder.NEWEST, SortOrder.POPULARITY,
+    )
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
-            isSearchSupported = ruleJson.optString("searchUrl", "").isNotEmpty(),
+            isSearchSupported = hasSearch,
+            isMultipleTagsSupported = false,
+            isTagsExclusionSupported = false,
+            isYearSupported = false,
         )
 
     // ---- Rule introspection ----
 
     private val flags: String = ruleJson.optString("flag", "")
-    
+
     private val isJsonApi: Boolean by lazy {
         val itemObj = ruleJson.optJSONObject("indexRule")?.optJSONObject("item")
         itemObj != null && itemObj.has("path") && !itemObj.has("selector")
     }
+
+    private val hasSearch: Boolean by lazy {
+        ruleJson.optString("searchUrl", "").isNotEmpty()
+    }
+
+    private val hasRating: Boolean by lazy {
+        !flags.contains("noRating")
+    }
+
+    private val parsedCategories: List<CategoryPage> by lazy { parseCategories() }
+
+    private data class CategoryPage(
+        val cid: Int,
+        val title: String,
+        val url: String,
+    )
 
     private fun extractDomain(): String {
         val url = ruleJson.optString("indexUrl", "")
         return Regex("https?://([^/:]+)").find(url)?.groupValues?.get(1) ?: "example.com"
     }
 
+    // ---- Filter options ----
+
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val tags = if (parsedCategories.isNotEmpty()) {
+            parsedCategories.mapTo(mutableSetOf()) { cat ->
+                ContentTag(
+                    key = cat.cid.toString(),
+                    title = cat.title,
+                    source = source,
+                )
+            }
+        } else {
+            emptySet<ContentTag>()
+        }
+
+        return ContentListFilterOptions(
+            availableTags = tags,
+            availableStates = emptySet(),
+            availableContentTypes = emptySet(),
+        )
+    }
+
     // ---- Listing ----
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val url = buildListUrl(page)
+        // If filter has a tag matching a category cid, use that category's URL
+        val catUrl = resolveCategoryUrl(filter)
+        val url = buildListUrl(page, baseUrl = catUrl)
         val response = webClient.httpGet(url)
         val body = response.body?.string() ?: throw ParseException("Empty response", url)
         return if (isJsonApi) parseJsonList(body) else parseHtmlList(Jsoup.parse(body, url))
     }
 
-    private fun buildListUrl(page: Int): String {
-        var url = ruleJson.optString("indexUrl", "")
+    /**
+     * If the filter contains a tag whose key matches a category cid,
+     * use that category's URL instead of the default indexUrl.
+     */
+    private fun resolveCategoryUrl(filter: ContentListFilter): String? {
+        if (parsedCategories.isEmpty() || filter.tags.isEmpty()) return null
+        for (tag in filter.tags) {
+            val cid = tag.key.toIntOrNull() ?: continue
+            val cat = parsedCategories.find { it.cid == cid }
+            if (cat != null) return cat.url
+        }
+        return null
+    }
+
+    private fun buildListUrl(page: Int, baseUrl: String? = null): String {
+        var url = baseUrl ?: ruleJson.optString("indexUrl", "")
         url = url.replace(Regex("\\{page:\\d+\\}"), page.toString())
         url = url.replace(Regex("\\{pageStr:page/\\{page:\\d+\\}\\}"), page.toString())
         return if (url.startsWith("http")) url else "https://$domain$url"
@@ -69,6 +131,10 @@ internal open class YealicoRuleParser(
         val ir = ruleJson.optJSONObject("indexRule")
             ?: throw ParseException("No indexRule in rule JSON", source.name)
         val itemSel = ir.optJSONObject("item")?.optString("selector")
+            ?: parseCategories().firstOrNull()?.let { _ ->
+                // Try to find a shared listRule first
+                ruleJson.optJSONObject("listRule")?.optJSONObject("item")?.optString("selector")
+            }
             ?: throw ParseException("No item selector in indexRule", source.name)
 
         val items = doc.select(itemSel)
@@ -96,6 +162,13 @@ internal open class YealicoRuleParser(
         val cover = extractHtml(el, ir.optJSONObject("cover"))
         val detailUrl = buildDetailUrl(idCode)
 
+        // Parse additional fields
+        val rating = if (hasRating) {
+            extractRating(el, ir.optJSONObject("rating"))
+        } else {
+            RATING_UNKNOWN
+        }
+
         return Content(
             id = generateUid(idCode),
             url = detailUrl,
@@ -103,7 +176,7 @@ internal open class YealicoRuleParser(
             coverUrl = cover?.let { it.toAbsoluteUrl(domain) },
             title = title,
             altTitles = emptySet(),
-            rating = RATING_UNKNOWN,
+            rating = rating,
             tags = emptySet(),
             authors = extractHtml(el, ir.optJSONObject("uploader"))
                 ?.let { setOf(it) } ?: emptySet(),
@@ -171,12 +244,6 @@ internal open class YealicoRuleParser(
         }
     }
 
-    override suspend fun getFilterOptions() = ContentListFilterOptions(
-        availableTags = emptySet(),
-        availableStates = emptySet(),
-        availableContentTypes = emptySet(),
-    )
-
     // ---- Selector extraction ----
 
     private fun extractHtml(el: Element, selObj: JSONObject?): String? {
@@ -219,11 +286,44 @@ internal open class YealicoRuleParser(
         return cur?.toString()
     }
 
+    private fun extractRating(el: Element, selObj: JSONObject?): Float {
+        val text = extractHtml(el, selObj) ?: return RATING_UNKNOWN
+        // Yealico rating replacement often contains math like "$1/2"
+        return try {
+            text.toFloat()
+        } catch (_: NumberFormatException) {
+            // Try parsing expressions like "4/2" or "8.5"
+            val cleaned = text.replace(Regex("[^0-9./]"), "")
+            val parts = cleaned.split("/")
+            if (parts.size == 2) {
+                parts[0].toFloatOrNull()?.div(parts[1].toFloatOrNull() ?: 1f) ?: RATING_UNKNOWN
+            } else {
+                cleaned.toFloatOrNull() ?: RATING_UNKNOWN
+            }
+        }
+    }
+
     private fun buildDetailUrl(idCode: String): String {
         var url = ruleJson.optString("galleryUrl", ruleJson.optString("detailUrl", ""))
         url = url.replace("{idCode:}", idCode).replace("{page:1}", "1")
         if (url.isEmpty()) url = "https://$domain/$idCode"
         return url
+    }
+
+    // ---- Category parsing ----
+
+    private fun parseCategories(): List<CategoryPage> {
+        val cats = ruleJson.optJSONArray("categories") ?: return emptyList()
+        val list = mutableListOf<CategoryPage>()
+        for (i in 0 until cats.length()) {
+            val cat = cats.getJSONObject(i)
+            list.add(CategoryPage(
+                cid = cat.optInt("cid", i + 1),
+                title = cat.optString("title", "Page ${i + 1}"),
+                url = cat.optString("url", ""),
+            ))
+        }
+        return list
     }
 
     // ---- Resource loading ----
