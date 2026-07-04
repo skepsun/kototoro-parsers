@@ -102,3 +102,5 @@ local.properties
 /.idea/copilot.data.migration.ask2agent.xml
 /.idea/copilot.data.migration.edit.xml
 yealico_rules_cache/
+.pi-weave
+.mindfs
