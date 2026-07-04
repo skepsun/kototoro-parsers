@@ -79,11 +79,11 @@ internal class TheHentai(context: ContentLoaderContext) :
 			tags = if (tags.isNotEmpty()) tags else manga.tags,
 			contentRating = ContentRating.ADULT,
 			chapters = listOf(ContentChapter(
-				id = generateUid(manga.url),
-				title = title,
+				id = generateUid(manga.publicUrl),
+				title = "Read",
 				number = 1f,
 				volume = 0,
-				url = manga.url,
+				url = manga.publicUrl,
 				scanlator = null,
 				uploadDate = 0L,
 				branch = null,
@@ -95,16 +95,19 @@ internal class TheHentai(context: ContentLoaderContext) :
 	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
 		val urls = LinkedHashSet<String>()
-		doc.select(".post_imgs img, article img, #content img").forEach { img ->
+		doc.select("#img_gallery_big").forEach { img ->
 			imageUrl(img.attr("data-src").ifBlank { img.attr("src") })?.let(urls::add)
+		}
+		doc.select(".post_imgs .thumbnails img").forEach { img ->
+			imageUrl(img.attr("data-src").ifBlank { img.attr("src") })?.toFullImageUrl()?.let(urls::add)
 		}
 		if (urls.isEmpty()) {
 			Regex("https?://[^\"'\\s<>]+\\.(?:jpe?g|png|webp)", RegexOption.IGNORE_CASE)
 				.findAll(doc.outerHtml())
-				.mapTo(urls) { it.value }
+				.mapTo(urls) { it.value.toFullImageUrl() }
 		}
 		return urls.filterNot { it.contains("icon-th") || it.contains("mascot") || it.contains("ads") }
-			.mapIndexed { index, url -> ContentPage(id = generateUid("#"), url = url, preview = null, source = source) }
+			.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
@@ -153,4 +156,10 @@ internal class TheHentai(context: ContentLoaderContext) :
 	}
 
 	private fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
+
+	private fun String.toFullImageUrl(): String = replace(THUMB_SIZE_REGEX, "")
+
+	private companion object {
+		private val THUMB_SIZE_REGEX = Regex("-\\d+x\\d+(?=\\.(?:jpe?g|png|webp)(?:\\.webp)?$)", RegexOption.IGNORE_CASE)
+	}
 }

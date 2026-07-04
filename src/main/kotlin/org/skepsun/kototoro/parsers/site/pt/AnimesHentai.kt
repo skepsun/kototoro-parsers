@@ -1,6 +1,7 @@
 package org.skepsun.kototoro.parsers.site.pt
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
@@ -10,6 +11,7 @@ import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
+import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.urlEncoded
@@ -34,7 +36,18 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 
 	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
 		availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
-		availableTags = listOf("romance", "masturbacao", "peitoes", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j").mapTo(LinkedHashSet()) {
+		availableTags = listOf(
+			"romance",
+			"masturbacao",
+			"peitoes",
+			"anal",
+			"ahegao",
+			"boquete",
+			"creampie",
+			"futanari",
+			"milf",
+			"tentaculos",
+		).mapTo(LinkedHashSet()) {
 			ContentTag(it.replace('-', ' ').replaceFirstChar(Char::titlecase), it, source)
 		},
 	)
@@ -52,14 +65,19 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 		val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
 			?: doc.selectFirst(".poster img")?.let { imageUrl(it.attr("src")) }
 			?: manga.coverUrl
-		val tags = doc.select(".sgeneros a[href], a[href*=/genero/]").mapNotNullTo(LinkedHashSet()) { a ->
+		val tags = doc.select(".sgeneros a[href*=/genero/]").mapNotNullTo(LinkedHashSet()) { a ->
 			val name = a.text().trim()
 			val key = a.attr("href").substringAfter("/genero/", "").trim('/')
 			if (name.isNotBlank() && key.isNotBlank()) ContentTag(name, key, source) else null
 		}
-		val chapters = doc.select(".episodios a[href*=/episodio/], a[href*=/episodio/]").mapIndexedNotNull { index, a ->
+		val chapterLinks = doc.select(".episodios .episodiotitle a[href*=/episodio/]").ifEmpty {
+			doc.select(".episodios .imagen a[href*=/episodio/]")
+		}
+		val chapters = chapterLinks.mapIndexedNotNull { index, a ->
 			val href = a.attr("href").toAbsoluteUrl(domain)
-			val name = a.text().trim().ifBlank { a.selectFirst("img")?.attr("alt").orEmpty() }
+			val item = a.parents().firstOrNull { it.`is`("li") }
+			val name = item?.selectFirst(".episodiotitle a[href*=/episodio/]")?.text()?.trim()
+				?: a.text().trim().ifBlank { a.selectFirst("img")?.attr("alt").orEmpty() }
 			if (name.isBlank()) null else ContentChapter(
 				id = generateUid(href),
 				title = name,
@@ -96,12 +114,22 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
+		val chapterUrl = chapter.url.toAbsoluteUrl(domain)
+		val doc = webClient.httpGet(chapterUrl, getRequestHeaders()).parseHtml()
 		val urls = LinkedHashSet<String>()
-		doc.select("iframe[src], video[src], video source[src]").forEach { it.attr("src").toAbsoluteUrlOrNull(domain)?.let(urls::add) }
-		Regex("https?://[^\"'\\s<>]+\\.(?:m3u8|mp4)(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
-			.findAll(doc.outerHtml()).mapTo(urls) { it.value }
-		return urls.mapIndexed { index, url -> ContentPage(id = generateUid("#"), url = url, preview = null, source = source) }
+		urls.addAll(extractMediaUrls(doc, domain))
+		doc.select("iframe[src]").forEach { iframe ->
+			val iframeUrl = iframe.attr("src").toAbsoluteUrlOrNull(domain) ?: return@forEach
+			val iframeDoc = runCatching { webClient.httpGet(iframeUrl, getRequestHeaders()).parseHtml() }.getOrNull()
+			iframeDoc?.let {
+				urls.addAll(extractMediaUrls(it, "www.blogger.com"))
+				urls.addAll(resolveBloggerVideoUrls(iframeUrl, it))
+			}
+		}
+		if (urls.isEmpty()) {
+			context.requestBrowserAction(this, chapterUrl)
+		}
+		return urls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
 	private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
@@ -132,5 +160,59 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 		}
 	}
 
+	private fun extractMediaUrls(doc: Document, fallbackDomain: String): List<String> {
+		val urls = LinkedHashSet<String>()
+		doc.select("video[src], video source[src], source[src], meta[property=og:video], meta[property=og:video:url]").forEach { element ->
+			val raw = element.attr("src").ifBlank { element.attr("content") }
+			raw.toAbsoluteUrlOrNull(fallbackDomain)?.let(urls::add)
+		}
+		MEDIA_URL_REGEX.findAll(doc.outerHtml().replace("\\/", "/")).forEach { match ->
+			urls.add(match.value.replace("\\u003d", "=").replace("&amp;", "&"))
+		}
+		return urls.toList()
+	}
+
+	private suspend fun resolveBloggerVideoUrls(iframeUrl: String, doc: Document): List<String> {
+		val token = BLOGGER_TOKEN_REGEX.find(iframeUrl)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+			?: return emptyList()
+		val html = doc.outerHtml()
+		val sid = BLOGGER_SID_REGEX.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+			?: return emptyList()
+		val buildLabel = BLOGGER_BUILD_REGEX.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+			?: return emptyList()
+		val endpoint = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute" +
+			"?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=${sid.urlEncoded()}&bl=${buildLabel.urlEncoded()}&hl=en-US&_reqid=82895&rt=c"
+		val fReq = """[[["WcwnYd","[\"$token\",null,0]",null,"generic"]]]"""
+		val headers = Headers.Builder()
+			.add("User-Agent", UserAgents.CHROME_DESKTOP)
+			.add("Origin", "https://www.blogger.com")
+			.add("Referer", iframeUrl)
+			.add("X-Same-Domain", "1")
+			.build()
+		val body = runCatching {
+			webClient.httpPost(endpoint.toHttpUrl(), "f.req=${fReq.urlEncoded()}", headers).parseRaw()
+		}.getOrNull() ?: return emptyList()
+		return BLOGGER_VIDEO_URL_REGEX.findAll(body).mapTo(LinkedHashSet()) {
+			decodeBloggerUrl(it.value)
+		}.sortedByDescending { url ->
+			url.substringAfter("itag=", "0").substringBefore('&').toIntOrNull() ?: 0
+		}
+	}
+
+	private fun decodeBloggerUrl(value: String): String = value
+		.replace("\\u003d", "=")
+		.replace("\\u0026", "&")
+		.replace("\\/", "/")
+		.replace("&amp;", "&")
+		.trimEnd('\\')
+
 	private fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
+
+	private companion object {
+		private val MEDIA_URL_REGEX = Regex("https?://[^\"'\\s<>]+\\.(?:m3u8|mp4)(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
+		private val BLOGGER_TOKEN_REGEX = Regex("[?&]token=([^&]+)")
+		private val BLOGGER_SID_REGEX = Regex(""""FdrFJe"\s*:\s*"([^"]+)"""")
+		private val BLOGGER_BUILD_REGEX = Regex(""""cfb2h"\s*:\s*"([^"]+)"""")
+		private val BLOGGER_VIDEO_URL_REGEX = Regex("https://[^\"\\s]+googlevideo\\.com/[^\"\\s]+", RegexOption.IGNORE_CASE)
+	}
 }

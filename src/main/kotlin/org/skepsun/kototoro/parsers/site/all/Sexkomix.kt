@@ -54,11 +54,7 @@ internal class Sexkomix(context: ContentLoaderContext) :
 		val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
 			?: doc.selectFirst("#comix_cover_img")?.let { imageUrl(it.attr("data-src").ifBlank { it.attr("src") }) }
 			?: manga.coverUrl
-		val tags = doc.select(".tags_ul a[href]").mapNotNullTo(LinkedHashSet()) { a ->
-			val key = a.attr("href").substringAfter("t=", "").trim()
-			val text = a.text().trim()
-			if (key.isNotBlank() && text.isNotBlank()) ContentTag(text, key, source) else null
-		}
+		val tags = parseTags(doc.select("#comix_description > .info_box:contains(Tags:) .tags_ul a[href*='t=']"))
 		return manga.copy(
 			title = title,
 			description = description,
@@ -114,16 +110,20 @@ internal class Sexkomix(context: ContentLoaderContext) :
 		val title = item.selectFirst(".comix_title")?.text()?.trim()
 			?: img?.attr("alt")?.takeIf { it.isNotBlank() }
 			?: return@mapNotNull null
-		val tags = item.select(".tags_ul a[href]").mapNotNullTo(LinkedHashSet()) { tag ->
-			val key = tag.attr("href").substringAfter("t=", "").trim()
-			val text = tag.text().trim()
-			if (key.isNotBlank() && text.isNotBlank()) ContentTag(text, key, source) else null
-		}
+		val tags = parseTags(item.select(".tags_ul a[href*='t=']"))
 		Content(
 			generateUid(href), title, emptySet(), href.removePrefix("https://$domain").removePrefix("http://$domain"),
 			href, RATING_UNKNOWN, ContentRating.ADULT, img?.let { imageUrl(it.attr("data-src").ifBlank { it.attr("src") }) },
 			tags, null, emptySet(), source = source,
 		)
+	}
+
+	private fun parseTags(elements: Iterable<org.jsoup.nodes.Element>): Set<ContentTag> {
+		return elements.mapNotNullTo(LinkedHashSet()) { tag ->
+			val key = tag.attr("href").substringAfter("t=", "").trim()
+			val text = tag.text().trim()
+			if (key.isNotBlank() && text.isNotBlank()) ContentTag(text, key, source) else null
+		}
 	}
 
 	private fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)

@@ -10,9 +10,11 @@ import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
+import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.net.URI
 import java.util.EnumSet
 
 internal abstract class AcgxmhBase(
@@ -201,7 +203,15 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		VIDEO_URL_REGEX.findAll(doc.outerHtml()).forEach {
 			urls.add(it.value.replace("\\/", "/"))
 		}
-		return urls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
+		val playableUrls = LinkedHashSet<String>()
+		urls.forEach { url ->
+			if (url.contains("/master.m3u8")) {
+				playableUrls.addAll(expandMasterPlaylist(url))
+			} else {
+				playableUrls.add(url)
+			}
+		}
+		return playableUrls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
 	private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
@@ -244,6 +254,37 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 			source = source,
 		)
 	}.distinctBy { it.id }
+
+	private suspend fun expandMasterPlaylist(masterUrl: String): List<String> {
+		val masterUri = URI(masterUrl)
+		val masterQuery = masterUri.rawQuery?.takeIf { it.isNotBlank() } ?: return listOf(masterUrl)
+		val masterPath = masterUri.rawPath
+		val baseUrl = masterUrl.substringBefore('?').substringBeforeLast('/') + "/"
+		val playlist = runCatching {
+			webClient.httpGet(masterUrl, getRequestHeaders()).parseRaw()
+		}.getOrElse {
+			return listOf(masterUrl)
+		}
+		val childUrls = playlist.lineSequence()
+			.map { it.trim() }
+			.filter { it.isNotBlank() && !it.startsWith("#") }
+			.map { child -> child.toPlaylistUrl(baseUrl, masterUri) }
+			.filter { it.contains(".m3u8", ignoreCase = true) }
+			.toList()
+		if (childUrls.isEmpty()) return listOf(masterUrl)
+		val finalQuery = "$masterQuery&from=${masterPath.urlEncoded()}"
+		return childUrls.map { child ->
+			val separator = if (child.contains('?')) "&" else "?"
+			if (child.contains("m=")) child else "$child$separator$finalQuery"
+		}
+	}
+
+	private fun String.toPlaylistUrl(baseUrl: String, masterUri: URI): String = when {
+		startsWith("http://") || startsWith("https://") -> this
+		startsWith("//") -> "${masterUri.scheme}:$this"
+		startsWith("/") -> "${masterUri.scheme}://${masterUri.host}$this"
+		else -> baseUrl + this
+	}
 
 	private companion object {
 		private val VIDEO_URL_REGEX = Regex("https?://[^\"'\\s<>]+\\.(?:m3u8|mp4|webm)(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
