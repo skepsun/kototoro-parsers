@@ -36,11 +36,13 @@ internal abstract class AcgxmhBase(
 
 	protected fun pathTag(title: String, path: String): ContentTag = ContentTag(title, "path:$path", source)
 
-	protected suspend fun loadIndexTags(title: String, path: String, limit: Int = 24): ContentTagGroup {
-		val tags = runCatching {
-			webClient.httpGet("https://$domain$path", getRequestHeaders()).parseHtml()
-				.select("dl.specials dd > a[href]")
-				.asSequence()
+	protected suspend fun loadIndexTags(title: String, path: String, pages: Int = 1, limit: Int = 24): ContentTagGroup {
+		val tags = LinkedHashSet<ContentTag>()
+		for (page in 1..pages) {
+			val doc = runCatching {
+				webClient.httpGet(buildPagedPathUrl(path, page), getRequestHeaders()).parseHtml()
+			}.getOrNull() ?: continue
+			doc.select("dl.specials dd > a[href]").asSequence()
 				.mapNotNull { a ->
 					val name = a.selectFirst(".special-title")?.text()?.trim()
 						?: a.attr("title").takeIf { it.isNotBlank() }
@@ -48,10 +50,11 @@ internal abstract class AcgxmhBase(
 					val itemPath = a.attr("href").toSitePath()
 					if (name.isNullOrBlank() || itemPath.isNullOrBlank()) null else pathTag(name, itemPath)
 				}
-				.distinctBy { it.key }
-				.take(limit)
-				.toCollection(LinkedHashSet())
-		}.getOrDefault(linkedSetOf())
+				.forEach { tag ->
+					if (tags.size < limit) tags.add(tag)
+				}
+			if (tags.size >= limit) break
+		}
 		return ContentTagGroup(title, tags, isExclusive = true)
 	}
 
@@ -73,6 +76,15 @@ internal abstract class AcgxmhBase(
 				if (uri.rawQuery.isNullOrBlank()) path else "$path?${uri.rawQuery}"
 			}
 		}
+	}
+
+	protected fun Document.extractRelatedTags(): LinkedHashSet<ContentTag> {
+		return select(".manga-tags a[href*=/tags/], .info span:matchesOwn((相关)?标签：) a[href*=/tags/]")
+			.mapNotNullTo(LinkedHashSet()) {
+				val name = it.text().trim()
+				val key = it.attr("href").substringAfterLast('/').substringBefore('.')
+				if (name.isNotBlank() && key.isNotBlank()) ContentTag(name, key, source) else null
+			}
 	}
 }
 
@@ -101,9 +113,9 @@ internal class Acgxmh(context: ContentLoaderContext) :
 			),
 			loadIndexTags("专题", "/special/"),
 			loadIndexTags("戏仿", "/anime/"),
-			loadIndexTags("角色", "/characters/"),
-			loadIndexTags("主题标签", "/tags/"),
-			loadIndexTags("作品艺术家", "/artist/"),
+			loadIndexTags("角色", "/characters/", pages = 2, limit = 48),
+			loadIndexTags("主题标签", "/tags/", pages = 2, limit = 48),
+			loadIndexTags("作品艺术家", "/artist/", pages = 2, limit = 48),
 			loadIndexTags("组织主题", "/circle/"),
 			loadIndexTags("Coser", "/coser/"),
 		),
@@ -118,10 +130,7 @@ internal class Acgxmh(context: ContentLoaderContext) :
 		val title = doc.selectFirst("h1.title, h1")?.text()?.trim() ?: manga.title
 		val description = doc.selectFirst("meta[name=description]")?.attr("content")?.takeIf { it.isNotBlank() }
 		val cover = doc.selectFirst(".content img, #content img")?.let { imageUrl(it.attr("src")) } ?: manga.coverUrl
-		val tags = doc.select(".top-tags, a[href*=/tags/], a[href*=/anime/], a[href*=/language/]").mapNotNullTo(LinkedHashSet()) {
-			val name = it.text().trim()
-			if (name.isNotBlank()) ContentTag(name, it.attr("href").substringAfterLast('/').substringBefore('.'), source) else null
-		}
+		val tags = doc.extractRelatedTags()
 		return manga.copy(
 			title = title,
 			description = description,
@@ -212,14 +221,15 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 				linkedSetOf(
 					pathTag("H动画", "/gif/"),
 					pathTag("里番剧", "/hanime/"),
+					pathTag("有声/ASMR", "/asmr/"),
 				),
 				isExclusive = true,
 			),
 			loadIndexTags("主播", "/cv/"),
 			loadIndexTags("戏仿", "/anime/", limit = 12),
-			loadIndexTags("角色", "/characters/", limit = 12),
-			loadIndexTags("主题标签", "/tags/", limit = 12),
-			loadIndexTags("作品艺术家", "/artist/", limit = 12),
+			loadIndexTags("角色", "/characters/", pages = 2, limit = 24),
+			loadIndexTags("主题标签", "/tags/", pages = 2, limit = 24),
+			loadIndexTags("作品艺术家", "/artist/", pages = 2, limit = 24),
 		),
 	)
 
@@ -238,11 +248,7 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
 			?: doc.selectFirst("video[poster]")?.let { imageUrl(it.attr("poster")) }
 			?: manga.coverUrl
-		val tags = doc.select(".animation-description a[href], .top-tags, a[href*=/circle/]").mapNotNullTo(LinkedHashSet()) {
-			val name = it.text().trim()
-			val key = it.attr("href").substringAfterLast('/').substringBefore('.').takeIf { value -> value.isNotBlank() } ?: name
-			if (name.isNotBlank()) ContentTag(name, key, source) else null
-		}
+		val tags = doc.extractRelatedTags()
 		return manga.copy(
 			title = title,
 			description = description,
@@ -273,9 +279,16 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		VIDEO_URL_REGEX.findAll(doc.outerHtml()).forEach {
 			urls.add(it.value.replace("\\/", "/"))
 		}
+		val signedPlaylists = urls.filter { it.isSignedMasterPlaylist() }
+		if (signedPlaylists.isNotEmpty()) {
+			return signedPlaylists
+				.flatMap { expandMasterPlaylist(it) }
+				.distinct()
+				.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
+		}
 		val playableUrls = LinkedHashSet<String>()
 		urls.forEach { url ->
-			if (url.contains("/master.m3u8")) {
+			if (url.isMasterPlaylist()) {
 				playableUrls.addAll(expandMasterPlaylist(url))
 			} else {
 				playableUrls.add(url)
@@ -326,7 +339,19 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 	}.distinctBy { it.id }
 
 	private fun String.isVideoContentPath(): Boolean {
-		return startsWith("/gif/") || startsWith("/hanime/")
+		return startsWith("/gif/") || startsWith("/hanime/") || startsWith("/asmr/")
+	}
+
+	private fun String.isMasterPlaylist(): Boolean {
+		val path = runCatching { URI(this).rawPath }.getOrNull() ?: return false
+		return path.endsWith("/master.m3u8") || path.endsWith("/index.m3u8")
+	}
+
+	private fun String.isSignedMasterPlaylist(): Boolean {
+		val uri = runCatching { URI(this) }.getOrNull() ?: return false
+		val query = uri.rawQuery ?: return false
+		return (uri.rawPath.endsWith("/master.m3u8") || uri.rawPath.endsWith("/index.m3u8")) &&
+			query.split('&').any { it.substringBefore('=') == "m" }
 	}
 
 	private suspend fun expandMasterPlaylist(masterUrl: String): List<String> {
