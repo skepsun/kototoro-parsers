@@ -257,7 +257,7 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 			tags = if (tags.isNotEmpty()) tags else manga.tags,
 			contentRating = ContentRating.ADULT,
 			chapters = listOf(ContentChapter(
-				id = generateUid(manga.url),
+				id = generateUid("${manga.url}#video-v2"),
 				title = "播放",
 				number = 1f,
 				volume = 0,
@@ -344,13 +344,13 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 
 	private fun String.isMasterPlaylist(): Boolean {
 		val path = runCatching { URI(this).rawPath }.getOrNull() ?: return false
-		return path.endsWith("/master.m3u8") || path.endsWith("/index.m3u8")
+		return path.endsWith("/master.m3u8") || path.endsWith("_master.m3u8") || path.endsWith("/index.m3u8")
 	}
 
 	private fun String.isSignedMasterPlaylist(): Boolean {
 		val uri = runCatching { URI(this) }.getOrNull() ?: return false
 		val query = uri.rawQuery ?: return false
-		return (uri.rawPath.endsWith("/master.m3u8") || uri.rawPath.endsWith("/index.m3u8")) &&
+		return (uri.rawPath.endsWith("/master.m3u8") || uri.rawPath.endsWith("_master.m3u8") || uri.rawPath.endsWith("/index.m3u8")) &&
 			query.split('&').any { it.substringBefore('=') == "m" }
 	}
 
