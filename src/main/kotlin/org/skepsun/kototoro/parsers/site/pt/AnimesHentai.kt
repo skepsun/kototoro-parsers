@@ -176,17 +176,15 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 		val token = BLOGGER_TOKEN_REGEX.find(iframeUrl)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
 			?: return emptyList()
 		val html = doc.outerHtml()
-		val sid = BLOGGER_SID_REGEX.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
-			?: return emptyList()
 		val buildLabel = BLOGGER_BUILD_REGEX.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
 			?: return emptyList()
 		val endpoint = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute" +
-			"?rpcids=WcwnYd&source-path=%2Fvideo.g&f.sid=${sid.urlEncoded()}&bl=${buildLabel.urlEncoded()}&hl=en-US&_reqid=82895&rt=c"
+			"?rpcids=WcwnYd&source-path=%2Fvideo.g&bl=${buildLabel.urlEncoded()}&hl=en-US&_reqid=82895&rt=c"
 		val fReq = """[[["WcwnYd","[\"$token\",null,0]",null,"generic"]]]"""
 		val headers = Headers.Builder()
 			.add("User-Agent", UserAgents.CHROME_DESKTOP)
 			.add("Origin", "https://www.blogger.com")
-			.add("Referer", iframeUrl)
+			.add("Referer", "https://www.blogger.com/")
 			.add("X-Same-Domain", "1")
 			.build()
 		val body = runCatching {
@@ -211,7 +209,6 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 	private companion object {
 		private val MEDIA_URL_REGEX = Regex("https?://[^\"'\\s<>]+\\.(?:m3u8|mp4)(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
 		private val BLOGGER_TOKEN_REGEX = Regex("[?&]token=([^&]+)")
-		private val BLOGGER_SID_REGEX = Regex(""""FdrFJe"\s*:\s*"([^"]+)"""")
 		private val BLOGGER_BUILD_REGEX = Regex(""""cfb2h"\s*:\s*"([^"]+)"""")
 		private val BLOGGER_VIDEO_URL_REGEX = Regex("https://[^\"\\s]+googlevideo\\.com/[^\"\\s]+", RegexOption.IGNORE_CASE)
 	}
