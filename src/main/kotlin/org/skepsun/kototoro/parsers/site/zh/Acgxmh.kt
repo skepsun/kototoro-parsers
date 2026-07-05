@@ -33,6 +33,47 @@ internal abstract class AcgxmhBase(
 	protected fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
 
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
+
+	protected fun pathTag(title: String, path: String): ContentTag = ContentTag(title, "path:$path", source)
+
+	protected suspend fun loadIndexTags(title: String, path: String, limit: Int = 24): ContentTagGroup {
+		val tags = runCatching {
+			webClient.httpGet("https://$domain$path", getRequestHeaders()).parseHtml()
+				.select("dl.specials dd > a[href]")
+				.asSequence()
+				.mapNotNull { a ->
+					val name = a.selectFirst(".special-title")?.text()?.trim()
+						?: a.attr("title").takeIf { it.isNotBlank() }
+						?: a.selectFirst("img")?.attr("alt")?.takeIf { it.isNotBlank() }
+					val itemPath = a.attr("href").toSitePath()
+					if (name.isNullOrBlank() || itemPath.isNullOrBlank()) null else pathTag(name, itemPath)
+				}
+				.distinctBy { it.key }
+				.take(limit)
+				.toCollection(LinkedHashSet())
+		}.getOrDefault(linkedSetOf())
+		return ContentTagGroup(title, tags, isExclusive = true)
+	}
+
+	protected fun buildPagedPathUrl(path: String, page: Int): String {
+		val pagedPath = when {
+			page <= 1 -> path
+			path.matches(Regex("^/special/\\d+/$")) -> "$path$page"
+			path.endsWith("/") -> "${path}index-$page.html"
+			path.endsWith(".html") -> path.removeSuffix(".html") + "-$page.html"
+			else -> "$path/index-$page.html"
+		}
+		return "https://$domain$pagedPath"
+	}
+
+	protected fun String.toSitePath(): String? {
+		val absolute = toAbsoluteUrlOrNull(domain) ?: return null
+		return runCatching { URI(absolute) }.getOrNull()?.let { uri ->
+			uri.rawPath?.takeIf { it.isNotBlank() }?.let { path ->
+				if (uri.rawQuery.isNullOrBlank()) path else "$path?${uri.rawQuery}"
+			}
+		}
+	}
 }
 
 @ContentSourceParser("ACGXMH", "ACG漫画网", "zh", type = ContentType.HENTAI_MANGA)
@@ -46,11 +87,26 @@ internal class Acgxmh(context: ContentLoaderContext) :
 
 	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
 		availableContentTypes = EnumSet.of(ContentType.HENTAI_MANGA),
-		availableTags = listOf(
-			"full-color" to "全彩", "chinese" to "汉化中文", "japanese" to "日语", "english" to "英文",
-			"naruto" to "火影忍者", "original" to "原创漫画", "blue-archive" to "蓝色档案",
-			"zenless-zone-zero" to "绝区零", "honkai_to_-star-rail" to "崩坏星穹铁道",
-		).mapTo(LinkedHashSet()) { ContentTag(it.second, it.first, source) },
+		tagGroups = listOf(
+			ContentTagGroup(
+				"栏目",
+				linkedSetOf(
+					pathTag("漫画", "/h/"),
+					pathTag("图集", "/hentai/"),
+					pathTag("全彩", "/tags/full-color.html"),
+					pathTag("网漫", "/webtoon/"),
+					pathTag("西漫", "/western/"),
+				),
+				isExclusive = true,
+			),
+			loadIndexTags("专题", "/special/"),
+			loadIndexTags("戏仿", "/anime/"),
+			loadIndexTags("角色", "/characters/"),
+			loadIndexTags("主题标签", "/tags/"),
+			loadIndexTags("作品艺术家", "/artist/"),
+			loadIndexTags("组织主题", "/circle/"),
+			loadIndexTags("Coser", "/coser/"),
+		),
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
@@ -109,21 +165,20 @@ internal class Acgxmh(context: ContentLoaderContext) :
 			return "https://$domain/?q=${it.urlEncoded()}" + if (page > 1) "&page=$page" else ""
 		}
 		filter.tags.firstOrNull()?.let {
-			return when (it.key) {
-				"chinese", "japanese", "english" -> "https://$domain/language/${it.key}.html"
-				"full-color" -> "https://$domain/tags/full-color.html"
-				else -> "https://$domain/anime/${it.key}.html"
+			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
+				return buildPagedPathUrl(path, page)
 			}
 		}
 		return when (order) {
 			SortOrder.POPULARITY -> "https://$domain/hot/" + if (page > 1) "index-$page.html" else ""
-			else -> if (page <= 1) "https://$domain/" else "https://$domain/index-$page.html"
+			else -> buildPagedPathUrl("/h/", page)
 		}
 	}
 
 	private fun parseList(doc: Document): List<Content> = doc.select("#list li").mapNotNull { item ->
 		val a = item.selectFirst("a.thumb[href], a.title[href]") ?: return@mapNotNull null
 		val href = a.attr("href").toAbsoluteUrl(domain)
+		if (!href.removePrefix("https://$domain").isImageContentPath()) return@mapNotNull null
 		val img = item.selectFirst("img")
 		val title = item.selectFirst("a.title")?.text()?.trim()
 			?: img?.attr("alt")?.takeIf { it.isNotBlank() }
@@ -133,6 +188,10 @@ internal class Acgxmh(context: ContentLoaderContext) :
 			if (text.isNotBlank()) ContentTag(text, text, source) else null
 		}
 		Content(generateUid(href), title, emptySet(), href.removePrefix("https://$domain"), href, RATING_UNKNOWN, ContentRating.ADULT, img?.let { imageUrl(it.attr("src")) }, tags, null, emptySet(), source = source)
+	}.distinctBy { it.id }
+
+	private fun String.isImageContentPath(): Boolean {
+		return startsWith("/h/") || startsWith("/hentai/") || startsWith("/webtoon/") || startsWith("/western/")
 	}
 }
 
@@ -147,9 +206,20 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 
 	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
 		availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
-		availableTags = linkedSetOf(
-			ContentTag("H动画", "gif", source),
-			ContentTag("里番剧", "hanime", source),
+		tagGroups = listOf(
+			ContentTagGroup(
+				"栏目",
+				linkedSetOf(
+					pathTag("H动画", "/gif/"),
+					pathTag("里番剧", "/hanime/"),
+				),
+				isExclusive = true,
+			),
+			loadIndexTags("主播", "/cv/"),
+			loadIndexTags("戏仿", "/anime/", limit = 12),
+			loadIndexTags("角色", "/characters/", limit = 12),
+			loadIndexTags("主题标签", "/tags/", limit = 12),
+			loadIndexTags("作品艺术家", "/artist/", limit = 12),
 		),
 	)
 
@@ -218,18 +288,18 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		filter.query?.takeIf { it.isNotBlank() }?.let {
 			return "https://$domain/?q=${it.urlEncoded()}" + if (page > 1) "&page=$page" else ""
 		}
-		val section = filter.tags.firstOrNull()?.key?.takeIf { it == "gif" || it == "hanime" }
-			?: if (order == SortOrder.POPULARITY) "hanime" else "gif"
-		return if (page <= 1) {
-			"https://$domain/$section/"
-		} else {
-			"https://$domain/$section/index-$page.html"
+		filter.tags.firstOrNull()?.let {
+			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
+				return buildPagedPathUrl(path, page)
+			}
 		}
+		return buildPagedPathUrl(if (order == SortOrder.POPULARITY) "/hanime/" else "/gif/", page)
 	}
 
-	private fun parseList(doc: Document): List<Content> = doc.select(".grid-item").mapNotNull { item ->
-		val a = item.selectFirst("a[href*=/gif/], a[href*=/hanime/]") ?: return@mapNotNull null
+	private fun parseList(doc: Document): List<Content> = (doc.select(".grid-item") + doc.select("#list li")).mapNotNull { item ->
+		val a = item.selectFirst("a.thumb[href], a[href*=/gif/], a[href*=/hanime/]") ?: return@mapNotNull null
 		val href = a.attr("href").toAbsoluteUrl(domain)
+		if (!href.removePrefix("https://$domain").isVideoContentPath()) return@mapNotNull null
 		val img = item.selectFirst("img")
 		val title = item.selectFirst(".title a")?.text()?.trim()
 			?: a.attr("title").takeIf { it.isNotBlank() }
@@ -254,6 +324,10 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 			source = source,
 		)
 	}.distinctBy { it.id }
+
+	private fun String.isVideoContentPath(): Boolean {
+		return startsWith("/gif/") || startsWith("/hanime/")
+	}
 
 	private suspend fun expandMasterPlaylist(masterUrl: String): List<String> {
 		val masterUri = URI(masterUrl)

@@ -2,13 +2,17 @@ package org.skepsun.kototoro.parsers.site.pt
 
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.network.GZipOptions
 import org.skepsun.kototoro.parsers.network.UserAgents
+import org.skepsun.kototoro.parsers.util.await
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseRaw
@@ -34,23 +38,21 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 		.add("Cookie", "ageVerified=true")
 		.build()
 
-	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
-		availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
-		availableTags = listOf(
-			"romance",
-			"masturbacao",
-			"peitoes",
-			"anal",
-			"ahegao",
-			"boquete",
-			"creampie",
-			"futanari",
-			"milf",
-			"tentaculos",
-		).mapTo(LinkedHashSet()) {
-			ContentTag(it.replace('-', ' ').replaceFirstChar(Char::titlecase), it, source)
-		},
-	)
+	override suspend fun getFilterOptions(): ContentListFilterOptions {
+		val genreTags = runCatching { fetchGenreTags() }.getOrElse { fallbackGenreTags() }
+		val yearTags = runCatching { fetchYearTags() }.getOrElse { fallbackYearTags() }
+		val letterTags = ('a'..'z').mapTo(LinkedHashSet()) {
+			ContentTag(it.uppercase(), "letter:$it", source)
+		}
+		return ContentListFilterOptions(
+			availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
+			tagGroups = listOf(
+				ContentTagGroup("Gêneros", genreTags, isExclusive = true),
+				ContentTagGroup("Ano", yearTags, isExclusive = true),
+				ContentTagGroup("Inicial", letterTags, isExclusive = true),
+			),
+		)
+	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
 		return parseList(webClient.httpGet(buildListUrl(page, order, filter), getRequestHeaders()).parseHtml())
@@ -137,13 +139,64 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 			return "https://$domain/?s=${it.urlEncoded()}" + if (page > 1) "&page=$page" else ""
 		}
 		filter.tags.firstOrNull()?.let {
-			return "https://$domain/genero/${it.key}/" + if (page > 1) "page/$page/" else ""
+			val path = when {
+				it.key.startsWith("year:") -> "ano/${it.key.substringAfter(':')}"
+				it.key.startsWith("letter:") -> "genero/${it.key.substringAfter(':')}"
+				it.key.startsWith("genre:") -> "genero/${it.key.substringAfter(':')}"
+				else -> "genero/${it.key}"
+			}
+			return "https://$domain/$path/" + if (page > 1) "page/$page/" else ""
 		}
 		return when (order) {
 			SortOrder.POPULARITY -> "https://$domain/mais-assistidos/" + if (page > 1) "page/$page/" else ""
 			SortOrder.ALPHABETICAL -> "https://$domain/hentai/" + if (page > 1) "page/$page/" else ""
 			else -> "https://$domain/episodio/" + if (page > 1) "page/$page/" else ""
 		}
+	}
+
+	private suspend fun fetchGenreTags(): Set<ContentTag> {
+		val doc = webClient.httpGet("https://$domain/generos/", getRequestHeaders()).parseHtml()
+		return doc.select(".wp-content a[href*=/genero/]").mapNotNullTo(LinkedHashSet()) { link ->
+			val key = link.attr("href").substringAfter("/genero/", "").trim('/')
+			val title = link.text().trim()
+			if (key.isBlank() || title.isBlank()) null else ContentTag(title, "genre:$key", source)
+		}
+	}
+
+	private suspend fun fetchYearTags(): Set<ContentTag> {
+		val doc = webClient.httpGet("https://$domain/generos/", getRequestHeaders()).parseHtml()
+		return doc.select(".releases a[href*=/ano/]").mapNotNullTo(LinkedHashSet()) { link ->
+			val year = link.attr("href").substringAfter("/ano/", "").trim('/')
+			if (year.matches(YEAR_REGEX)) ContentTag(year, "year:$year", source) else null
+		}
+	}
+
+	private fun fallbackGenreTags(): Set<ContentTag> = listOf(
+		"3d" to "3D",
+		"sem-censura" to "Sem Censura",
+		"aventura" to "Aventura",
+		"comedia" to "Comédia",
+		"empregada" to "Empregada",
+		"enfermeira" to "Enfermeira",
+		"fantasia" to "Fantasia",
+		"futanari" to "Futanari",
+		"harem" to "Harem",
+		"incesto" to "Incesto",
+		"lolicon" to "Lolicon",
+		"peitoes" to "Peitoes",
+		"professora" to "Professora",
+		"punicao" to "Punicao",
+		"romance" to "Romance",
+		"shotacon" to "Shotacon",
+		"tentaculos" to "Tentaculos",
+		"vida-escolar" to "Vida Escolar",
+		"yaoi" to "Yaoi",
+		"yuri" to "Yuri",
+	).mapTo(LinkedHashSet()) { (key, title) -> ContentTag(title, "genre:$key", source) }
+
+	private fun fallbackYearTags(): Set<ContentTag> = (2026 downTo 2017).mapTo(LinkedHashSet()) {
+		val year = it.toString()
+		ContentTag(year, "year:$year", source)
 	}
 
 	private fun parseList(doc: Document): List<Content> {
@@ -178,23 +231,44 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 		val html = doc.outerHtml()
 		val buildLabel = BLOGGER_BUILD_REGEX.find(html)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
 			?: return emptyList()
-		val endpoint = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute" +
-			"?rpcids=WcwnYd&source-path=%2Fvideo.g&bl=${buildLabel.urlEncoded()}&hl=en-US&_reqid=82895&rt=c"
 		val fReq = """[[["WcwnYd","[\"$token\",null,0]",null,"generic"]]]"""
 		val headers = Headers.Builder()
 			.add("User-Agent", UserAgents.CHROME_DESKTOP)
+			.add("Accept", "*/*")
+			.add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 			.add("Origin", "https://www.blogger.com")
 			.add("Referer", "https://www.blogger.com/")
 			.add("X-Same-Domain", "1")
 			.build()
-		val body = runCatching {
-			webClient.httpPost(endpoint.toHttpUrl(), "f.req=${fReq.urlEncoded()}", headers).parseRaw()
-		}.getOrNull() ?: return emptyList()
-		return BLOGGER_VIDEO_URL_REGEX.findAll(body).mapTo(LinkedHashSet()) {
-			decodeBloggerUrl(it.value)
-		}.sortedByDescending { url ->
-			url.substringAfter("itag=", "0").substringBefore('&').toIntOrNull() ?: 0
+		val sidParams = listOf(null, "0")
+		val languages = listOf("zh-CN", "en-US")
+		for (sid in sidParams) {
+			for (language in languages) {
+				val sidQuery = sid?.let { "&f.sid=${it.urlEncoded()}" }.orEmpty()
+				val endpoint = "https://www.blogger.com/_/BloggerVideoPlayerUi/data/batchexecute" +
+					"?rpcids=WcwnYd&source-path=%2Fvideo.g$sidQuery&bl=${buildLabel.urlEncoded()}&hl=${language.urlEncoded()}&_reqid=82895&rt=c"
+				val body = runCatching {
+					postBloggerRpc(endpoint, "f.req=${fReq.urlEncoded()}", headers)
+				}.getOrNull() ?: continue
+				val urls = BLOGGER_VIDEO_URL_REGEX.findAll(body).mapTo(LinkedHashSet()) {
+					decodeBloggerUrl(it.value)
+				}.sortedByDescending { url ->
+					url.substringAfter("itag=", "0").substringBefore('&').toIntOrNull() ?: 0
+				}
+				if (urls.isNotEmpty()) return urls
+			}
 		}
+		return emptyList()
+	}
+
+	private suspend fun postBloggerRpc(url: String, payload: String, headers: Headers): String {
+		val request = Request.Builder()
+			.url(url.toHttpUrl())
+			.headers(headers)
+			.post(payload.toRequestBody(null))
+			.tag(GZipOptions::class.java, GZipOptions(skip = true))
+			.build()
+		return context.httpClient.newCall(request).await().parseRaw()
 	}
 
 	private fun decodeBloggerUrl(value: String): String = value
@@ -211,5 +285,6 @@ internal class AnimesHentai(context: ContentLoaderContext) :
 		private val BLOGGER_TOKEN_REGEX = Regex("[?&]token=([^&]+)")
 		private val BLOGGER_BUILD_REGEX = Regex(""""cfb2h"\s*:\s*"([^"]+)"""")
 		private val BLOGGER_VIDEO_URL_REGEX = Regex("https://[^\"\\s]+googlevideo\\.com/[^\"\\s]+", RegexOption.IGNORE_CASE)
+		private val YEAR_REGEX = Regex("""\d{4}""")
 	}
 }

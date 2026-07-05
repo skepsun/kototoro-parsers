@@ -119,15 +119,22 @@ internal abstract class Porn3dxBase(
 	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val html = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).body.string()
 		val urls = LinkedHashSet<String>()
-		Regex("&quot;url_complete&quot;:&quot;([^&]*)&quot;").findAll(html).forEach {
-			it.groupValues[1].html().takeIf { url -> url.startsWith("http") }?.let(urls::add)
-		}
-		Regex("&quot;bunny_guid&quot;:&quot;([^&]+)&quot;").findAll(html).forEach {
-			val guid = it.groupValues[1].html()
-			urls.add("https://iframe.mediadelivery.net/play/21030/$guid")
-			urls.add("https://vz-c0fe498e-5ab.b-cdn.net/$guid/playlist.m3u8")
+		if (mediaType == "video") {
+			extractBunnyGuids(html).forEach { guid ->
+				urls.add("https://vz-c0fe498e-5ab.b-cdn.net/$guid/playlist.m3u8")
+			}
+		} else {
+			Regex("&quot;url_complete&quot;:&quot;([^&]*)&quot;").findAll(html).forEach {
+				it.groupValues[1].html().takeIf { url -> url.startsWith("http") }?.let(urls::add)
+			}
 		}
 		return urls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
+	}
+
+	private fun extractBunnyGuids(html: String): Set<String> {
+		return Regex("""(?:&quot;|")bunny_guid(?:&quot;|")\s*:\s*(?:&quot;|")([^"&]+)(?:&quot;|")""")
+			.findAll(html)
+			.mapTo(LinkedHashSet()) { it.groupValues[1].html() }
 	}
 
 	private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
