@@ -93,15 +93,9 @@ internal class Pinse91(
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
         
         val mangaMap = LinkedHashMap<String, Content>()
-        val durationRegex = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
-
-        fun isVideoPath(href: String): Boolean {
-            val idPath = href.substringAfter("/v/", "").substringBefore("/").substringBefore("?").trim()
-            return idPath.isNotEmpty() && idPath.all { it.isDigit() } && href.length >= 5
-        }
 
         fun putContent(href: String, title: String, coverUrl: String?) {
-            val finalTitle = title.trim().takeIf { it.isNotBlank() && !durationRegex.matches(it) } ?: return
+            val finalTitle = title.cleanTitle().takeIf { it.isNotBlank() && !DURATION_REGEX.matches(it) } ?: return
             mangaMap[href] = Content(
                 id = generateUid(href),
                 url = href,
@@ -121,21 +115,8 @@ internal class Pinse91(
         }
 
         doc.select(".video-grid article.video-card").forEach { card ->
-            val titleEl = card.selectFirst("a.video-card-title[href*='/v/']") ?: return@forEach
-            val href = titleEl.attrAsRelativeUrl("href")
-            if (!isVideoPath(href)) return@forEach
-
-            val title = titleEl.attr("title").takeIf { it.isNotBlank() }
-                ?: titleEl.text().takeIf { it.isNotBlank() }
-                ?: card.selectFirst("a[aria-label][href*='/v/']")?.attr("aria-label")?.takeIf { it.isNotBlank() }
-                ?: return@forEach
-
-            val img = card.selectFirst("img")
-            val coverUrl = img?.attrAsAbsoluteUrlOrNull("data-src")
-                ?: img?.attrAsAbsoluteUrlOrNull("src")
-                ?: img?.attrAsAbsoluteUrlOrNull("data-original")
-
-            putContent(href, title, coverUrl)
+            val content = parseVideoCard(card) ?: return@forEach
+            putContent(content.url, content.title, content.coverUrl)
         }
 
         if (mangaMap.isNotEmpty()) {
@@ -150,10 +131,10 @@ internal class Pinse91(
             if (!isVideoPath(href)) continue
             if (href.contains("/author/") || href.contains("/search")) continue
             
-            val text = el.text().trim()
+            val text = el.text().cleanTitle()
             if (text == "更多" || text.contains("热门") || text.contains("榜单") || text.contains("最新")) continue
 
-            val isDuration = durationRegex.matches(text)
+            val isDuration = DURATION_REGEX.matches(text)
             val container = el.parent() ?: el
             
             val existing = mangaMap[href]
@@ -162,13 +143,13 @@ internal class Pinse91(
             }
 
             val title = if (!isDuration && text.isNotBlank()) text else {
-                el.attr("title").takeIf { it.isNotBlank() }
-                    ?: container.selectFirst(".title, h3, h4, .video-title, .link")?.text()?.takeIf { it.isNotBlank() }
-                    ?: container.parent()?.selectFirst(".title, h3, h4, .video-title, .link")?.text()?.takeIf { it.isNotBlank() }
+                el.attr("title").cleanTitle().takeIf { it.isNotBlank() }
+                    ?: container.selectFirst(".title, h3, h4, .video-title, .link")?.text()?.cleanTitle()?.takeIf { it.isNotBlank() }
+                    ?: container.parent()?.selectFirst(".title, h3, h4, .video-title, .link")?.text()?.cleanTitle()?.takeIf { it.isNotBlank() }
                     ?: if (isDuration) null else text
             }
             
-            val finalTitle = title?.trim()?.takeIf { !durationRegex.matches(it) } ?: existing?.title
+            val finalTitle = title?.cleanTitle()?.takeIf { !DURATION_REGEX.matches(it) } ?: existing?.title
             if (finalTitle.isNullOrBlank()) continue
 
             val img = el.selectFirst("img") ?: container.selectFirst("img") ?: container.parent()?.selectFirst("img")
@@ -181,6 +162,64 @@ internal class Pinse91(
         }
 
         return mangaMap.values.toList()
+    }
+
+    override suspend fun getRelatedContent(seed: Content): List<Content> {
+        val url = seed.publicUrl.ifBlank { seed.url.toAbsoluteUrl(domain) }
+        val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+        val similarSection = doc.select("section").firstOrNull {
+            it.selectFirst(".watch-section-title")?.text()?.trim() == "相似视频"
+        } ?: return emptyList()
+        return similarSection.select("article.video-card")
+            .mapNotNull(::parseVideoCard)
+            .filter { it.id != seed.id && it.url != seed.url }
+            .distinctBy { it.id }
+    }
+
+    private fun parseVideoCard(card: org.jsoup.nodes.Element): Content? {
+        val titleEl = card.selectFirst("a.video-card-title[href*='/v/']") ?: return null
+        val href = titleEl.attrAsRelativeUrl("href")
+        if (!isVideoPath(href)) return null
+
+        val title = titleEl.attr("title").cleanTitle().takeIf { it.isNotBlank() }
+            ?: titleEl.text().cleanTitle().takeIf { it.isNotBlank() }
+            ?: card.selectFirst("a[aria-label][href*='/v/']")?.attr("aria-label")?.cleanTitle()?.takeIf { it.isNotBlank() }
+            ?: return null
+        if (DURATION_REGEX.matches(title)) return null
+
+        val img = card.selectFirst("img")
+        val coverUrl = img?.attrAsAbsoluteUrlOrNull("data-src")
+            ?: img?.attrAsAbsoluteUrlOrNull("src")
+            ?: img?.attrAsAbsoluteUrlOrNull("data-original")
+
+        return Content(
+            id = generateUid(href),
+            url = href,
+            publicUrl = href.toAbsoluteUrl(domain),
+            title = title,
+            altTitles = emptySet(),
+            coverUrl = coverUrl,
+            largeCoverUrl = coverUrl,
+            authors = emptySet(),
+            tags = emptySet(),
+            state = null,
+            description = null,
+            contentRating = ContentRating.ADULT,
+            source = source,
+            rating = RATING_UNKNOWN,
+        )
+    }
+
+    private fun isVideoPath(href: String): Boolean {
+        val idPath = href.substringAfter("/v/", "").substringBefore("/").substringBefore("?").trim()
+        return idPath.isNotEmpty() && idPath.all { it.isDigit() } && href.length >= 5
+    }
+
+    private fun String.cleanTitle(): String {
+        return replace(Regex("""</?mark>""", RegexOption.IGNORE_CASE), "")
+            .replace("&lt;mark&gt;", "", ignoreCase = true)
+            .replace("&lt;/mark&gt;", "", ignoreCase = true)
+            .trim()
     }
 
     private fun buildUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
@@ -438,5 +477,9 @@ internal class Pinse91(
         ) return null
 
         return candidate
+    }
+
+    private companion object {
+        private val DURATION_REGEX = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
     }
 }

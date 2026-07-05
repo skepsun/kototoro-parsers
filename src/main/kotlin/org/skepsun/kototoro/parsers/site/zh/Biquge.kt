@@ -8,7 +8,12 @@ import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.ArrayList
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.EnumSet
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * 笔趣阁 - 网络小说
@@ -18,13 +23,14 @@ import java.util.EnumSet
  * - 分类: /api/sort?sort={category}
  * - 搜索: /api/search?q={keyword}
  * - 详情: /api/book?id={id}
- * - 章节: /api/chapter?id={bookId}&chapterid={chapterId}
+ * - 目录: /api/booklist?id={dirId}
+ * - 章节: /api/chapter?token={encryptedParams}
  */
 @ContentSourceParser("BIQUGE", "笔趣阁", "zh", type = ContentType.NOVEL)
 internal class Biquge(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.BIQUGE, pageSize = 150) {
 
-    override val configKeyDomain = ConfigKey.Domain("www.fab00db.icu")
+    override val configKeyDomain = ConfigKey.Domain("www.bqg301.cc")
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
@@ -113,7 +119,7 @@ internal class Biquge(context: ContentLoaderContext) :
         val bookId = parts[2]
         val chapterId = parts[3]
         
-        val apiUrl = "https://$domain/api/chapter?id=$bookId&chapterid=$chapterId"
+        val apiUrl = buildEncryptedApiUrl("chapter", """{"id":$bookId,"chapterid":$chapterId}""")
         
         return try {
             val json = webClient.httpGet(apiUrl).parseJson()
@@ -189,13 +195,12 @@ internal class Biquge(context: ContentLoaderContext) :
     /**
      * 解析小说详情
      */
-    private fun parseNovelDetail(manga: Content, json: JSONObject): Content {
+    private suspend fun parseNovelDetail(manga: Content, json: JSONObject): Content {
         val title = json.optString("title", manga.title)
         val author = json.optString("author", "")
         val intro = json.optString("intro", "")
         val sortname = json.optString("sortname", "")
         val full = json.optString("full", "")
-        val lastChapterId = json.optInt("lastchapterid", 0)
         
         // 状态
         val state = when {
@@ -211,28 +216,10 @@ internal class Biquge(context: ContentLoaderContext) :
             emptySet()
         }
         
-        // 生成章节列表
-        // 注意：API不直接返回章节列表，需要根据lastchapterid推断
-        val chapters = ArrayList<ContentChapter>()
-        if (lastChapterId > 0) {
-            for (i in 1..lastChapterId) {
-                chapters += ContentChapter(
-                    id = generateUid("/book/${json.optString("id")}/$i"),
-                    title = "第${i}章",
-                    number = i.toFloat(),
-                    volume = 0,
-                    url = "/book/${json.optString("id")}/$i",
-                    scanlator = null,
-                    uploadDate = 0,
-                    branch = null,
-                    source = source,
-                )
-            }
-        }
-        
         // 生成封面URL
         val bookId = json.optString("id", "")
         val coverUrl = if (bookId.isNotEmpty()) generateCoverUrl(bookId) else manga.coverUrl
+        val chapters = if (bookId.isNotEmpty()) loadChapters(json.optString("dirid", bookId), bookId) else emptyList()
         
         return manga.copy(
             title = title,
@@ -246,6 +233,31 @@ internal class Biquge(context: ContentLoaderContext) :
         )
     }
 
+    private suspend fun loadChapters(dirId: String, bookId: String): List<ContentChapter> {
+        val apiUrl = "https://$domain/api/booklist?id=$dirId"
+        val items = webClient.httpGet(apiUrl).parseJson().optJSONArray("list") ?: return emptyList()
+        val chapters = ArrayList<ContentChapter>(items.length())
+
+        for (i in 0 until items.length()) {
+            val chapterId = i + 1
+            val title = items.optString(i, "").ifBlank { "第${chapterId}章" }
+
+            chapters += ContentChapter(
+                id = generateUid("/book/$bookId/$chapterId"),
+                title = title,
+                number = chapterId.toFloat(),
+                volume = 0,
+                url = "/book/$bookId/$chapterId",
+                scanlator = null,
+                uploadDate = 0,
+                branch = null,
+                source = source,
+            )
+        }
+
+        return chapters
+    }
+
     /**
      * 生成封面URL
      * 格式: https://www.fab00db.icu/bookimg/{前3位数字}/{完整ID}.jpg
@@ -255,6 +267,23 @@ internal class Biquge(context: ContentLoaderContext) :
         
         val prefix = bookId.take(3)
         return "https://$domain/bookimg/$prefix/$bookId.jpg"
+    }
+
+    private fun buildEncryptedApiUrl(api: String, paramsJson: String): String {
+        val token = encryptApiParams(paramsJson).urlEncoded()
+        return "https://$domain/api/$api?token=$token"
+    }
+
+    private fun encryptApiParams(paramsJson: String): String {
+        val code = MessageDigest.getInstance("MD5")
+            .digest("book@token.html".toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val iv = code.substring(0, 16).toByteArray(Charsets.UTF_8)
+        val key = code.substring(16).toByteArray(Charsets.UTF_8)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+        return Base64.getEncoder().encodeToString(cipher.doFinal(paramsJson.toByteArray(Charsets.UTF_8)))
     }
 
     /**
