@@ -364,18 +364,37 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		}.getOrElse {
 			return listOf(masterUrl)
 		}
-		val childUrls = playlist.lineSequence()
-			.map { it.trim() }
-			.filter { it.isNotBlank() && !it.startsWith("#") }
-			.map { child -> child.toPlaylistUrl(baseUrl, masterUri) }
-			.filter { it.contains(".m3u8", ignoreCase = true) }
-			.toList()
-		if (childUrls.isEmpty()) return listOf(masterUrl)
+		val variants = ArrayList<PlaylistVariant>()
+		var streamInfo: String? = null
+		playlist.lineSequence().forEach { rawLine ->
+			val line = rawLine.trim()
+			when {
+				line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true) -> streamInfo = line
+				line.isNotBlank() && !line.startsWith("#") && line.contains(".m3u8", ignoreCase = true) -> {
+					variants += PlaylistVariant(line.toPlaylistUrl(baseUrl, masterUri), streamInfo?.extractResolutionWidth())
+					streamInfo = null
+				}
+			}
+		}
+		if (variants.isEmpty()) return listOf(masterUrl)
 		val finalQuery = "$masterQuery&from=${masterPath.urlEncoded()}"
-		return childUrls.map { child ->
+		return variants.sortedWith(compareBy<PlaylistVariant> { it.preferredOrder }.thenBy { it.width ?: Int.MAX_VALUE }).map { variant ->
+			val child = variant.url
 			val separator = if (child.contains('?')) "&" else "?"
 			if (child.contains("m=")) child else "$child$separator$finalQuery"
 		}
+	}
+
+	private val PlaylistVariant.preferredOrder: Int
+		get() = when (val value = width) {
+			null -> 1
+			in 1000..1500 -> 0
+			in 1..999 -> 1
+			else -> 2
+		}
+
+	private fun String.extractResolutionWidth(): Int? {
+		return Regex("""RESOLUTION=(\d+)x\d+""", RegexOption.IGNORE_CASE).find(this)?.groupValues?.get(1)?.toIntOrNull()
 	}
 
 	private fun String.toPlaylistUrl(baseUrl: String, masterUri: URI): String = when {
@@ -388,4 +407,6 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 	private companion object {
 		private val VIDEO_URL_REGEX = Regex("https?://[^\"'\\s<>]+\\.(?:m3u8|mp4|webm)(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
 	}
+
+	private data class PlaylistVariant(val url: String, val width: Int?)
 }
