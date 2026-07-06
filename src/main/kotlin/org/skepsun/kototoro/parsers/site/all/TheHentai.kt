@@ -1,6 +1,8 @@
 package org.skepsun.kototoro.parsers.site.all
 
 import okhttp3.Headers
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
@@ -18,6 +20,7 @@ import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.network.GZipOptions
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
@@ -39,8 +42,22 @@ internal class TheHentai(context: ContentLoaderContext) :
 
 	override fun getRequestHeaders(): Headers = Headers.Builder()
 		.add("User-Agent", UserAgents.CHROME_DESKTOP)
+		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		.add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 		.add("Referer", "https://$domain/")
 		.build()
+
+	override fun intercept(chain: Interceptor.Chain): Response {
+		val request = chain.request()
+		if (!request.url.host.endsWith(domain)) {
+			return chain.proceed(request)
+		}
+		val newRequest = request.newBuilder()
+			.removeHeader("Content-Encoding")
+			.tag(GZipOptions::class.java, GZipOptions(skip = true))
+			.build()
+		return chain.proceed(newRequest)
+	}
 
 	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
 		availableContentTypes = EnumSet.of(ContentType.HENTAI_MANGA),
@@ -79,11 +96,11 @@ internal class TheHentai(context: ContentLoaderContext) :
 			tags = if (tags.isNotEmpty()) tags else manga.tags,
 			contentRating = ContentRating.ADULT,
 			chapters = listOf(ContentChapter(
-				id = generateUid(manga.publicUrl),
+				id = generateUid(manga.url),
 				title = "Read",
 				number = 1f,
 				volume = 0,
-				url = manga.publicUrl,
+				url = manga.url,
 				scanlator = null,
 				uploadDate = 0L,
 				branch = null,
@@ -96,17 +113,17 @@ internal class TheHentai(context: ContentLoaderContext) :
 		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
 		val urls = LinkedHashSet<String>()
 		doc.select("#img_gallery_big").forEach { img ->
-			imageUrl(img.attr("data-src").ifBlank { img.attr("src") })?.let(urls::add)
+			img.imageCandidates().forEach { imageUrl(it)?.let(urls::add) }
 		}
-		doc.select(".post_imgs .thumbnails img").forEach { img ->
-			imageUrl(img.attr("data-src").ifBlank { img.attr("src") })?.toFullImageUrl()?.let(urls::add)
+		doc.select(".post_imgs img, .post_imgs a[href], .entry-content img, article img").forEach { element ->
+			element.imageCandidates().forEach { imageUrl(it)?.toFullImageUrl()?.let(urls::add) }
 		}
 		if (urls.isEmpty()) {
-			Regex("https?://[^\"'\\s<>]+\\.(?:jpe?g|png|webp)", RegexOption.IGNORE_CASE)
+			IMAGE_URL_REGEX
 				.findAll(doc.outerHtml())
-				.mapTo(urls) { it.value.toFullImageUrl() }
+				.mapTo(urls) { it.value.replace("\\/", "/").toFullImageUrl() }
 		}
-		return urls.filterNot { it.contains("icon-th") || it.contains("mascot") || it.contains("ads") }
+		return urls.filterNot { it.isIgnoredImageUrl() }
 			.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
@@ -133,16 +150,17 @@ internal class TheHentai(context: ContentLoaderContext) :
 			val a = item.selectFirst("a[href]") ?: return@mapNotNull null
 			val href = a.attr("href").toAbsoluteUrl(domain).substringBefore("?")
 			if (!href.contains(domain) || !seen.add(href)) return@mapNotNull null
+			val url = href.removePrefix("https://$domain").removePrefix("http://$domain")
 			val img = item.selectFirst("img")
 			val title = item.selectFirst("h3 a, h2 a")?.text()?.trim()
 				?: a.attr("title").takeIf { it.isNotBlank() }
 				?: img?.attr("alt")?.takeIf { it.isNotBlank() }
 				?: return@mapNotNull null
 			Content(
-				id = generateUid(href),
+				id = generateUid(url),
 				title = title,
 				altTitles = emptySet(),
-				url = href.removePrefix("https://$domain").removePrefix("http://$domain"),
+				url = url,
 				publicUrl = href,
 				rating = RATING_UNKNOWN,
 				contentRating = ContentRating.ADULT,
@@ -155,11 +173,30 @@ internal class TheHentai(context: ContentLoaderContext) :
 		}
 	}
 
-	private fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
+	private fun imageUrl(raw: String): String? = raw.replace("\\/", "/").takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
+
+	private fun org.jsoup.nodes.Element.imageCandidates(): Sequence<String> = sequence {
+		listOf("href", "data-full", "data-large_image", "data-src", "data-lazy-src", "src").forEach { attr ->
+			attr(attr).takeIf { it.isNotBlank() }?.let { yield(it) }
+		}
+		attr("srcset").splitToSequence(',')
+			.map { it.trim().substringBefore(' ') }
+			.filter { it.isNotBlank() }
+			.forEach { yield(it) }
+	}
 
 	private fun String.toFullImageUrl(): String = replace(THUMB_SIZE_REGEX, "")
 
+	private fun String.isIgnoredImageUrl(): Boolean {
+		val lower = lowercase()
+		return lower.contains("icon-th") || lower.contains("mascot") || lower.contains("/ads/")
+	}
+
 	private companion object {
+		private val IMAGE_URL_REGEX = Regex(
+			"https?:\\\\?/\\\\?/[^\"'\\s<>]+\\.(?:jpe?g|png|webp|avif)(?:\\?[^\"'\\s<>]*)?",
+			RegexOption.IGNORE_CASE,
+		)
 		private val THUMB_SIZE_REGEX = Regex("-\\d+x\\d+(?=\\.(?:jpe?g|png|webp)(?:\\.webp)?$)", RegexOption.IGNORE_CASE)
 	}
 }
