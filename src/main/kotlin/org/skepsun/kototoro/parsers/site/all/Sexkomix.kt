@@ -82,7 +82,7 @@ internal class Sexkomix(context: ContentLoaderContext) :
 		doc.select("#comix_pages_ul a.fancybox[href], #comix_pages_ul img[data-src], #comix_pages_ul img[src]").forEach {
 			imageUrl(it.attr("href").ifBlank { it.attr("data-src").ifBlank { it.attr("src") } })?.let(urls::add)
 		}
-		return urls.mapIndexed { index, url -> ContentPage(id = generateUid("#"), url = url, preview = null, source = source) }
+		return urls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
