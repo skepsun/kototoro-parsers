@@ -82,6 +82,8 @@ internal class JmParser(
         "禁漫漢化組" to "禁漫漢化組",
     )
 
+    private val weeklyTag = "每週必看" to ""
+
     private val groupedSearchTags: List<Pair<String, List<String>>> = listOf(
         "主題A漫" to listOf(
             "無修正", "劇情向", "青年漫", "校服", "純愛", "人妻", "教師", "百合", "Yaoi", "性轉", "NTR",
@@ -153,6 +155,7 @@ internal class JmParser(
     )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val weeklyTagObjs = buildWeeklyTags()
         val categoryTagObjs = categoryTags.map { (title, param) ->
             ContentTag(title = title, key = "c:$param", source = source)
         }.toSet()
@@ -164,8 +167,9 @@ internal class JmParser(
             ContentTagGroup(groupName, tagObjs)
         }
         val allSearchTags = searchGroups.flatMap { it.tags }.toSet()
-        val allTags = (categoryTagObjs + allSearchTags).toSet()
+        val allTags = (weeklyTagObjs + categoryTagObjs + allSearchTags).toSet()
         val tagGroups = buildList {
+            add(ContentTagGroup(weeklyTag.first, weeklyTagObjs))
             add(ContentTagGroup("分類", categoryTagObjs))
             addAll(searchGroups)
         }
@@ -198,17 +202,39 @@ internal class JmParser(
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         ensureDomains()
         val sort = sortParam(order)
+        val weeklyTag = filter.tags.firstOrNull { it.key.startsWith("w:") }
         val categoryTag = filter.tags.firstOrNull { it.key.startsWith("c:") }
         // 其余标签（含无前缀的详情页标签）都作为搜索关键字
-        val searchTags = filter.tags.filterNot { it.key.startsWith("c:") }
+        val searchTags = filter.tags.filterNot { it.key.startsWith("c:") || it.key.startsWith("w:") }
 
         // jm.js 里分类标签走 categories/filter，不与搜索组合
         val keyword = buildKeyword(filter.query, searchTags)
         return when {
             !keyword.isNullOrBlank() -> search(keyword, page, sort)
+            weeklyTag != null -> weekList(weeklyTag.key.removePrefix("w:"), order, page)
             categoryTag != null -> categoryList(sort, page, categoryTag.key.removePrefix("c:"))
             else -> promote(sort, page)
         }
+    }
+
+    private suspend fun buildWeeklyTags(): Set<ContentTag> {
+        val tags = linkedSetOf(ContentTag(weeklyTag.first, "w:${weeklyTag.second}", source))
+        runCatching {
+            ensureDomains()
+            val json = JSONObject(apiGet("/week"))
+            val categories = json.optJSONArray("categories") ?: return@runCatching
+            for (i in 0 until categories.length()) {
+                val obj = categories.optJSONObject(i) ?: continue
+                val id = obj.optString("id")
+                val time = obj.optString("time")
+                if (id.isNotBlank() && time.isNotBlank()) {
+                    tags += ContentTag(time, "w:$id", source)
+                }
+            }
+        }.onFailure {
+            println("JmParser: weekly tags load failed: ${it.message}")
+        }
+        return tags
     }
 
     private suspend fun promote(sort: String, page: Int): List<Content> {
@@ -293,6 +319,26 @@ internal class JmParser(
             parseComic(obj)?.let { result.add(it) }
         }
         return result
+    }
+
+    private suspend fun weekList(weekId: String, order: SortOrder, page: Int): List<Content> {
+        val id = weekId.ifBlank { latestWeekId() }
+        val type = if (order == SortOrder.POPULARITY) 1 else 0
+        val jsonText = apiGet("/week/filter?id=${id.urlEncoded()}&type=$type&page=${page - 1}")
+        val json = JSONObject(jsonText)
+        val list = json.optJSONArray("list") ?: return emptyList()
+        val result = ArrayList<Content>(list.length())
+        for (i in 0 until list.length()) {
+            val obj = list.optJSONObject(i) ?: continue
+            parseComic(obj)?.let { result.add(it) }
+        }
+        return result
+    }
+
+    private suspend fun latestWeekId(): String {
+        val json = JSONObject(apiGet("/week"))
+        val categories = json.optJSONArray("categories")
+        return categories?.optJSONObject(0)?.optString("id")?.takeIf { it.isNotBlank() } ?: "0"
     }
 
     private fun parseComic(obj: JSONObject): Content? {
