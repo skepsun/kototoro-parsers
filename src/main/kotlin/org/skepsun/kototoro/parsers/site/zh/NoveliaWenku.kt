@@ -34,8 +34,8 @@ import java.util.EnumSet
  * 注意：
  * - 所有API调用都需要有效的登录会话
  * - 下载URL已实现，但需要用户先在WebView中登录
- * - 支持中日对照和纯中文两种模式
- * - 默认使用Sakura翻译
+ * - 支持中文、中日对照和日中对照三种下载语种
+ * - 支持优先/并列翻译模式和可排序翻译来源
  */
 @ContentSourceParser("NOVELIA_WENKU", "轻小说机翻(文库)", "zh", type = ContentType.HENTAI_NOVEL)
 internal class NoveliaWenku(context: ContentLoaderContext) :
@@ -44,12 +44,41 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
     ContentParserCredentialsAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("n.novelia.cc")
+
+    private val epubLanguageKey = ConfigKey.PreferredLanguage(
+        title = "下载EPUB语种",
+        presetValues = linkedMapOf(
+            EPUB_LANGUAGE_ZH to "中文",
+            EPUB_LANGUAGE_ZH_JP to "中日",
+            EPUB_LANGUAGE_JP_ZH to "日中",
+        ),
+        defaultValue = EPUB_LANGUAGE_ZH,
+    )
+
+    private val epubParallelTranslationsKey = ConfigKey.Toggle(
+        key = "epub_parallel_translations",
+        title = "下载EPUB并列翻译模式",
+        defaultValue = false,
+    )
+
+    private val epubTranslationsKey = ConfigKey.Text(
+        key = "epub_translations",
+        title = "下载EPUB翻译来源顺序（sakura>gpt>有道）",
+        defaultValue = DEFAULT_EPUB_TRANSLATIONS,
+    )
     
     // 登录域名（独立的认证服务器）
     private val authDomain = "auth.novelia.cc"
     
     // 内存中的JWT token
     private var authTokenMemory: String? = null
+
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(epubLanguageKey)
+        keys.add(epubParallelTranslationsKey)
+        keys.add(epubTranslationsKey)
+    }
 
     override fun getRequestHeaders(): Headers {
         val builder = super.getRequestHeaders().newBuilder()
@@ -378,9 +407,6 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
                 val volumeId = volumesZh.optString(i, "")
                 if (volumeId.isEmpty()) continue
                 
-                // 构建下载URL（纯中文版本）
-                val epubDownloadUrl = buildEpubDownloadUrl(novelId, volumeId, true)
-                
                 // 调试日志
                 println("NoveliaWenku: Building chapter URL (ZH) - novelId=$novelId, volumeId=$volumeId")
                 
@@ -423,9 +449,6 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
                 } else {
                     "$volumeId (日文原文) [EPUB]"
                 }
-                
-                // 构建下载URL（中日对照版本）
-                val epubDownloadUrl = buildEpubDownloadUrl(novelId, volumeId, false)
                 
                 // 调试日志
                 println("NoveliaWenku: Building chapter URL - novelId=$novelId, volumeId=$volumeId")
@@ -479,7 +502,7 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
      * 参数说明：
      * - mode: 语言模式 (jp/zh/zh-jp/jp-zh)
      * - translationsMode: 翻译模式 (priority/parallel)
-     * - translations: 翻译源 (sakura/gpt/youdao/baidu)
+     * - translations: 翻译源 (sakura/gpt/youdao)
      * - filename: 生成的文件名
      * 
      * 注意：需要登录认证才能下载
@@ -525,15 +548,13 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
         
         val novelId = parts[1]
         val volumeIdEncoded = parts[2]
-        val isZh = parts.size > 3 && parts[3] == "zh"
-        
         // URL解码volumeId（因为在构建章节URL时进行了编码）
         val volumeId = volumeIdEncoded.urlDecode()
         
         println("NoveliaWenku.getPages: volumeIdEncoded=$volumeIdEncoded, volumeId=$volumeId")
         
         // 构建EPUB下载URL
-        val epubUrl = buildEpubDownloadUrl(novelId, volumeId, isZh)
+        val epubUrl = buildEpubDownloadUrl(novelId, volumeId)
         
         println("NoveliaWenku.getPages: Returning EPUB page for download")
         
@@ -564,7 +585,7 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
      * 
      * 重要：volumeId必须包含.epub后缀，否则API会返回400/500错误
      */
-    private fun buildEpubDownloadUrl(novelId: String, volumeId: String, isZh: Boolean): String {
+    private fun buildEpubDownloadUrl(novelId: String, volumeId: String): String {
         // 确保volumeId包含.epub后缀
         val volumeIdWithEpub = if (volumeId.endsWith(".epub", ignoreCase = true)) {
             volumeId
@@ -572,22 +593,16 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
             "$volumeId.epub"
         }
         
-        // 根据是否是中文版本选择不同的参数
-        val mode = "zh" // 强制使用中文
-        val translationsMode = "priority"  // 优先模式
-        val translations = "sakura"  // 默认使用Sakura翻译
+        val mode = config[epubLanguageKey].takeIf { it in EPUB_LANGUAGE_VALUES } ?: EPUB_LANGUAGE_ZH
+        val translationsMode = if (config[epubParallelTranslationsKey]) "parallel" else "priority"
+        val translations = parseEpubTranslations(config[epubTranslationsKey])
+        val translationsValue = translations.joinToString(",")
         
         // 生成文件名：{mode}.{translationPrefix}{translationCode}.{volumeId}
         // Y = priority (优先), B = parallel (并列)
-        // 翻译代码首字母：s(sakura), g(gpt), y(youdao), b(baidu)
+        // 翻译代码首字母：s(sakura), g(gpt), y(youdao)
         val translationPrefix = if (translationsMode == "priority") "Y" else "B"
-        val translationCode = when (translations) {
-            "sakura" -> "s"
-            "gpt" -> "g"
-            "youdao" -> "y"
-            "baidu" -> "b"
-            else -> "s"
-        }
+        val translationCode = translations.joinToString(separator = "") { it.first().toString() }
         
         // 注意：filename中的volumeId必须包含.epub后缀
         val filename = "$mode.$translationPrefix$translationCode.$volumeIdWithEpub"
@@ -599,12 +614,36 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
             append("?mode=$mode")
             append("&translationsMode=$translationsMode")
             append("&filename=${filename.urlEncoded()}")
-            append("&translations=$translations")
+            append("&translations=${translationsValue.urlEncoded()}")
         }
+    }
+
+    private fun parseEpubTranslations(value: String): List<String> {
+        val result = LinkedHashSet<String>()
+        value.split(Regex("""[>,，、\s]+"""))
+            .mapNotNull { token ->
+                when (token.trim().lowercase()) {
+                    "s", "sakura" -> "sakura"
+                    "g", "gpt" -> "gpt"
+                    "y", "youdao", "有道" -> "youdao"
+                    else -> null
+                }
+            }
+            .forEach(result::add)
+        return result.takeIf { it.isNotEmpty() }?.toList() ?: DEFAULT_EPUB_TRANSLATION_LIST
     }
 
     override suspend fun getPageUrl(page: ContentPage): String {
         // 直接返回EPUB下载URL
         return page.url
+    }
+
+    private companion object {
+        private const val EPUB_LANGUAGE_ZH = "zh"
+        private const val EPUB_LANGUAGE_ZH_JP = "zh-jp"
+        private const val EPUB_LANGUAGE_JP_ZH = "jp-zh"
+        private val EPUB_LANGUAGE_VALUES = setOf(EPUB_LANGUAGE_ZH, EPUB_LANGUAGE_ZH_JP, EPUB_LANGUAGE_JP_ZH)
+        private const val DEFAULT_EPUB_TRANSLATIONS = "sakura>gpt>有道"
+        private val DEFAULT_EPUB_TRANSLATION_LIST = listOf("sakura", "gpt", "youdao")
     }
 }
