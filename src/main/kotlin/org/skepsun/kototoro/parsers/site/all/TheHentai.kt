@@ -112,19 +112,16 @@ internal class TheHentai(context: ContentLoaderContext) :
 	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
 		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
 		val urls = LinkedHashSet<String>()
-		doc.select("#img_gallery_big").forEach { img ->
-			img.imageCandidates().forEach { imageUrl(it)?.let(urls::add) }
-		}
-		doc.select(".post_imgs img, .post_imgs a[href], .entry-content img, article img").forEach { element ->
-			element.imageCandidates().forEach { imageUrl(it)?.toFullImageUrl()?.let(urls::add) }
-		}
+		doc.select("#img_gallery_big, .post_imgs .thumbnails img, .post_imgs .thumbnails a[href], .post_imgs > img, .post_imgs > a[href]")
+			.forEach { element ->
+				element.imageCandidates().forEach { addPageImage(urls, it) }
+			}
 		if (urls.isEmpty()) {
 			IMAGE_URL_REGEX
-				.findAll(doc.outerHtml())
-				.mapTo(urls) { it.value.replace("\\/", "/").toFullImageUrl() }
+				.findAll(doc.selectFirst(".post_imgs, article .entry-content, .entry-content, article")?.outerHtml().orEmpty())
+				.forEach { addPageImage(urls, it.value) }
 		}
-		return urls.filterNot { it.isIgnoredImageUrl() }
-			.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
+		return urls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
@@ -175,6 +172,13 @@ internal class TheHentai(context: ContentLoaderContext) :
 
 	private fun imageUrl(raw: String): String? = raw.replace("\\/", "/").takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
 
+	private fun addPageImage(destination: MutableSet<String>, raw: String) {
+		val url = imageUrl(raw)?.toFullImageUrl() ?: return
+		if (url.isPageImageUrl()) {
+			destination.add(url)
+		}
+	}
+
 	private fun org.jsoup.nodes.Element.imageCandidates(): Sequence<String> = sequence {
 		listOf("href", "data-full", "data-large_image", "data-src", "data-lazy-src", "src").forEach { attr ->
 			attr(attr).takeIf { it.isNotBlank() }?.let { yield(it) }
@@ -187,9 +191,9 @@ internal class TheHentai(context: ContentLoaderContext) :
 
 	private fun String.toFullImageUrl(): String = replace(THUMB_SIZE_REGEX, "")
 
-	private fun String.isIgnoredImageUrl(): Boolean {
+	private fun String.isPageImageUrl(): Boolean {
 		val lower = lowercase()
-		return lower.contains("icon-th") || lower.contains("mascot") || lower.contains("/ads/")
+		return PAGE_IMAGE_EXT_REGEX.containsMatchIn(lower) && IGNORED_IMAGE_PARTS.none { it in lower }
 	}
 
 	private companion object {
@@ -197,6 +201,20 @@ internal class TheHentai(context: ContentLoaderContext) :
 			"https?:\\\\?/\\\\?/[^\"'\\s<>]+\\.(?:jpe?g|png|webp|avif)(?:\\?[^\"'\\s<>]*)?",
 			RegexOption.IGNORE_CASE,
 		)
-		private val THUMB_SIZE_REGEX = Regex("-\\d+x\\d+(?=\\.(?:jpe?g|png|webp)(?:\\.webp)?$)", RegexOption.IGNORE_CASE)
+		private val PAGE_IMAGE_EXT_REGEX = Regex("\\.(?:jpe?g|png|webp|avif)(?:\\?|$)", RegexOption.IGNORE_CASE)
+		private val THUMB_SIZE_REGEX = Regex("-\\d+x\\d+(?=\\.(?:jpe?g|png|webp|avif)(?:\\.webp)?(?:\\?|$))", RegexOption.IGNORE_CASE)
+		private val IGNORED_IMAGE_PARTS = listOf(
+			"/ads/",
+			"/banner",
+			"/cache/",
+			"/icon",
+			"/logo",
+			"/mascot",
+			"/sprite",
+			"/wp-content/themes/",
+			"avatar",
+			"favicon",
+			"placeholder",
+		)
 	}
 }

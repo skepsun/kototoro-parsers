@@ -52,7 +52,7 @@ internal class Sexkomix(context: ContentLoaderContext) :
 		val title = doc.selectFirst("meta[property=og:title]")?.attr("content") ?: doc.selectFirst("#comix_description h1, h1")?.text()?.trim() ?: manga.title
 		val description = doc.selectFirst("meta[property=og:description], meta[name=Description]")?.attr("content")?.takeIf { it.isNotBlank() }
 		val cover = doc.selectFirst("meta[property=og:image]")?.attr("content")?.toAbsoluteUrlOrNull(domain)
-			?: doc.selectFirst("#comix_cover_img")?.let { imageUrl(it.attr("data-src").ifBlank { it.attr("src") }) }
+			?: doc.selectFirst("#comix_cover_img")?.imageUrl()
 			?: manga.coverUrl
 		val tags = parseTags(doc.select("#comix_description > .info_box:contains(Tags:) .tags_ul a[href*='t=']"))
 		return manga.copy(
@@ -103,19 +103,24 @@ internal class Sexkomix(context: ContentLoaderContext) :
 		return "https://$domain/home/?lang=$language&sort=$sort" + if (page > 1) "&page=$page" else ""
 	}
 
-	private fun parseList(doc: Document): List<Content> = doc.select("li.comix").mapNotNull { item ->
-		val a = item.selectFirst("a[href*=comicsx_]") ?: return@mapNotNull null
-		val href = a.attr("href").toAbsoluteUrl(domain)
-		val img = item.selectFirst(".comix_img")
-		val title = item.selectFirst(".comix_title")?.text()?.trim()
-			?: img?.attr("alt")?.takeIf { it.isNotBlank() }
-			?: return@mapNotNull null
-		val tags = parseTags(item.select(".tags_ul a[href*='t=']"))
-		Content(
-			generateUid(href), title, emptySet(), href.removePrefix("https://$domain").removePrefix("http://$domain"),
-			href, RATING_UNKNOWN, ContentRating.ADULT, img?.let { imageUrl(it.attr("data-src").ifBlank { it.attr("src") }) },
-			tags, null, emptySet(), source = source,
-		)
+	private fun parseList(doc: Document): List<Content> {
+		val seen = LinkedHashSet<String>()
+		return doc.select("li.comix").mapNotNull { item ->
+			val a = item.selectFirst("a[href*=comicsx_]") ?: return@mapNotNull null
+			val href = a.attr("href").toAbsoluteUrl(domain)
+			val url = href.removePrefix("https://$domain").removePrefix("http://$domain")
+			if (!seen.add(url)) return@mapNotNull null
+			val img = item.selectFirst(".comix_img")
+			val title = item.selectFirst(".comix_title")?.text()?.trim()
+				?: img?.attr("alt")?.takeIf { it.isNotBlank() }
+				?: return@mapNotNull null
+			val tags = parseTags(item.select(".tags_ul a[href*='t=']"))
+			Content(
+				generateUid(url), title, emptySet(), url,
+				href, RATING_UNKNOWN, ContentRating.ADULT, img?.imageUrl(),
+				tags, null, emptySet(), source = source,
+			)
+		}
 	}
 
 	private fun parseTags(elements: Iterable<org.jsoup.nodes.Element>): Set<ContentTag> {
@@ -127,4 +132,19 @@ internal class Sexkomix(context: ContentLoaderContext) :
 	}
 
 	private fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
+
+	private fun org.jsoup.nodes.Element.imageUrl(): String? {
+		return listOf("data-src", "data-original", "data-lazy-src", "src")
+			.asSequence()
+			.map { attr(it) }
+			.plus(attr("srcset").splitToSequence(',').map { it.trim().substringBefore(' ') })
+			.firstNotNullOfOrNull { raw ->
+				imageUrl(raw)?.takeUnless { it.isPlaceholderImage() }
+			}
+	}
+
+	private fun String.isPlaceholderImage(): Boolean {
+		val lower = lowercase()
+		return lower.contains("placeholder") || lower.contains("loading") || lower.contains("blank.")
+	}
 }
