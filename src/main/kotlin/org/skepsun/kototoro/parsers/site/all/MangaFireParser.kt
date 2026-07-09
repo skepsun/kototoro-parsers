@@ -21,30 +21,59 @@ import kotlin.runCatching
 /**
  * MangaFire (mangafire.to) — 基于新 REST API。
  *
+ * 单一源，所有语言翻译混合展示，按语言分 branch。
+ *
  * API 端点:
  * - GET /api/titles        — 列表/搜索
  * - GET /api/titles/{hid}  — 详情
- * - GET /api/titles/{hid}/chapters — 章节列表
+ * - GET /api/titles/{hid}/chapters — 章节列表（按 language 参数过滤）
  * - GET /api/chapters/{id} — 页面列表
  * - GET /api/tags          — 标签搜索（作者/画师）
  *
  * 参考: keiyoushi/extensions-source commit f91a65fb3
  */
-internal abstract class MangaFireParser(
-    context: ContentLoaderContext,
-    source: ContentSource,
-    private val langCode: String,
-) : PagedContentParser(
+@ContentSourceParser("MANGAFIRE", "MangaFire")
+internal class MangaFireParser(context: ContentLoaderContext) : PagedContentParser(
     context = context,
-    source = source,
+    source = ContentParserSource.MANGAFIRE,
     pageSize = 50,
 ) {
 
     override val configKeyDomain = ConfigKey.Domain("mangafire.to")
 
+    private val preferredLanguageKey = ConfigKey.PreferredLanguage(
+        title = "Preferred Language",
+        presetValues = linkedMapOf(
+            "all" to "All Languages",
+            "en" to "English",
+            "es" to "Spanish",
+            "es-la" to "Spanish (Latin America)",
+            "fr" to "French",
+            "ja" to "Japanese",
+            "pt" to "Portuguese",
+            "pt-br" to "Portuguese (Brazil)",
+        ),
+        defaultValue = "all",
+    )
+
+    /**
+     * 所有可能用到的语言代码，章节加载时会逐一尝试。
+     * 如果用户设置了 preferred language，则只加载该语言。
+     */
+    private val targetLanguages: List<String>
+        get() {
+            val preferred = config[preferredLanguageKey]
+            return if (preferred.isNotBlank() && preferred != "all") {
+                listOf(preferred)
+            } else {
+                allLanguages
+            }
+        }
+
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
         keys.add(userAgentKey)
+        keys.add(preferredLanguageKey)
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
@@ -95,7 +124,6 @@ internal abstract class MangaFireParser(
     // ============================== List / Search ==============================
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        // 先解析作者ID（如果有的话）
         var authorId: String? = null
         if (!filter.author.isNullOrEmpty()) {
             authorId = resolveAuthorId(filter.author)
@@ -115,7 +143,6 @@ internal abstract class MangaFireParser(
             val (sortField, sortDir) = order.toApiSort()
             addQueryParameter("order[$sortField]", sortDir)
 
-            // 类型过滤
             if (filter.tags.isNotEmpty()) {
                 filter.tags.forEach { tag ->
                     addQueryParameter("genres_in[]", tag.key)
@@ -128,7 +155,6 @@ internal abstract class MangaFireParser(
             }
             addQueryParameter("genres_mode", "or")
 
-            // 状态过滤
             if (filter.states.isNotEmpty()) {
                 filter.states.forEach { state ->
                     val apiState = state.toApiStatus()
@@ -138,7 +164,6 @@ internal abstract class MangaFireParser(
                 }
             }
 
-            // 年份范围
             if (filter.yearFrom != YEAR_UNKNOWN) {
                 addQueryParameter("year_from", filter.yearFrom.toString())
             }
@@ -146,7 +171,6 @@ internal abstract class MangaFireParser(
                 addQueryParameter("year_to", filter.yearTo.toString())
             }
 
-            // 作者过滤
             if (authorId != null) {
                 addQueryParameter("authors[]", authorId)
             }
@@ -229,7 +253,7 @@ internal abstract class MangaFireParser(
         val allTags = (genreTags + themeTags).toSet()
         val state = status?.let { parseStatus(it) }
         val description = synopsisHtml?.let { Jsoup.parseBodyFragment(it).text() }
-        val chapters = loadChapters(manga.url)
+        val chapters = loadAllChapters(manga.url)
 
         return manga.copy(
             title = title,
@@ -246,22 +270,38 @@ internal abstract class MangaFireParser(
 
     // ============================== Chapters ==============================
 
-    private suspend fun loadChapters(mangaUrl: String): List<ContentChapter> {
+    /**
+     * 遍历所有目标语言，为每个语言加载章节，按语言名分 branch。
+     * 没有章节的语言被跳过。
+     */
+    private suspend fun loadAllChapters(mangaUrl: String): List<ContentChapter> {
+        val allChapters = mutableListOf<ContentChapter>()
+        for (lang in targetLanguages) {
+            val langChapters = loadChapters(mangaUrl, lang)
+            if (langChapters.isNotEmpty()) {
+                allChapters.addAll(langChapters)
+            }
+        }
+        return allChapters
+    }
+
+    private suspend fun loadChapters(mangaUrl: String, langCode: String): List<ContentChapter> {
         val hid = getHid(mangaUrl)
         val chapters = mutableListOf<ContentChapter>()
         var page = 1
         var lastPage = 1
+        val branchName = langCodeToName[langCode] ?: langCode
 
         do {
             val url = "https://$domain/api/titles/$hid/chapters".toHttpUrl().newBuilder()
                 .addQueryParameter("language", langCode)
                 .addQueryParameter("sort", "number")
-                .addQueryParameter("order", "desc")
+                .addQueryParameter("order", "asc")
                 .addQueryParameter("page", page.toString())
                 .addQueryParameter("limit", "200")
                 .build()
 
-            val json = webClient.httpGet(url).parseJson()
+            val json = runCatching { webClient.httpGet(url).parseJson() }.getOrNull() ?: break
             val items = json.optJSONArray("items") ?: break
             val meta = json.optJSONObject("meta")
             lastPage = meta?.optInt("lastPage", 1) ?: 1
@@ -290,7 +330,7 @@ internal abstract class MangaFireParser(
                         url = chapterUrl,
                         scanlator = null,
                         uploadDate = createdAt * 1000L,
-                        branch = null,
+                        branch = branchName,
                         source = source,
                     ),
                 )
@@ -378,6 +418,20 @@ internal abstract class MangaFireParser(
         val str = toString()
         return if (str.endsWith(".0")) str.removeSuffix(".0") else str
     }
+
+    // ============================== Languages ==============================
+
+    private val allLanguages = listOf("en", "es", "es-la", "fr", "ja", "pt", "pt-br")
+
+    private val langCodeToName = mapOf(
+        "en" to "English",
+        "es" to "Spanish",
+        "es-la" to "Spanish (Latin America)",
+        "fr" to "French",
+        "ja" to "Japanese",
+        "pt" to "Portuguese",
+        "pt-br" to "Portuguese (Brazil)",
+    )
 
     // ============================== Genres ==============================
 
@@ -473,27 +527,4 @@ internal abstract class MangaFireParser(
             source = source,
         )
     }
-
-    // ============================== Language Variants ==============================
-
-    @ContentSourceParser("MANGAFIRE_EN", "MangaFire English", "en")
-    internal class English(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_EN, "en")
-
-    @ContentSourceParser("MANGAFIRE_ES", "MangaFire Spanish", "es")
-    internal class Spanish(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_ES, "es")
-
-    @ContentSourceParser("MANGAFIRE_ESLA", "MangaFire Spanish (Latin America)", "es")
-    internal class SpanishLatin(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_ESLA, "es-la")
-
-    @ContentSourceParser("MANGAFIRE_FR", "MangaFire French", "fr")
-    internal class French(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_FR, "fr")
-
-    @ContentSourceParser("MANGAFIRE_JA", "MangaFire Japanese", "ja")
-    internal class Japanese(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_JA, "ja")
-
-    @ContentSourceParser("MANGAFIRE_PT", "MangaFire Portuguese", "pt")
-    internal class Portuguese(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_PT, "pt")
-
-    @ContentSourceParser("MANGAFIRE_PTBR", "MangaFire Portuguese (Brazil)", "pt")
-    internal class PortugueseBR(context: ContentLoaderContext) : MangaFireParser(context, ContentParserSource.MANGAFIRE_PTBR, "pt-br")
 }
