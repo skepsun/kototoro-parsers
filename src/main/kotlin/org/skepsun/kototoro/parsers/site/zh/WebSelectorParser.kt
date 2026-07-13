@@ -329,20 +329,37 @@ internal abstract class WebSelectorParser(
         }
     }
 
-    /** Walk up to find an <img> near the element. */
+    /** Walk up to find an <img> near the element. Prefers lazy-load attributes over src. */
     private fun findCoverImage(el: Element): String? {
         var current: Element? = el
         for (i in 0..5) {
             if (current == null) break
             val img = current.selectFirst("img")
             if (img != null) {
-                return img.attrAsAbsoluteUrlOrNull("src")
+                // Prefer lazy-load attributes first (real image), fall back to src
+                val cover = img.attrAsAbsoluteUrlOrNull("data-original")
                     ?: img.attrAsAbsoluteUrlOrNull("data-src")
-                    ?: img.attrAsAbsoluteUrlOrNull("data-original")
+                    ?: img.attrAsAbsoluteUrlOrNull("data-img")
+                    ?: img.attrAsAbsoluteUrlOrNull("data-lazy")
+                    ?: img.attrAsAbsoluteUrlOrNull("src")
+                if (cover != null && !isPlaceholderUrl(cover)) return cover
+                // If src is the only option, use it anyway
+                return img.attrAsAbsoluteUrlOrNull("src")
             }
             current = current.parent()
         }
         return null
+    }
+
+    /** Check if a URL looks like a placeholder/loading image. */
+    private fun isPlaceholderUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.contains("load.gif") || lower.contains("loading.gif") ||
+            lower.contains("load.png") || lower.contains("loading.png") ||
+            lower.contains("loading.svg") || lower.contains("placeholder") ||
+            lower.contains("/load.") || lower.contains("nopic") ||
+            lower.contains("no-img") || lower.contains("default.jpg") ||
+            lower.contains("default.png") || lower.contains("img_none")
     }
 
     // ========================================================================
@@ -369,18 +386,35 @@ internal abstract class WebSelectorParser(
     }
 
     private fun extractDetailCover(doc: Document): String? {
-        doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.isNotBlank() }?.let { return it }
+        // Try og:image meta first
+        doc.selectFirst("meta[property=og:image]")?.attr("content")
+            ?.takeIf { it.isNotBlank() && !isPlaceholderUrl(it) }?.let { return it }
+
         for (sel in listOf(
             ".detail-pic img", ".vod-pic img", ".module-item-pic img",
             ".detail-img img", ".video-cover img", ".video-pic img",
             ".thumb img", ".poster img", "img.cover",
+            ".module-item-pic > img", ".vodlist_thumb img", ".content_thumb img",
+            ".detail-poster img", ".detail-cover img",
         )) {
             doc.selectFirst(sel)?.let { img ->
-                return img.attrAsAbsoluteUrlOrNull("src")
+                // Prefer lazy-load attributes over src
+                val cover = img.attrAsAbsoluteUrlOrNull("data-original")
                     ?: img.attrAsAbsoluteUrlOrNull("data-src")
-                    ?: img.attrAsAbsoluteUrlOrNull("data-original")
+                    ?: img.attrAsAbsoluteUrlOrNull("data-img")
+                    ?: img.attrAsAbsoluteUrlOrNull("src")
+                if (cover != null && !isPlaceholderUrl(cover)) return cover
             }
         }
+
+        // Fallback: any img with data-src or data-original that looks like a cover
+        for (attr in listOf("data-original", "data-src", "data-img")) {
+            val img = doc.selectFirst("img[$attr]")
+            img?.attrAsAbsoluteUrlOrNull(attr)?.let { url ->
+                if (!isPlaceholderUrl(url) && !url.contains("logo") && !url.contains("icon")) return url
+            }
+        }
+
         return null
     }
 
