@@ -435,6 +435,7 @@ internal abstract class WebSelectorParser(
     private fun extractGroupedChannelEpisodes(doc: Document): List<ContentChapter> {
         if (selectChannelNames.isBlank() || selectEpisodeLists.isBlank()) return emptyList()
         val chapters = ArrayList<ContentChapter>()
+        val seenHrefs = LinkedHashSet<String>()
 
         val channelTabs = doc.select(selectChannelNames)
         val channelNamePattern = matchChannelName.takeIf { it.isNotBlank() }?.let { Regex(it) }
@@ -466,20 +467,26 @@ internal abstract class WebSelectorParser(
                 }
                 if (href.isBlank()) continue
 
+                // Deduplicate by URL path — same episode under different channels
+                val relUrl = href.toRelativeUrl(domain)
+                if (!seenHrefs.add(relUrl)) continue
+
                 val title = a.text().trim()
                 val epNum = episodeSortPattern?.find(title)?.run {
                     groups["ep"]?.value?.toFloatOrNull() ?: groups[1]?.value?.toFloatOrNull()
                 } ?: epCounter.toFloat()
 
+                val branch = if (channelTabs.size > 1) matchedName else null
+
                 chapters.add(
                     ContentChapter(
                         id = generateUid("${href}|${matchedName}|$epNum"),
-                        url = href.toRelativeUrl(domain),
+                        url = relUrl,
                         title = title.takeIf { it.isNotBlank() } ?: "EP${epNum.toInt()}",
                         number = epNum,
                         uploadDate = 0L,
                         volume = 0,
-                        branch = matchedName.takeIf { it != channelName },
+                        branch = branch,
                         scanlator = null,
                         source = source,
                     )
