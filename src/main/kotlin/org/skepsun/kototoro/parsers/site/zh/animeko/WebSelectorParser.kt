@@ -63,11 +63,11 @@ internal abstract class WebSelectorParser(
     // -----------------------------------------------------------------------
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val keyword = filter.query?.takeIf { it.isNotBlank() } ?: return emptyList()
         val sc = mediaSourceConfig.searchConfig
 
-        // Build search URL
-        val processedKeyword = if (sc.searchUseOnlyFirstWord) {
+        // Build search URL: allow empty query (app may browse without keyword)
+        val keyword = filter.query?.trim() ?: ""
+        val processedKeyword = if (keyword.isNotEmpty() && sc.searchUseOnlyFirstWord) {
             keyword.split("\\s+".toRegex()).firstOrNull() ?: keyword
         } else keyword
 
@@ -134,13 +134,8 @@ internal abstract class WebSelectorParser(
             a.attr("href")
         }
 
-        // If preferShorterName, picks the shorter of name vs link text
         return names.zip(links).map { (name, href) ->
-            if (sel.preferShorterName) {
-                name to href
-            } else {
-                name to href
-            }
+            name to href
         }
     }
 
@@ -152,7 +147,6 @@ internal abstract class WebSelectorParser(
         val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
         val sc = mediaSourceConfig.searchConfig
 
-        // Extract episodes based on channel format
         val chapters = when (sc.channelFormatId) {
             "no-channel" -> extractNoChannelEpisodes(doc, sc)
             else -> extractGroupedChannelEpisodes(doc, sc)
@@ -167,15 +161,12 @@ internal abstract class WebSelectorParser(
         val channelConfig = sc.selectorChannelFormatFlattened ?: return emptyList()
         val chapters = ArrayList<ContentChapter>()
 
-        // Get channel tabs
         val channelTabs = doc.select(channelConfig.selectChannelNames)
         val channelNamePattern = channelConfig.matchChannelName.takeIf { it.isNotBlank() }
             ?.let { Regex(it) }
 
-        // Get episode list containers
         val episodeLists = doc.select(channelConfig.selectEpisodeLists)
 
-        // For each channel tab + episode list pair
         for (i in channelTabs.indices) {
             val channelName = channelTabs.getOrNull(i)?.text()?.trim() ?: "Channel $i"
             val matchedName = channelNamePattern?.find(channelName)?.run {
@@ -292,7 +283,6 @@ internal abstract class WebSelectorParser(
     private suspend fun extractVideoUrl(doc: Document, mv: AnimekoMatchVideo): String? {
         val html = doc.outerHtml()
 
-        // If nested URL is enabled, try to extract and follow the nested URL first
         if (mv.enableNestedUrl && mv.matchNestedUrl != "\$^") {
             val nestedRegex = try {
                 Regex(mv.matchNestedUrl, RegexOption.IGNORE_CASE)
@@ -319,7 +309,6 @@ internal abstract class WebSelectorParser(
         val regex = try {
             Regex(matchPattern, setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
         } catch (_: Exception) {
-            // Try with DOT_MATCHES_ALL for complex patterns
             try {
                 Regex(matchPattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             } catch (_: Exception) {
@@ -329,10 +318,8 @@ internal abstract class WebSelectorParser(
 
         val match = regex.find(html) ?: return null
 
-        // Try to extract named capture group "v" first (video URL)
         match.groups["v"]?.value?.let { return it }
 
-        // Fall back to the full match (group 0)
         return match.value
     }
 }
