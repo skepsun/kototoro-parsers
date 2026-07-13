@@ -392,7 +392,6 @@ internal abstract class WebSelectorParser(
     private fun extractVideoUrlFromHtml(html: String, matchPattern: String): String? {
         if (matchPattern.isBlank()) return null
 
-        // First: extract all URLs from the page, test each against the video pattern
         val urlPattern = Regex("""https?://[^\s"'<>]+""")
         val videoRegex = try {
             Regex(matchPattern, setOf(RegexOption.IGNORE_CASE))
@@ -404,17 +403,19 @@ internal abstract class WebSelectorParser(
 
         for (match in urlPattern.findAll(html)) {
             val url = match.value
-            // Try capturing group "v" (named capture in the regex)
-            val vm = videoRegex.find(url)
-            if (vm != null) {
-                vm.groups["v"]?.value?.let { return it }
-                return vm.value
-            }
+            val vm = videoRegex.find(url) ?: continue
+            val captured = tryOrNull { vm.groups["v"]?.value }
+            return captured ?: vm.value
         }
 
         // Fallback: try the regex on the full HTML
         val m = videoRegex.find(html) ?: return null
-        m.groups["v"]?.value?.let { return it }
-        return m.value
+        val captured = tryOrNull { m.groups["v"]?.value }
+        return captured ?: m.value
+    }
+
+    /** Safe access to named groups: returns null instead of throwing. */
+    private inline fun <T> tryOrNull(block: () -> T): T? {
+        return try { block() } catch (_: IllegalArgumentException) { null }
     }
 }
