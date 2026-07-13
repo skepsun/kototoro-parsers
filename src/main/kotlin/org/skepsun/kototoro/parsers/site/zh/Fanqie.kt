@@ -4,6 +4,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentType
+import org.skepsun.kototoro.parsers.model.SortOrder
 
 /**
  * 番茄动漫
@@ -38,4 +39,20 @@ internal class Fanqie(
     override val requestInterval = 3000
     override val filterByEpisodeSort = true
     override val filterBySubjectName = true
+
+    // Filters: mxproCMS type classification
+    override val categoryFilterUrlTemplate = "https://www.fqdm.cc/index.php/vod/show/class/{filter}/id/1.html"
+    override val categoryTags = listOf(
+        "日韩动漫" to "日韩动漫",
+        "国产动漫" to "国产动漫",
+        "港台动漫" to "港台动漫",
+        "欧美动漫" to "欧美动漫",
+        "动漫综合" to "动漫综合",
+    )
+    override val categoryTagParam = "class"
+    override val sortOrderMapping = mapOf(
+        SortOrder.POPULARITY to "hits",
+        SortOrder.UPDATED to "time",
+        SortOrder.RATING to "score",
+    )
 }

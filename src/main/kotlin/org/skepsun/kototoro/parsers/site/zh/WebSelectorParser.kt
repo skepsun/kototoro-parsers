@@ -149,11 +149,26 @@ internal abstract class WebSelectorParser(
     // Filters
     // ========================================================================
 
-    /** Optional genre/category tags for filter options. */
+    /**
+     * Optional genre/category tags for filter options.
+     * Each pair is (urlValue, displayLabel).
+     *
+     * When the user selects tags, they are appended to the search URL as:
+     *   &{categoryTagParam}={urlValue}
+     */
     protected open val categoryTags: List<Pair<String, String>> = emptyList()
 
     /** URL parameter name for category tags. */
     protected open val categoryTagParam: String = "type"
+
+    /**
+     * Optional filter URL template for browsing by category.
+     * When set, category filters are applied via this URL instead of search URL.
+     * Use `{filter}` as placeholder for the filter value.
+     *
+     * Example: "https://example.com/index.php/vod/show/class/{filter}/id/1.html"
+     */
+    protected open val categoryFilterUrlTemplate: String = ""
 
     /** Optional sort order mapping (SortOrder → URL parameter value). */
     protected open val sortOrderMapping: Map<SortOrder, String> = emptyMap()
@@ -222,13 +237,20 @@ internal abstract class WebSelectorParser(
         }
 
         val encoded = URLEncoder.encode(keyword, "UTF-8")
-        var searchUrl = searchUrlTemplate.replace("{keyword}", encoded)
 
-        // Append category tags
-        if (categoryTags.isNotEmpty() && filter.tags.isNotEmpty()) {
-            val tagValues = filter.tags
-                .filter { it.key.startsWith("$categoryTagParam:") }
-                .map { it.key.substringAfter("$categoryTagParam:") }
+        // Determine the base URL: filter-browse URL vs search URL
+        val tagValues = filter.tags
+            .filter { it.key.startsWith("$categoryTagParam:") }
+            .map { it.key.substringAfter("$categoryTagParam:") }
+
+        var searchUrl: String
+        if (keyword.isEmpty() && tagValues.isNotEmpty() && categoryFilterUrlTemplate.isNotBlank()) {
+            // Browse by category, no search keyword
+            searchUrl = categoryFilterUrlTemplate.replace("{filter}", tagValues.joinToString(","))
+        } else {
+            searchUrl = searchUrlTemplate.replace("{keyword}", encoded)
+
+            // Append category tags to search URL
             if (tagValues.isNotEmpty()) {
                 val sep = if (searchUrl.contains("?")) "&" else "?"
                 searchUrl += "$sep$categoryTagParam=${tagValues.joinToString(",")}"
@@ -236,7 +258,7 @@ internal abstract class WebSelectorParser(
         }
 
         // Apply sort order
-        if (order != SortOrder.UPDATED && sortOrderMapping.isNotEmpty()) {
+        if (sortOrderMapping.isNotEmpty()) {
             val sortValue = sortOrderMapping[order]
             if (sortValue != null) {
                 val sep = if (searchUrl.contains("?")) "&" else "?"

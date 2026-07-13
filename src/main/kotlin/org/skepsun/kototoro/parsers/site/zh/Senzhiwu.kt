@@ -4,6 +4,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentType
+import org.skepsun.kototoro.parsers.model.SortOrder
 
 /**
  * 森之屋动漫 — 直连，来自森之屋动漫，导航：https://senfun.in/
@@ -31,4 +32,19 @@ internal class Senzhiwu(
     override val matchVideoUrl = "(^http(s)?:\\\\/\\\\/(?!.*http).+\\\\.(mp4|m3u8|flv|mkv))|(url=(?<v>http(s)?:\\\\/\\\\/.+\\\\.(mp4|m3u8|flv|mkv)))|(^http(s)?:\\\\/\\\\/(?!.*http).+(sign\\\\.bytetos|sign\\\\.byteimg|mcloud\\\\.139|cloudflarestorage|tos-cn)\\\\.com(?!.*\\\\.ts).+(-expires|-signature))|((bilivideo|akamaized|szbdyd)\\\\.com(?!.*\\\\.ts))|(\\\\/video\\\\/tos\\\\/alisg\\\\/)|(\\\\/video\\\\/.*mime_type=video)"
     override val cookies = "quality=1080"
     override val addHeadersToVideo = mapOf("referer" to "")
+
+    // Filters: senfun type classification
+    override val categoryFilterUrlTemplate = "https://senfun.in/type/{filter}.html"
+    override val categoryTags = listOf(
+        "tv" to "TV动画",
+        "movie" to "剧场版",
+        "west" to "欧美动漫",
+        "guochuang" to "国创动漫",
+    )
+    override val categoryTagParam = "type"
+    override val sortOrderMapping = mapOf(
+        SortOrder.POPULARITY to "hits",
+        SortOrder.UPDATED to "time",
+        SortOrder.RATING to "score",
+    )
 }

@@ -4,6 +4,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentType
+import org.skepsun.kototoro.parsers.model.SortOrder
 
 /**
  * UZVOD — 直连，来自UZVOD优质影院，导航：https://uzvod.com/
@@ -31,4 +32,20 @@ internal class Uzvod(
     override val matchVideoUrl = "(^http(s)?:\\\\/\\\\/(?!.*http).+\\\\.(mp4|m3u8|flv|mkv))|(url=(?<v>http(s)?:\\\\/\\\\/.+\\\\.(mp4|m3u8|flv|mkv)))|(^http(s)?:\\\\/\\\\/(?!.*http).+(sign\\\\.bytetos|sign\\\\.byteimg|mcloud\\\\.139|cloudflarestorage|tos-cn)\\\\.com(?!.*\\\\.ts).+(-expires|-signature))|((bilivideo|akamaized|szbdyd)\\\\.com(?!.*\\\\.ts))|(\\\\/video\\\\/tos\\\\/alisg\\\\/)|(\\\\/video\\\\/.*mime_type=video)"
     override val cookies = "quality=1080"
     override val addHeadersToVideo = mapOf("referer" to "")
+
+    // Filters: mxproCMS type classification
+    override val categoryFilterUrlTemplate = "https://uzvod.com/vodshow/class/{filter}/id/1.html"
+    override val categoryTags = listOf(
+        "日韩动漫" to "日韩动漫",
+        "国产动漫" to "国产动漫",
+        "欧美动漫" to "欧美动漫",
+        "海外动漫" to "海外动漫",
+        "剧场版" to "剧场版",
+    )
+    override val categoryTagParam = "class"
+    override val sortOrderMapping = mapOf(
+        SortOrder.POPULARITY to "hits",
+        SortOrder.UPDATED to "time",
+        SortOrder.RATING to "score",
+    )
 }
