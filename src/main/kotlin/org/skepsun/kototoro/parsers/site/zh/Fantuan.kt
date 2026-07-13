@@ -41,19 +41,18 @@ internal class Fantuan(
     override val filterByEpisodeSort = true
     override val filterBySubjectName = true
 
-    // Filters: mxproCMS type classification
-    override val categoryFilterUrlTemplate = "https://acgfta.com/index.php/vod/show/class/{filter}/id/1.html"
+    // 饭团动漫没有分类浏览页，仅保留搜索模式
+
+    // Filters: 饭团动漫使用 /ft/ 路径浏览
+    override val categoryFilterUrlTemplate = "https://acgfta.com/ft/{filter}.html"
     override val categoryTags = listOf(
-        "日韩动漫" to "日韩动漫",
-        "国产动漫" to "国产动漫",
-        "港台动漫" to "港台动漫",
-        "欧美动漫" to "欧美动漫",
-        "动漫综合" to "动漫综合",
+        "recent" to "最近更新",
+        "leaderboard" to "日榜",
+        "top-movie" to "剧场版",
     )
-    override val categoryTagParam = "class"
     override val sortOrderMapping = mapOf(
-        SortOrder.POPULARITY to "hits",
-        SortOrder.UPDATED to "time",
-        SortOrder.RATING to "score",
+        SortOrder.UPDATED to "recent",
+        SortOrder.POPULARITY to "leaderboard",
+        SortOrder.NEWEST to "recent",
     )
 }

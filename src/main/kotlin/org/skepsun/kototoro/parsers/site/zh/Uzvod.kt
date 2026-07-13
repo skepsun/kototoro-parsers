@@ -33,19 +33,16 @@ internal class Uzvod(
     override val cookies = "quality=1080"
     override val addHeadersToVideo = mapOf("referer" to "")
 
-    // Filters: mxproCMS type classification
-    override val categoryFilterUrlTemplate = "https://uzvod.com/vodshow/class/{filter}/id/1.html"
+    // Filters: UZVOD uses /vodtype/{slug}.html
+    override val categoryFilterUrlTemplate = "https://uzvod.com/vodtype/{filter}.html"
     override val categoryTags = listOf(
-        "日韩动漫" to "日韩动漫",
-        "国产动漫" to "国产动漫",
-        "欧美动漫" to "欧美动漫",
-        "海外动漫" to "海外动漫",
-        "剧场版" to "剧场版",
+        "rihandongman" to "日韩动漫",
+        "guochandongman" to "国产动漫",
+        "oumeidongman" to "欧美动漫",
+        "haiwaidongman" to "海外动漫",
     )
-    override val categoryTagParam = "class"
     override val sortOrderMapping = mapOf(
-        SortOrder.POPULARITY to "hits",
         SortOrder.UPDATED to "time",
-        SortOrder.RATING to "score",
+        SortOrder.POPULARITY to "hits",
     )
 }

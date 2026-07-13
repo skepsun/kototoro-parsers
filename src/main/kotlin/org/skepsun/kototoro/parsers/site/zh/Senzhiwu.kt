@@ -39,12 +39,9 @@ internal class Senzhiwu(
         "tv" to "TV动画",
         "movie" to "剧场版",
         "west" to "欧美动漫",
-        "guochuang" to "国创动漫",
     )
-    override val categoryTagParam = "type"
     override val sortOrderMapping = mapOf(
-        SortOrder.POPULARITY to "hits",
         SortOrder.UPDATED to "time",
-        SortOrder.RATING to "score",
+        SortOrder.POPULARITY to "hits",
     )
 }

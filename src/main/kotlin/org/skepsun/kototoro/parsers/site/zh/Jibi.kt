@@ -34,19 +34,17 @@ internal class Jibi(
     override val cookies = "quality=1080"
     override val addHeadersToVideo = mapOf("referer" to "")
 
-    // Filters: mxproCMS type classification
-    override val categoryFilterUrlTemplate = "https://www.jibi.cc/index.php/vod/show/class/{filter}/id/1.html"
+    // Filters: mxproCMS /vod/type/id/{id}.html
+    override val categoryFilterUrlTemplate = "https://www.jibi.cc/index.php/vod/type/id/{filter}.html"
     override val categoryTags = listOf(
-        "日韩动漫" to "日韩动漫",
-        "国产动漫" to "国产动漫",
-        "港台动漫" to "港台动漫",
-        "欧美动漫" to "欧美动漫",
-        "动漫综合" to "动漫综合",
+        "1" to "日韩动漫",
+        "2" to "国产动漫",
+        "3" to "港台动漫",
+        "4" to "欧美动漫",
+        "5" to "动漫综合",
     )
-    override val categoryTagParam = "class"
     override val sortOrderMapping = mapOf(
-        SortOrder.POPULARITY to "hits",
         SortOrder.UPDATED to "time",
-        SortOrder.RATING to "score",
+        SortOrder.POPULARITY to "hits",
     )
 }
