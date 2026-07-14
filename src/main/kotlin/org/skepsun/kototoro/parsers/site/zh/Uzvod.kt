@@ -45,4 +45,6 @@ internal class Uzvod(
         SortOrder.UPDATED to "time",
         SortOrder.POPULARITY to "hits",
     )
+
+    override val selectFilterLists = "a.module-poster-item"
 }

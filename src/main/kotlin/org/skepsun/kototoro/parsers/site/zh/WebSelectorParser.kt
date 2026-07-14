@@ -79,6 +79,11 @@ internal abstract class WebSelectorParser(
     /** CSS selector for result links (format "indexed"). */
     protected open val selectLinks: String = ""
 
+    /** Selectors for filter/browse pages (no search keyword). Defaults to search selectors. */
+    protected open val selectFilterLists: String = ""
+    protected open val selectFilterNames: String = ""
+    protected open val selectFilterLinks: String = ""
+
     /** Prefer shorter title when multiple candidates exist. */
     protected open val preferShorterName: Boolean = false
 
@@ -192,6 +197,7 @@ internal abstract class WebSelectorParser(
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
             isSearchSupported = true,
+            isSearchWithFiltersSupported = categoryTags.isNotEmpty(),
             isMultipleTagsSupported = categoryTags.isNotEmpty(),
         )
 
@@ -243,18 +249,15 @@ internal abstract class WebSelectorParser(
             .filter { it.key.startsWith("$categoryTagParam:") }
             .map { it.key.substringAfter("$categoryTagParam:") }
 
-        var searchUrl: String
-        if (keyword.isEmpty() && tagValues.isNotEmpty() && categoryFilterUrlTemplate.isNotBlank()) {
-            // Browse by category, no search keyword
-            searchUrl = categoryFilterUrlTemplate.replace("{filter}", tagValues.joinToString(","))
-        } else {
-            searchUrl = searchUrlTemplate.replace("{keyword}", encoded)
+        val hasKeyword = keyword.isNotEmpty()
+        val hasTags = tagValues.isNotEmpty() && categoryFilterUrlTemplate.isNotBlank()
 
-            // Append category tags to search URL
-            if (tagValues.isNotEmpty()) {
-                val sep = if (searchUrl.contains("?")) "&" else "?"
-                searchUrl += "$sep$categoryTagParam=${tagValues.joinToString(",")}"
-            }
+        var searchUrl: String = if (hasKeyword || !hasTags) {
+            // Search mode: use search URL template
+            searchUrlTemplate.replace("{keyword}", encoded)
+        } else {
+            // Browse mode: use category filter URL
+            categoryFilterUrlTemplate.replace("{filter}", tagValues.first())
         }
 
         // Apply sort order
@@ -280,9 +283,23 @@ internal abstract class WebSelectorParser(
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
+        // Use filter-specific selectors when browsing (no keyword), fall back to search selectors
+        val isBrowseMode = !hasKeyword && hasTags
         val results = when (subjectFormatId) {
-            "indexed" -> extractIndexedSubjects(doc)
-            else -> extractSubjectsA(doc)
+            "indexed" -> {
+                if (isBrowseMode && selectFilterNames.isNotBlank()) {
+                    extractFilterIndexedSubjects(doc)
+                } else {
+                    extractIndexedSubjects(doc)
+                }
+            }
+            else -> {
+                if (isBrowseMode && selectFilterLists.isNotBlank()) {
+                    extractSubjectsA(doc, selectFilterLists)
+                } else {
+                    extractSubjectsA(doc)
+                }
+            }
         }
 
         for ((name, href, coverUrl) in results) {
@@ -314,9 +331,9 @@ internal abstract class WebSelectorParser(
     }
 
     /** Extract {name, href, coverUrl} via "a" format selector. */
-    private fun extractSubjectsA(doc: Document): List<Triple<String, String, String?>> {
-        if (selectLists.isBlank()) return emptyList()
-        val elements = doc.select(selectLists)
+    private fun extractSubjectsA(doc: Document, selector: String = selectLists): List<Triple<String, String, String?>> {
+        if (selector.isBlank()) return emptyList()
+        val elements = doc.select(selector)
         return elements.mapNotNull { el ->
             val a = if (el.tagName() == "a") el else el.selectFirst("a") ?: return@mapNotNull null
             var name = a.text().trim()
@@ -328,6 +345,27 @@ internal abstract class WebSelectorParser(
                 if (directText.isNotBlank()) name = directText
             }
 
+            val cover = findCoverImage(el)
+            Triple(name, href, cover)
+        }
+    }
+
+    /** Extract {name, href, coverUrl} from filter page using separate selectors. */
+    private fun extractFilterIndexedSubjects(doc: Document): List<Triple<String, String, String?>> {
+        val selNames = selectFilterNames.takeIf { it.isNotBlank() } ?: selectNames
+        val selLinks = selectFilterLinks.takeIf { it.isNotBlank() } ?: selectLinks
+
+        val names = if (selNames.isNotBlank()) {
+            doc.select(selNames).map { it.text().trim() }
+        } else emptyList()
+
+        val linkElements = if (selLinks.isNotBlank()) {
+            doc.select(selLinks)
+        } else emptyList()
+
+        return names.zip(linkElements).map { (name, el) ->
+            val a = if (el.tagName() == "a") el else el.selectFirst("a")
+            val href = a?.attr("href") ?: ""
             val cover = findCoverImage(el)
             Triple(name, href, cover)
         }

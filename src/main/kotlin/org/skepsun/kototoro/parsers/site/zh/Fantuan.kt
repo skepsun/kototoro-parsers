@@ -55,4 +55,6 @@ internal class Fantuan(
         SortOrder.POPULARITY to "leaderboard",
         SortOrder.NEWEST to "recent",
     )
+
+    override val selectFilterLists = "a[href^='/anime/']"
 }

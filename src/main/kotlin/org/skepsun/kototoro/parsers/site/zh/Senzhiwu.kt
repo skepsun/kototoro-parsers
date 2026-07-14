@@ -44,4 +44,6 @@ internal class Senzhiwu(
         SortOrder.UPDATED to "time",
         SortOrder.POPULARITY to "hits",
     )
+
+    override val selectFilterLists = "div.module-card-item-title > a"
 }
