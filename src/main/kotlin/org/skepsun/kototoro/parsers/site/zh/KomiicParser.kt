@@ -46,7 +46,8 @@ internal class KomiicParser(context: ContentLoaderContext) :
     FavoritesProvider,
     FavoritesSyncProvider {
 
-    override val configKeyDomain = ConfigKey.Domain("komiic.com")
+    // 默认使用国内镜像 komiic.cc，komiic.com 不可达时可通过配置切回
+    override val configKeyDomain = ConfigKey.Domain("komiic.cc")
 
     // 使用桌面版 UA，降低被拦截概率
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
@@ -870,10 +871,10 @@ internal class KomiicParser(context: ContentLoaderContext) :
         }
     }
 
-    override val authUrl: String = "https://komiic.com/login"
+    override val authUrl: String get() = "https://$domain/login"
 
     override suspend fun isAuthorized(): Boolean {
-        return context.cookieJar.getCookies("komiic.com").any { it.name == "token" }
+        return context.cookieJar.getCookies(domain).any { it.name == "token" }
     }
 
     override suspend fun getUsername(): String {
