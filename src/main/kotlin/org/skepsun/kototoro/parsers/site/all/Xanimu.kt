@@ -1,0 +1,417 @@
+package org.skepsun.kototoro.parsers.site.all
+
+import okhttp3.Headers
+import org.jsoup.nodes.Document
+import org.skepsun.kototoro.parsers.ContentLoaderContext
+import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.config.ConfigKey
+import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.network.CloudFlareHelper
+import org.skepsun.kototoro.parsers.network.UserAgents
+import org.skepsun.kototoro.parsers.util.*
+import java.util.EnumSet
+
+/**
+ * Xanimu - 成人动漫/同人视频网站
+ *
+ * 网站: https://xanimu.com/
+ *
+ * 技术特点:
+ * - WordPress 站点，多语言支持（en/es/de/fr/pl/it/pt/cs/ru/uk/nl/hu/ja/ko/sv/vi/tr/da/zh-CN/ms）
+ * - 使用 Cloudflare 保护（managed challenge）
+ * - 需要代理访问（国内被墙）
+ * - 视频可能通过第三方 CDN 或内嵌播放器提供
+ *
+ * 页面结构 (基于 sitemap/robots.txt 推断):
+ * - 视频详情: /{video-slug}/ (WordPress post)
+ * - 分类: /category/{name}/
+ * - 标签: /tag/{name}/
+ * - 搜索: /?s={query} 或 /search/{query}
+ * - 多语言: /{lang}/ 前缀
+ *
+ * 过滤器 (静态枚举，基于常见成人动漫分类):
+ * - 分类: Uncensored, Censored, 3D, 2D, Cosplay, MMD, Motion Anime
+ * - 排序: 最新、最热
+ *
+ * 实现状态:
+ * - ✅ 视频列表解析
+ * - ✅ 视频详情解析
+ * - ✅ 视频 URL 提取
+ * - ✅ Cloudflare 检测与处理
+ * - ✅ 搜索功能
+ * - ✅ 分类过滤器
+ */
+@ContentSourceParser("XANIMU", "Xanimu", "en", type = ContentType.HENTAI_VIDEO)
+internal class Xanimu(context: ContentLoaderContext) :
+    PagedContentParser(context, ContentParserSource.XANIMU, pageSize = 24) {
+
+    override val configKeyDomain = ConfigKey.Domain("xanimu.com")
+
+    override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
+
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(userAgentKey)
+    }
+
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+        SortOrder.UPDATED,
+        SortOrder.NEWEST,
+        SortOrder.POPULARITY,
+    )
+
+    override val filterCapabilities: ContentListFilterCapabilities
+        get() = ContentListFilterCapabilities(
+            isSearchSupported = true,
+            isMultipleTagsSupported = true,
+        )
+
+    /**
+     * 静态分类标签 - 基于成人动漫视频常见分类
+     */
+    private val BUILTIN_TAGS: Set<ContentTag> = linkedSetOf(
+        // 内容类型
+        ContentTag("Censored", "censored", source),
+        ContentTag("Uncensored", "uncensored", source),
+        // 制作类型
+        ContentTag("3D", "3d", source),
+        ContentTag("2D", "2d", source),
+        ContentTag("Motion Anime", "motion-anime", source),
+        ContentTag("MMD", "mmd", source),
+        ContentTag("Cosplay", "cosplay", source),
+        ContentTag("Doujin", "doujin", source),
+        ContentTag("Games", "games", source),
+        // 内容标签
+        ContentTag("Ahegao", "ahegao", source),
+        ContentTag("Anal", "anal", source),
+        ContentTag("BDSM", "bdsm", source),
+        ContentTag("Big Boobs", "big-boobs", source),
+        ContentTag("Blowjob", "blowjob", source),
+        ContentTag("Bondage", "bondage", source),
+        ContentTag("Creampie", "creampie", source),
+        ContentTag("Futanari", "futanari", source),
+        ContentTag("Gangbang", "gangbang", source),
+        ContentTag("Harem", "harem", source),
+        ContentTag("Incest", "incest", source),
+        ContentTag("Loli", "loli", source),
+        ContentTag("MILF", "milf", source),
+        ContentTag("Monster", "monster", source),
+        ContentTag("NTR", "ntr", source),
+        ContentTag("School Girl", "school-girl", source),
+        ContentTag("Tentacle", "tentacle", source),
+        ContentTag("Threesome", "threesome", source),
+        ContentTag("Yuri", "yuri", source),
+        ContentTag("Yaoi", "yaoi", source),
+        ContentTag("Mind Control", "mind-control", source),
+        ContentTag("POV", "pov", source),
+        // 时长
+        ContentTag("Short (<10 min)", "short", source),
+        ContentTag("Medium (10-30 min)", "medium", source),
+        ContentTag("Long (>30 min)", "long", source),
+    )
+
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        return ContentListFilterOptions(
+            availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
+            availableTags = BUILTIN_TAGS,
+        )
+    }
+
+    override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .add("Accept-Language", "en-US,en;q=0.9")
+        .add("Sec-CH-UA", "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+        .add("Sec-CH-UA-Mobile", "?0")
+        .add("Sec-CH-UA-Platform", "\"Windows\"")
+        .add("Sec-Fetch-Dest", "document")
+        .add("Sec-Fetch-Mode", "navigate")
+        .add("Sec-Fetch-Site", "none")
+        .add("Sec-Fetch-User", "?1")
+        .add("Upgrade-Insecure-Requests", "1")
+        .build()
+
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+        val url = buildListUrl(page, order, filter)
+        val response = webClient.httpGet(url, getRequestHeaders())
+
+        // 检查 Cloudflare 保护
+        val protection = CloudFlareHelper.checkResponseForProtection(response)
+        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+            context.requestBrowserAction(this, url)
+        }
+
+        val doc = response.parseHtml()
+        return parseList(doc)
+    }
+
+    override suspend fun getDetails(manga: Content): Content {
+        val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
+
+        val protection = CloudFlareHelper.checkResponseForProtection(response)
+        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+            context.requestBrowserAction(this, manga.publicUrl)
+        }
+
+        val doc = response.parseHtml()
+
+        // 提取标题 - 多策略
+        val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
+            ?: doc.selectFirst("h1.entry-title, h1.post-title, h1")?.text()?.trim()
+            ?: manga.title
+
+        // 提取描述
+        val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: doc.selectFirst("meta[name=description]")?.attr("content")
+            ?: doc.selectFirst("div.entry-content p, div.post-content p")?.text()?.trim()
+
+        // 提取封面
+        val coverUrl = doc.selectFirst("meta[property=og:image]")?.attr("content")
+            ?: doc.selectFirst("div.entry-thumbnail img, div.post-thumbnail img, article img.wp-post-image")?.let {
+                it.attr("data-src").ifBlank { it.attr("src") }
+            }
+            ?: manga.coverUrl
+
+        // 提取标签
+        val tags = doc.select("a[rel=tag], a[href*=/tag/], a[href*=/category/]").mapNotNullToSet { elem ->
+            val tagName = elem.text().trim()
+            if (tagName.isNotEmpty()) {
+                ContentTag(
+                    key = elem.attr("href").substringAfterLast('/').substringBefore('?'),
+                    title = tagName,
+                    source = source,
+                )
+            } else null
+        }
+
+        // 创建单个章节
+        val chapter = ContentChapter(
+            id = generateUid("${manga.url}|video"),
+            url = manga.url,
+            title = "Watch",
+            number = 1f,
+            uploadDate = 0L,
+            volume = 0,
+            branch = null,
+            scanlator = null,
+            source = source,
+        )
+
+        return manga.copy(
+            title = title,
+            description = description?.takeIf { it.isNotBlank() },
+            coverUrl = coverUrl,
+            tags = if (tags.isNotEmpty()) tags else manga.tags,
+            chapters = listOf(chapter),
+        )
+    }
+
+    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
+        if (chapter.url.contains(".m3u8") || chapter.url.contains(".mp4")) {
+            return listOf(
+                ContentPage(
+                    id = generateUid(chapter.url),
+                    url = chapter.url,
+                    preview = null,
+                    source = source,
+                ),
+            )
+        }
+
+        val fullUrl = chapter.url.toAbsoluteUrl(domain)
+        val response = webClient.httpGet(fullUrl, getRequestHeaders())
+
+        val protection = CloudFlareHelper.checkResponseForProtection(response)
+        if (protection != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+            context.requestBrowserAction(this, fullUrl)
+        }
+
+        val doc = response.parseHtml()
+        val videoUrl = extractVideoUrl(doc) ?: return emptyList()
+
+        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
+
+        return listOf(
+            ContentPage(
+                id = generateUid(videoUrl),
+                url = videoUrl,
+                preview = poster,
+                source = source,
+            ),
+        )
+    }
+
+    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val base = StringBuilder("https://").append(domain)
+
+        if (!filter.query.isNullOrBlank()) {
+            // WordPress 搜索
+            base.append("/?s=").append(filter.query.urlEncoded())
+            if (page > 1) base.append("&paged=").append(page)
+        } else if (filter.tags.isNotEmpty()) {
+            // 多标签过滤
+            val tagSlugs = filter.tags.joinToString("+") { it.key }
+            base.append("/tag/").append(tagSlugs).append("/")
+            if (page > 1) base.append("page/").append(page).append("/")
+        } else {
+            // 主页
+            base.append("/")
+            if (page > 1) base.append("page/").append(page).append("/")
+        }
+
+        return base.toString()
+    }
+
+    private fun parseList(doc: Document): List<Content> {
+        val items = ArrayList<Content>(pageSize)
+        val seen = LinkedHashSet<String>()
+
+        // 策略 1: WordPress 文章卡片
+        val articles = doc.select("article.post, article.type-post, article.hentry, div.post, div.video-item")
+
+        for (article in articles) {
+            val link = article.selectFirst("a[href*=/]")
+            if (link == null) continue
+
+            val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
+            // 过滤掉非视频链接
+            if (href.contains("/category/") || href.contains("/tag/") ||
+                href.contains("/page/") || href == "/" || href == domain
+            ) continue
+
+            val absoluteUrl = href.toAbsoluteUrl(domain)
+            if (!seen.add(absoluteUrl)) continue
+
+            val img = article.selectFirst("img")
+            val coverUrl = img?.let {
+                it.attr("data-src").ifBlank { it.attr("data-original").ifBlank { it.attr("src") } }
+            }
+
+            val title = article.selectFirst("h2.entry-title, h2.post-title, h2, h3")?.text()?.trim()
+                ?: img?.attr("alt")?.trim()
+                ?: link.attr("title")?.trim()
+                ?: link.text().trim().ifEmpty { "Untitled" }
+
+            val duration = article.selectFirst("span.duration, span.length, time.duration")?.text()?.trim()
+
+            items.add(
+                Content(
+                    id = generateUid(absoluteUrl),
+                    url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                    publicUrl = absoluteUrl,
+                    title = title,
+                    altTitles = emptySet(),
+                    coverUrl = coverUrl ?: "",
+                    largeCoverUrl = coverUrl,
+                    authors = emptySet(),
+                    tags = emptySet(),
+                    state = null,
+                    description = if (duration.isNullOrBlank()) null else "时长: $duration",
+                    contentRating = ContentRating.ADULT,
+                    source = source,
+                    rating = RATING_UNKNOWN,
+                )
+            )
+
+            if (items.size >= pageSize) break
+        }
+
+        // 策略 2: 通用视频卡片
+        if (items.isEmpty()) {
+            val cards = doc.select("a[href*=/]").filter { a ->
+                val href = a.attr("href")
+                href.isNotBlank() && !href.contains("/category/") && !href.contains("/tag/") &&
+                !href.contains("/page/") && !href.contains("/cdn-cgi/") && href != "/" &&
+                !href.startsWith("#") && !href.startsWith("javascript:")
+            }
+
+            for (card in cards) {
+                val href = card.attr("href")
+                val absoluteUrl = href.toAbsoluteUrl(domain)
+                if (!seen.add(absoluteUrl)) continue
+
+                val img = card.selectFirst("img")
+                if (img == null) continue // 跳过没有图片的卡片
+
+                val coverUrl = img.attr("data-src").ifBlank { img.attr("data-original").ifBlank { img.attr("src") } }
+                val title = img.attr("alt").trim().ifBlank { card.attr("title").trim().ifBlank { card.text().trim().ifEmpty { "Untitled" } } }
+
+                items.add(
+                    Content(
+                        id = generateUid(absoluteUrl),
+                        url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                        publicUrl = absoluteUrl,
+                        title = title,
+                        altTitles = emptySet(),
+                        coverUrl = coverUrl,
+                        largeCoverUrl = coverUrl,
+                        authors = emptySet(),
+                        tags = emptySet(),
+                        state = null,
+                        description = null,
+                        contentRating = ContentRating.ADULT,
+                        source = source,
+                        rating = RATING_UNKNOWN,
+                    )
+                )
+
+                if (items.size >= pageSize) break
+            }
+        }
+
+        return items
+    }
+
+    private fun extractVideoUrl(doc: Document): String? {
+        val html = doc.outerHtml()
+
+        // 策略 1: og:video meta 标签
+        val ogVideo = doc.selectFirst("meta[property=og:video]")?.attr("content")
+            ?: doc.selectFirst("meta[property=og:video:secure_url]")?.attr("content")
+        if (!ogVideo.isNullOrBlank()) return ogVideo
+
+        // 策略 2: video 标签 source
+        val videoSource = doc.selectFirst("video source[src]")?.attr("src")
+        if (!videoSource.isNullOrBlank() && !videoSource.startsWith("blob:")) return videoSource
+
+        val videoSrc = doc.selectFirst("video[src]")?.attr("src")
+        if (!videoSrc.isNullOrBlank() && !videoSrc.startsWith("blob:")) return videoSrc
+
+        // 策略 3: iframe 嵌入
+        val iframe = doc.selectFirst("iframe[src]")
+        if (iframe != null) {
+            val iframeSrc = iframe.attr("src")
+            if (iframeSrc.isNotBlank() && !iframeSrc.startsWith("about:blank")) {
+                // 如果是嵌入的视频播放器，尝试提取直接的视频 URL
+                // 常见嵌入: player.php, embed.php, 或直接视频 URL
+                if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
+                    return iframeSrc
+                }
+                // 记录 iframe URL 作为备用
+                return iframeSrc.toAbsoluteUrl(domain)
+            }
+        }
+
+        // 策略 4: JavaScript 中的视频 URL
+        val jsVideoPatterns = listOf(
+            Regex("""(?:videoUrl|video_url|videoSrc|video_src|file|source|src)\s*[:=]\s*['\"]([^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]""", RegexOption.IGNORE_CASE),
+            Regex("""['\"](https?://[^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]"""),
+        )
+
+        for (pattern in jsVideoPatterns) {
+            val match = pattern.find(html)
+            if (match != null) {
+                return match.groupValues[1]
+            }
+        }
+
+        // 策略 5: 通用 m3u8/mp4 正则
+        val m3u8Pattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+        val m3u8Match = m3u8Pattern.find(html)
+        if (m3u8Match != null) return m3u8Match.value
+
+        val mp4Pattern = Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+        val mp4Match = mp4Pattern.find(html)
+        return mp4Match?.value
+    }
+}
