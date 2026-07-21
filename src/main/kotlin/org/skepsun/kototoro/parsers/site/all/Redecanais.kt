@@ -46,7 +46,7 @@ import java.util.EnumSet
  * - ✅ 搜索功能
  * - ✅ 分类过滤器
  */
-@ContentSourceParser("REDECANAIS", "Redecanais", "pt", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser("REDECANAIS", "Redecanais", type = ContentType.HENTAI_VIDEO)
 internal class Redecanais(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.REDECANAIS, pageSize = 24) {
 

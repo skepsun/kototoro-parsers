@@ -42,7 +42,7 @@ import java.util.EnumSet
  * - ✅ 搜索功能
  * - ✅ 分类过滤器
  */
-@ContentSourceParser("XANIMU", "Xanimu", "en", type = ContentType.HENTAI_VIDEO)
+@ContentSourceParser("XANIMU", "Xanimu", type = ContentType.HENTAI_VIDEO)
 internal class Xanimu(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.XANIMU, pageSize = 24) {
 
