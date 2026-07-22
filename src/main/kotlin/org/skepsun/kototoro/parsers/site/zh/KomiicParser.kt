@@ -905,12 +905,24 @@ internal class KomiicParser(context: ContentLoaderContext) :
 
         val res = runCatching { webClient.httpPost(url.toHttpUrl(), body, headers) }.getOrElse { return false }
         if (!res.isSuccessful) return false
-        val json = res.parseJsonObject()
-        val token = json.optString("token")
-            .ifEmpty { json.optJSONObject("results")?.optString("token").orEmpty() }
-            .ifEmpty { json.optJSONObject("data")?.optString("token").orEmpty() }
-        if (!token.isNullOrEmpty()) {
-            context.cookieJar.insertCookies(domain, "token=$token; Domain=${domain}; Path=/; HttpOnly")
+
+        // 先尝试从 JSON body 中提取 token
+        try {
+            val json = res.parseJsonObject()
+            val token = json.optString("token")
+                .ifEmpty { json.optJSONObject("results")?.optString("token").orEmpty() }
+                .ifEmpty { json.optJSONObject("data")?.optString("token").orEmpty() }
+            if (!token.isNullOrEmpty()) {
+                context.cookieJar.insertCookies(domain, "token=$token; Domain=${domain}; Path=/; HttpOnly")
+                return true
+            }
+        } catch (_: Exception) {
+            // 响应体可能为空或非 JSON，忽略解析错误，下面走 Cookie 方式
+        }
+
+        // 回退：检查响应 Cookie 中是否包含 token
+        val cookies = context.cookieJar.getCookies(domain)
+        if (cookies.any { it.name.equals("token", true) || it.name.equals("access_token", true) }) {
             return true
         }
         return false
