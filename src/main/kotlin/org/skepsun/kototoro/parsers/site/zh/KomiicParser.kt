@@ -33,6 +33,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.delay
 import org.skepsun.kototoro.parsers.util.json.mapJSONNotNullToSet
 import org.skepsun.kototoro.parsers.util.mapToSet
@@ -84,11 +85,15 @@ internal class KomiicParser(context: ContentLoaderContext) :
     private var searchFirstPageCache: List<Content>? = null
 
     // 为图片请求补充必要的头（主要是 Referer），避免部分服务端拒绝
+    // 参考 extensions-source：图片请求前检查 JWT 是否快过期，自动刷新 token
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
         val isImageReq = req.url.encodedPath.startsWith("/api/image/")
             && (req.url.host.equals(domain, ignoreCase = true) || req.url.host == "komiic.com")
         if (!isImageReq) return chain.proceed(req)
+
+        // 刷新即将过期的 JWT Token（参考 extensions-source Komiic.refreshToken）
+        refreshTokenIfNeeded(chain)
 
         // 参考 venera-configs/komiic.js 的 onImageLoad：从 URL 片段还原精准 Referer
         val fragment = req.url.fragment
@@ -109,7 +114,7 @@ internal class KomiicParser(context: ContentLoaderContext) :
             .header("User-Agent", UserAgents.CHROME_DESKTOP)
             .header("Referer", referer)
             .header("Origin", "https://$domain")
-            // 不在图片请求上强行附加 Authorization，避免服务端返回 400
+            // 不在图片请求上强行附加 Authorization，Cookie 已携带认证信息
             .removeHeader("Authorization")
             .build()
         val response = chain.proceed(newReq)
@@ -122,6 +127,46 @@ internal class KomiicParser(context: ContentLoaderContext) :
             )
         }
         return response
+    }
+
+    /**
+     * 参考 extensions-source Komiic.refreshToken：
+     * 从 Cookie 中读取 komiic-access-token（JWT），若距过期不足 1 小时则调用 /auth/refresh 刷新。
+     */
+    private fun refreshTokenIfNeeded(chain: Interceptor.Chain) {
+        val cookies = context.cookieJar.getCookies(domain)
+        val jwtCookie = cookies.firstOrNull { it.name == "komiic-access-token" } ?: return
+        val jwt = jwtCookie.value
+        val parts = jwt.split(".")
+        if (parts.size < 2) return
+        try {
+            val payload = String(java.util.Base64.getDecoder().decode(parts[1]))
+            val exp = try {
+                JSONObject(payload).getLong("exp")
+            } catch (_: Exception) {
+                0L
+            }
+            if (exp == 0L) return
+            // 距过期不足 1 小时则刷新
+            if (System.currentTimeMillis() + 3600_000 >= exp * 1000) {
+                val refreshReq = Request.Builder()
+                    .url("https://$domain/auth/refresh")
+                    .post(ByteArray(0).toRequestBody(null))
+                    .build()
+                val refreshResp = chain.proceed(refreshReq)
+                refreshResp.close()
+                if (!refreshResp.isSuccessful) {
+                    throw ParseException(
+                        "Komiic Token 刷新失敗：HTTP ${refreshResp.code}，請重新登录",
+                        "https://$domain/",
+                    )
+                }
+            }
+        } catch (e: ParseException) {
+            throw e
+        } catch (_: Exception) {
+            // JWT 解析失败，跳过刷新
+        }
     }
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
@@ -151,15 +196,14 @@ internal class KomiicParser(context: ContentLoaderContext) :
         .add("Sec-Fetch-Dest", "empty")
         .add("Content-Type", "application/json")
         .apply {
-            // 若存在登录产生的 token 或 access_token Cookie，附加 Bearer 认证头
+            // 若存在登录产生的 token / komiic-access-token Cookie，附加 Bearer 认证头
             val cookies = context.cookieJar.getCookies(domain)
             val tokenCookie: okhttp3.Cookie? = cookies.firstOrNull { c ->
-                c.name.equals("token", true) || c.name.equals("access_token", true)
+                c.name == "token" || c.name == "komiic-access-token"
             }
             if (tokenCookie != null) {
                 val v = tokenCookie.value
                 if (v.isNotEmpty()) {
-                    // 使用通用 Bearer 方案，部分接口可能更兼容
                     add("Authorization", "Bearer $v")
                 }
             }
@@ -881,7 +925,9 @@ internal class KomiicParser(context: ContentLoaderContext) :
     override val authUrl: String get() = "https://$domain/login"
 
     override suspend fun isAuthorized(): Boolean {
-        return context.cookieJar.getCookies(domain).any { it.name == "token" }
+        return context.cookieJar.getCookies(domain).any {
+            it.name == "token" || it.name == "komiic-access-token"
+        }
     }
 
     override suspend fun getUsername(): String {
@@ -920,9 +966,9 @@ internal class KomiicParser(context: ContentLoaderContext) :
             // 响应体可能为空或非 JSON，忽略解析错误，下面走 Cookie 方式
         }
 
-        // 回退：检查响应 Cookie 中是否包含 token
+        // 回退：检查响应 Cookie 中是否包含 token（支持 token / komiic-access-token）
         val cookies = context.cookieJar.getCookies(domain)
-        if (cookies.any { it.name.equals("token", true) || it.name.equals("access_token", true) }) {
+        if (cookies.any { it.name == "token" || it.name == "komiic-access-token" }) {
             return true
         }
         return false
