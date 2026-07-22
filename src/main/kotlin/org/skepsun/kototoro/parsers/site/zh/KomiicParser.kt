@@ -46,8 +46,8 @@ internal class KomiicParser(context: ContentLoaderContext) :
     FavoritesProvider,
     FavoritesSyncProvider {
 
-    // 默认使用国内镜像 komiic.cc，komiic.com 不可达时可通过配置切回
-    override val configKeyDomain = ConfigKey.Domain("komiic.cc")
+    // 默认使用国内镜像 komiic.cc，komiic.com 可选（需翻墙）
+    override val configKeyDomain = ConfigKey.Domain("komiic.cc", "komiic.com")
 
     // 使用桌面版 UA，降低被拦截概率
     override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
@@ -86,35 +86,42 @@ internal class KomiicParser(context: ContentLoaderContext) :
     // 为图片请求补充必要的头（主要是 Referer），避免部分服务端拒绝
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
-        val needsImageHeaders = req.url.host.equals(domain, ignoreCase = true)
-            && req.url.encodedPath.startsWith("/api/image/")
-        return if (needsImageHeaders) {
-            // 参考 venera-configs/komiic.js 的 onImageLoad：从 URL 片段还原精准 Referer
-            val fragment = req.url.fragment
-            val referer = if (!fragment.isNullOrEmpty() && fragment.contains("comic=") && fragment.contains("ep=")) {
-                val comicId = fragment.substringAfter("comic=").substringBefore('&')
-                val epId = fragment.substringAfter("ep=").substringBefore('&')
-                if (comicId.isNotEmpty() && epId.isNotEmpty()) {
-                    "https://$domain/comic/$comicId/chapter/$epId/images/all"
-                } else {
-                    "https://$domain/"
-                }
+        val isImageReq = req.url.encodedPath.startsWith("/api/image/")
+            && (req.url.host.equals(domain, ignoreCase = true) || req.url.host == "komiic.com")
+        if (!isImageReq) return chain.proceed(req)
+
+        // 参考 venera-configs/komiic.js 的 onImageLoad：从 URL 片段还原精准 Referer
+        val fragment = req.url.fragment
+        val referer = if (!fragment.isNullOrEmpty() && fragment.contains("comic=") && fragment.contains("ep=")) {
+            val comicId = fragment.substringAfter("comic=").substringBefore('&')
+            val epId = fragment.substringAfter("ep=").substringBefore('&')
+            if (comicId.isNotEmpty() && epId.isNotEmpty()) {
+                "https://$domain/comic/$comicId/chapter/$epId/images/all"
             } else {
                 "https://$domain/"
             }
-
-            val newReq = req.newBuilder()
-                .header("Accept", "image/webp,image/png;q=0.9,image/jpeg,*/*;q=0.8")
-                .header("User-Agent", UserAgents.CHROME_DESKTOP)
-                .header("Referer", referer)
-                .header("Origin", "https://$domain")
-                // 不在图片请求上强行附加 Authorization，避免服务端返回 400
-                .removeHeader("Authorization")
-                .build()
-            chain.proceed(newReq)
         } else {
-            chain.proceed(req)
+            "https://$domain/"
         }
+
+        val newReq = req.newBuilder()
+            .header("Accept", "image/webp,image/png;q=0.9,image/jpeg,*/*;q=0.8")
+            .header("User-Agent", UserAgents.CHROME_DESKTOP)
+            .header("Referer", referer)
+            .header("Origin", "https://$domain")
+            // 不在图片请求上强行附加 Authorization，避免服务端返回 400
+            .removeHeader("Authorization")
+            .build()
+        val response = chain.proceed(newReq)
+        // komiic.cc 未登录时图片返回 402（今日额度已用完），提醒用户登录
+        if (response.code == 402) {
+            response.close()
+            throw ParseException(
+                "Komiic 今日圖片讀取次數已達上限，請登录后重试",
+                "https://$domain/",
+            )
+        }
+        return response
     }
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
