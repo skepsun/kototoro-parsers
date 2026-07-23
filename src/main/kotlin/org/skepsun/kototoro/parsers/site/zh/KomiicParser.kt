@@ -87,7 +87,7 @@ internal class KomiicParser(context: ContentLoaderContext) :
     // 为图片请求补充必要的头（主要是 Referer），避免部分服务端拒绝
     // 参考 extensions-source：图片请求前检查 JWT 是否快过期，自动刷新 token
     // 封面图片走 /images/ 路径（非 /api/image/），也需要 Referer 才能加载
-    // public.komiic.com 是 .com 的 CDN，国内不可达，重写为 public.komiic.cc
+    // CDN 域名 public.komiic.* 统一跟随当前 domain 设置
     override fun intercept(chain: Interceptor.Chain): Response {
         var req = chain.request()
         val isImageReq = req.url.encodedPath.let { path ->
@@ -98,15 +98,18 @@ internal class KomiicParser(context: ContentLoaderContext) :
                 || IMAGE_EXTENSIONS.any { ext -> path.endsWith(ext, ignoreCase = true) }
         }
 
-        // 重写 CDN 域名 public.komiic.com → public.komiic.cc（国内不可达）
-        if (req.url.host == "public.komiic.com") {
-            req = req.newBuilder()
-                .url(req.url.newBuilder().host("public.komiic.cc").build())
-                .build()
+        // 重写 CDN 域名 public.komiic.* → public.{domain}，跟随用户域名设置
+        val cdnDomain = "public.$domain"
+        if (req.url.host == "public.komiic.com" || req.url.host == "public.komiic.cc") {
+            if (req.url.host != cdnDomain) {
+                req = req.newBuilder()
+                    .url(req.url.newBuilder().host(cdnDomain).build())
+                    .build()
+            }
         }
 
         val isOurHost = req.url.host == domain || req.url.host == "komiic.com"
-            || req.url.host == "public.komiic.cc"
+            || req.url.host == "komiic.cc" || req.url.host == cdnDomain
         if (!isImageReq || !isOurHost) return chain.proceed(req)
 
         // 刷新即将过期的 JWT Token（仅 /api/image/ 需要，参考 extensions-source Komiic.refreshToken）
@@ -136,7 +139,7 @@ internal class KomiicParser(context: ContentLoaderContext) :
             .removeHeader("Authorization")
             .build()
         val response = chain.proceed(newReq)
-        // komiic.cc 未登录时图片返回 402（今日额度已用完），提醒用户登录
+        // 未登录时图片返回 402（今日额度已用完），提醒用户登录
         if (response.code == 402) {
             response.close()
             throw ParseException(
@@ -484,9 +487,10 @@ internal class KomiicParser(context: ContentLoaderContext) :
     private fun JSONArray.toContentList(): List<Content> = mapJSON { jo ->
         val id = jo.optString("id")
         val title = jo.optString("title")
-        // 封面图片 CDN 可能返回 public.komiic.com，国内不可达，替换为 public.komiic.cc
+        // 封面图片 CDN 域名统一跟随 domain 设置（public.{domain}）
         val cover = jo.optString("imageUrl", null)
-            ?.replace("public.komiic.com", "public.komiic.cc")
+            ?.replace("public.komiic.com", "public.$domain")
+            ?.replace("public.komiic.cc", "public.$domain")
         val status = jo.optString("status", null)
         val state = when (status) {
             "END", "FINISHED", "finished" -> ContentState.FINISHED
@@ -736,7 +740,8 @@ internal class KomiicParser(context: ContentLoaderContext) :
         val obj: JSONObject = data.optJSONObject("comicById") ?: return manga
         val title = obj.optString("title", manga.title)
         val cover = obj.optString("imageUrl", manga.coverUrl)
-            ?.replace("public.komiic.com", "public.komiic.cc")
+            ?.replace("public.komiic.com", "public.$domain")
+            ?.replace("public.komiic.cc", "public.$domain")
         val status = obj.optString("status", null)
         val state = when (status) {
             "END", "FINISHED", "finished" -> ContentState.FINISHED
@@ -1086,7 +1091,8 @@ internal class KomiicParser(context: ContentLoaderContext) :
                 val cid = c.optString("id")
                 if (cid.isEmpty()) continue
                 val title = c.optString("title")
-                val cover = c.optString("imageUrl")?.replace("public.komiic.com", "public.komiic.cc")
+                val cover = c.optString("imageUrl")?.replace("public.komiic.com", "public.$domain")
+                    ?.replace("public.komiic.cc", "public.$domain")
                 val authors = (c.optJSONArray("authors") ?: JSONArray()).mapJSONNotNull { a ->
                     a.optString("name").takeIf { it.isNotEmpty() }
                 }.toSet()
