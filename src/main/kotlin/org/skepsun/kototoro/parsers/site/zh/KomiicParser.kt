@@ -86,14 +86,24 @@ internal class KomiicParser(context: ContentLoaderContext) :
 
     // 为图片请求补充必要的头（主要是 Referer），避免部分服务端拒绝
     // 参考 extensions-source：图片请求前检查 JWT 是否快过期，自动刷新 token
+    // 封面图片走 /images/ 路径（非 /api/image/），也需要 Referer 才能加载
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
-        val isImageReq = req.url.encodedPath.startsWith("/api/image/")
-            && (req.url.host.equals(domain, ignoreCase = true) || req.url.host == "komiic.com")
+        val isOurHost = req.url.host.equals(domain, ignoreCase = true) || req.url.host == "komiic.com"
+        val isImageReq = isOurHost && (
+            req.url.encodedPath.startsWith("/api/image/")
+                || req.url.encodedPath.let { path ->
+                    // 封面图片路径（如 /images/xxx.jpg）
+                    path.startsWith("/images/") || path.startsWith("/media/")
+                        || IMAGE_EXTENSIONS.any { ext -> path.endsWith(ext, ignoreCase = true) }
+                }
+        )
         if (!isImageReq) return chain.proceed(req)
 
-        // 刷新即将过期的 JWT Token（参考 extensions-source Komiic.refreshToken）
-        refreshTokenIfNeeded(chain)
+        // 刷新即将过期的 JWT Token（仅 /api/image/ 需要，参考 extensions-source Komiic.refreshToken）
+        if (req.url.encodedPath.startsWith("/api/image/")) {
+            refreshTokenIfNeeded(chain)
+        }
 
         // 参考 venera-configs/komiic.js 的 onImageLoad：从 URL 片段还原精准 Referer
         val fragment = req.url.fragment
@@ -114,7 +124,6 @@ internal class KomiicParser(context: ContentLoaderContext) :
             .header("User-Agent", UserAgents.CHROME_DESKTOP)
             .header("Referer", referer)
             .header("Origin", "https://$domain")
-            // 不在图片请求上强行附加 Authorization，Cookie 已携带认证信息
             .removeHeader("Authorization")
             .build()
         val response = chain.proceed(newReq)
@@ -127,6 +136,10 @@ internal class KomiicParser(context: ContentLoaderContext) :
             )
         }
         return response
+    }
+
+    companion object {
+        private val IMAGE_EXTENSIONS = arrayOf(".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif")
     }
 
     /**
