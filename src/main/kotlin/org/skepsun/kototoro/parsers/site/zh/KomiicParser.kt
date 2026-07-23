@@ -87,18 +87,25 @@ internal class KomiicParser(context: ContentLoaderContext) :
     // 为图片请求补充必要的头（主要是 Referer），避免部分服务端拒绝
     // 参考 extensions-source：图片请求前检查 JWT 是否快过期，自动刷新 token
     // 封面图片走 /images/ 路径（非 /api/image/），也需要 Referer 才能加载
+    // public.komiic.com 是 CDN 域名，国内不可达，需重写为当前 domain
     override fun intercept(chain: Interceptor.Chain): Response {
-        val req = chain.request()
+        var req = chain.request()
+        val isImageReq = req.url.encodedPath.let { path ->
+            path.startsWith("/api/image/")
+                || path.startsWith("/images/")
+                || path.startsWith("/media/")
+                || IMAGE_EXTENSIONS.any { ext -> path.endsWith(ext, ignoreCase = true) }
+        }
+
+        // 重写 CDN 域名 public.komiic.com → 当前 domain（国内不可达）
+        if (req.url.host == "public.komiic.com") {
+            req = req.newBuilder()
+                .url(req.url.newBuilder().host(domain).build())
+                .build()
+        }
+
         val isOurHost = req.url.host.equals(domain, ignoreCase = true) || req.url.host == "komiic.com"
-        val isImageReq = isOurHost && (
-            req.url.encodedPath.startsWith("/api/image/")
-                || req.url.encodedPath.let { path ->
-                    // 封面图片路径（如 /images/xxx.jpg）
-                    path.startsWith("/images/") || path.startsWith("/media/")
-                        || IMAGE_EXTENSIONS.any { ext -> path.endsWith(ext, ignoreCase = true) }
-                }
-        )
-        if (!isImageReq) return chain.proceed(req)
+        if (!isImageReq || !isOurHost) return chain.proceed(req)
 
         // 刷新即将过期的 JWT Token（仅 /api/image/ 需要，参考 extensions-source Komiic.refreshToken）
         if (req.url.encodedPath.startsWith("/api/image/")) {
@@ -475,7 +482,9 @@ internal class KomiicParser(context: ContentLoaderContext) :
     private fun JSONArray.toContentList(): List<Content> = mapJSON { jo ->
         val id = jo.optString("id")
         val title = jo.optString("title")
+        // 封面图片可能返回 CDN 域名 public.komiic.com，国内不可达，替换为当前 domain
         val cover = jo.optString("imageUrl", null)
+            ?.replace("public.komiic.com", domain)
         val status = jo.optString("status", null)
         val state = when (status) {
             "END", "FINISHED", "finished" -> ContentState.FINISHED
@@ -725,6 +734,7 @@ internal class KomiicParser(context: ContentLoaderContext) :
         val obj: JSONObject = data.optJSONObject("comicById") ?: return manga
         val title = obj.optString("title", manga.title)
         val cover = obj.optString("imageUrl", manga.coverUrl)
+            ?.replace("public.komiic.com", domain)
         val status = obj.optString("status", null)
         val state = when (status) {
             "END", "FINISHED", "finished" -> ContentState.FINISHED
@@ -1074,7 +1084,7 @@ internal class KomiicParser(context: ContentLoaderContext) :
                 val cid = c.optString("id")
                 if (cid.isEmpty()) continue
                 val title = c.optString("title")
-                val cover = c.optString("imageUrl")
+                val cover = c.optString("imageUrl")?.replace("public.komiic.com", domain)
                 val authors = (c.optJSONArray("authors") ?: JSONArray()).mapJSONNotNull { a ->
                     a.optString("name").takeIf { it.isNotEmpty() }
                 }.toSet()
