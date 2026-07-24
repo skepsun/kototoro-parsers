@@ -16,32 +16,32 @@ import java.util.EnumSet
  * Xanimu - 成人动漫/同人视频网站
  *
  * 网站: https://xanimu.com/
+ * 最后验证: 2025-07-24
  *
- * 技术特点:
- * - WordPress 站点，多语言支持（en/es/de/fr/pl/it/pt/cs/ru/uk/nl/hu/ja/ko/sv/vi/tr/da/zh-CN/ms）
- * - 使用 Cloudflare 保护（managed challenge）
- * - 需要代理访问（国内被墙）
- * - 视频可能通过第三方 CDN 或内嵌播放器提供
+ * ⚠️ 可用性状态:
+ * - HTTP 403 + Cloudflare managed challenge (Just a moment...)
+ * - 需要用户在浏览器中完成 CF 验证后才能使用（Cookie 持久化）
+ * - 需要代理访问（国内直连被墙）
+ * - 所有路径均受 CF 保护，包括 /tag以下、/category以下、robots.txt
+ * - sitemap 显示多语言支持 (19种语言)
  *
  * 页面结构 (基于 sitemap/robots.txt 推断):
  * - 视频详情: /{video-slug}/ (WordPress post)
  * - 分类: /category/{name}/
  * - 标签: /tag/{name}/
- * - 搜索: /?s={query} 或 /search/{query}
+ * - 搜索: /?s={query}
  * - 多语言: /{lang}/ 前缀
  *
- * 过滤器 (静态枚举，基于常见成人动漫分类):
- * - 分类: Uncensored, Censored, 3D, 2D, Cosplay, MMD, Motion Anime
- * - 排序: 最新、最热
- *
- * 实现状态:
- * - ✅ 视频列表解析
- * - ✅ 视频详情解析
- * - ✅ 视频 URL 提取
- * - ✅ Cloudflare 检测与处理
- * - ✅ 搜索功能
- * - ✅ 分类过滤器
+ * 解析器特性:
+ * - ✅ CF 保护检测 requestBrowserAction 提示用户验证
+ * - ✅ 静态标签过滤器 (34个)
+ * - ✅ 搜索支持
+ * - ✅ 多策略视频 URL 提取 (og:video / video标签 / iframe / JS变量 / m3u8/mp4正则)
+ * - ❓ 翻页需要实际页面验证 (paged=N 或 /page/N/)
+ * - ❓ 列表 HTML 选择器需要实际页面确认
  */
+
+// 2025-07-24 验证: HTTP 403 CF managed challenge，需浏览器完成验证后才能正常解析
 @ContentSourceParser("XANIMU", "Xanimu", type = ContentType.HENTAI_VIDEO)
 internal class Xanimu(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.XANIMU, pageSize = 24) {
@@ -173,16 +173,17 @@ internal class Xanimu(context: ContentLoaderContext) :
             ?: manga.coverUrl
 
         // 提取标签
-        val tags = doc.select("a[rel=tag], a[href*=/tag/], a[href*=/category/]").mapNotNullToSet { elem ->
-            val tagName = elem.text().trim()
-            if (tagName.isNotEmpty()) {
-                ContentTag(
-                    key = elem.attr("href").substringAfterLast('/').substringBefore('?'),
-                    title = tagName,
-                    source = source,
-                )
-            } else null
-        }
+        val tags = doc.select("a[rel=tag], a[href*=/tag/], a[href*=/category/]")
+            .mapNotNullToSet { elem ->
+                val tagName = elem.text().trim()
+                if (tagName.isNotEmpty()) {
+                    ContentTag(
+                        key = elem.attr("href").substringAfterLast('/').substringBefore('?'),
+                        title = tagName,
+                        source = source,
+                    )
+                } else null
+            }
 
         // 创建单个章节
         val chapter = ContentChapter(
@@ -267,7 +268,9 @@ internal class Xanimu(context: ContentLoaderContext) :
         val seen = LinkedHashSet<String>()
 
         // 策略 1: WordPress 文章卡片
-        val articles = doc.select("article.post, article.type-post, article.hentry, div.post, div.video-item")
+        val articles = doc.select(
+            "article.post, article.type-post, article.hentry, div.post, div.video-item"
+        )
 
         for (article in articles) {
             val link = article.selectFirst("a[href*=/]")
@@ -287,17 +290,20 @@ internal class Xanimu(context: ContentLoaderContext) :
                 it.attr("data-src").ifBlank { it.attr("data-original").ifBlank { it.attr("src") } }
             }
 
-            val title = article.selectFirst("h2.entry-title, h2.post-title, h2, h3")?.text()?.trim()
+            val title = article.selectFirst("h2.entry-title, h2.post-title, h2, h3")
+                ?.text()?.trim()
                 ?: img?.attr("alt")?.trim()
                 ?: link.attr("title")?.trim()
                 ?: link.text().trim().ifEmpty { "Untitled" }
 
-            val duration = article.selectFirst("span.duration, span.length, time.duration")?.text()?.trim()
+            val duration = article.selectFirst("span.duration, span.length, time.duration")
+                ?.text()?.trim()
 
             items.add(
                 Content(
                     id = generateUid(absoluteUrl),
-                    url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                    url = absoluteUrl.removePrefix("https://$domain")
+                        .removePrefix("http://$domain"),
                     publicUrl = absoluteUrl,
                     title = title,
                     altTitles = emptySet(),
@@ -320,9 +326,10 @@ internal class Xanimu(context: ContentLoaderContext) :
         if (items.isEmpty()) {
             val cards = doc.select("a[href*=/]").filter { a ->
                 val href = a.attr("href")
-                href.isNotBlank() && !href.contains("/category/") && !href.contains("/tag/") &&
-                !href.contains("/page/") && !href.contains("/cdn-cgi/") && href != "/" &&
-                !href.startsWith("#") && !href.startsWith("javascript:")
+                href.isNotBlank() && !href.contains("/category/") &&
+                    !href.contains("/tag/") && !href.contains("/page/") &&
+                    !href.contains("/cdn-cgi/") && href != "/" &&
+                    !href.startsWith("#") && !href.startsWith("javascript:")
             }
 
             for (card in cards) {
@@ -331,15 +338,18 @@ internal class Xanimu(context: ContentLoaderContext) :
                 if (!seen.add(absoluteUrl)) continue
 
                 val img = card.selectFirst("img")
-                if (img == null) continue // 跳过没有图片的卡片
+                if (img == null) continue
 
-                val coverUrl = img.attr("data-src").ifBlank { img.attr("data-original").ifBlank { img.attr("src") } }
-                val title = img.attr("alt").trim().ifBlank { card.attr("title").trim().ifBlank { card.text().trim().ifEmpty { "Untitled" } } }
+                val coverUrl = img.attr("data-src")
+                    .ifBlank { img.attr("data-original").ifBlank { img.attr("src") } }
+                val title = img.attr("alt").trim()
+                    .ifBlank { card.attr("title").trim().ifBlank { card.text().trim().ifEmpty { "Untitled" } } }
 
                 items.add(
                     Content(
                         id = generateUid(absoluteUrl),
-                        url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                        url = absoluteUrl.removePrefix("https://$domain")
+                            .removePrefix("http://$domain"),
                         publicUrl = absoluteUrl,
                         title = title,
                         altTitles = emptySet(),
@@ -382,19 +392,19 @@ internal class Xanimu(context: ContentLoaderContext) :
         if (iframe != null) {
             val iframeSrc = iframe.attr("src")
             if (iframeSrc.isNotBlank() && !iframeSrc.startsWith("about:blank")) {
-                // 如果是嵌入的视频播放器，尝试提取直接的视频 URL
-                // 常见嵌入: player.php, embed.php, 或直接视频 URL
                 if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
                     return iframeSrc
                 }
-                // 记录 iframe URL 作为备用
                 return iframeSrc.toAbsoluteUrl(domain)
             }
         }
 
         // 策略 4: JavaScript 中的视频 URL
         val jsVideoPatterns = listOf(
-            Regex("""(?:videoUrl|video_url|videoSrc|video_src|file|source|src)\s*[:=]\s*['\"]([^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]""", RegexOption.IGNORE_CASE),
+            Regex(
+                """(?:videoUrl|video_url|videoSrc|video_src|file|source|src)\s*[:=]\s*['\"]([^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]""",
+                RegexOption.IGNORE_CASE,
+            ),
             Regex("""['\"](https?://[^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]"""),
         )
 
@@ -406,11 +416,17 @@ internal class Xanimu(context: ContentLoaderContext) :
         }
 
         // 策略 5: 通用 m3u8/mp4 正则
-        val m3u8Pattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+        val m3u8Pattern = Regex(
+            """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""",
+            RegexOption.IGNORE_CASE,
+        )
         val m3u8Match = m3u8Pattern.find(html)
         if (m3u8Match != null) return m3u8Match.value
 
-        val mp4Pattern = Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+        val mp4Pattern = Regex(
+            """https?://[^\s"'<>]+\.mp4[^\s"'<>]*""",
+            RegexOption.IGNORE_CASE,
+        )
         val mp4Match = mp4Pattern.find(html)
         return mp4Match?.value
     }

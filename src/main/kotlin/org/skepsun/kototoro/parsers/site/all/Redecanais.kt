@@ -13,39 +13,41 @@ import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
 /**
- * Redecanais - 巴西成人/影视视频网站
+ * Redecanais - 巴西影视/成人视频网站
  *
- * 网站: https://redecanais.to/ (原 redecanais.win 重定向至此)
+ * 网站: https://redecanais.to/
+ * 最后验证: 2025-07-24
  *
- * 技术特点:
- * - 使用 JWT-based JS Challenge 重定向保护
- * - 首次访问返回 JS 重定向页面，需要执行 JS 获取 JWT token
- * - 需要 Cookie 维持会话（sid）
- * - 使用 consentmanager 处理 GDPR 合规
- * - 需要浏览器或代理访问
+ * ⚠️ 可用性状态:
+ * - JS Challenge 重定向保护 (JWT-based)
+ * - 首次访问返回 <title>Loading...</title> + location.replace() 重定向
+ * - 目标地址包含 ch=1&js={JWT}&sid={UUID} 参数
+ * - 需要浏览器完成 JS 验证后才能获取真实页面内容
+ * - 原域名 redecanais.win HTTP 403 (Cloudflare)
+ * - 当前域名 redecanais.to HTTP 200 但返回 JS Challenge
+ * - 需要代理访问
+ * - 页面使用 consentmanager GDPR/CMP
+ * - 嵌入 onelink ads
  *
- * 页面结构 (推断):
- * - 首页: / 视频列表
+ * 页面结构 (推断，无法获取实际 HTML):
+ * - 首页: /
  * - 电影: /filmes/
  * - 剧集: /series/
- * - 搜索: /search/?q={query}
+ * - 搜索: /search/
  * - 分类: /category/{name}/
  * - 详情页: /{slug}/
- * - 视频播放: 内嵌 iframe 或 video 标签
  *
- * 过滤器:
- * - 分类: Filmes (电影), Series (剧集), Canais (频道), Dublado (配音), Legendado (字幕)
- * - 排序: 最新、热门
- * - 内容类型: 成人/普通视频混合
- *
- * 实现状态:
- * - ✅ 视频列表解析
- * - ✅ 视频详情解析
- * - ✅ 视频 URL 提取
- * - ✅ JS Challenge 检测与处理
- * - ✅ 搜索功能
- * - ✅ 分类过滤器
+ * 解析器特性:
+ * - ✅ JS Challenge 检测 requestBrowserAction 提示用户验证
+ * - ✅ 静态标签过滤器 (32个葡萄牙语标签)
+ * - ✅ 搜索支持
+ * - ✅ 多策略视频 URL 提取 (含 iframe 嵌入)
+ * - ❓ 翻页需要实际页面确认
+ * - ❓ 列表 HTML 选择器需要实际页面确认
  */
+
+// 2025-07-24 验证: JS Challenge 重定向保护 (location.replace + JWT)
+// 原域名 redecanais.win 已 403，当前可用域名 redecanais.to
 @ContentSourceParser("REDECANAIS", "Redecanais", type = ContentType.HENTAI_VIDEO)
 internal class Redecanais(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.REDECANAIS, pageSize = 24) {
@@ -77,27 +79,27 @@ internal class Redecanais(context: ContentLoaderContext) :
     private val BUILTIN_TAGS: Set<ContentTag> = linkedSetOf(
         // 内容类型
         ContentTag("Filmes", "filmes", source),
-        ContentTag("Séries", "series", source),
+        ContentTag("Series", "series", source),
         ContentTag("Canais", "canais", source),
         // 语言/配音
         ContentTag("Dublado", "dublado", source),
         ContentTag("Legendado", "legendado", source),
         ContentTag("Nacional", "nacional", source),
         // 分类
-        ContentTag("Ação", "acao", source),
+        ContentTag("Acao", "acao", source),
         ContentTag("Aventura", "aventura", source),
-        ContentTag("Comédia", "comedia", source),
+        ContentTag("Comedia", "comedia", source),
         ContentTag("Drama", "drama", source),
-        ContentTag("Ficção Científica", "ficcao-cientifica", source),
+        ContentTag("Ficcao Cientifica", "ficcao-cientifica", source),
         ContentTag("Terror", "terror", source),
         ContentTag("Suspense", "suspense", source),
         ContentTag("Romance", "romance", source),
-        ContentTag("Documentário", "documentario", source),
+        ContentTag("Documentario", "documentario", source),
         ContentTag("Anime", "anime", source),
-        ContentTag("Animação", "animacao", source),
+        ContentTag("Animacao", "animacao", source),
         ContentTag("Infantil", "infantil", source),
         ContentTag("Adulto", "adulto", source),
-        ContentTag("Erótico", "erotico", source),
+        ContentTag("Erotico", "erotico", source),
         // 来源
         ContentTag("Netflix", "netflix", source),
         ContentTag("Amazon Prime", "amazon-prime", source),
@@ -175,17 +177,22 @@ internal class Redecanais(context: ContentLoaderContext) :
         // 提取描述
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
             ?: doc.selectFirst("meta[name=description]")?.attr("content")
-            ?: doc.selectFirst("div.entry-content p, div.post-content p, div.synopsis, div.descricao")?.text()?.trim()
+            ?: doc.selectFirst("div.entry-content p, div.post-content p, div.synopsis, div.descricao")
+                ?.text()?.trim()
 
         // 提取封面
         val coverUrl = doc.selectFirst("meta[property=og:image]")?.attr("content")
-            ?: doc.selectFirst("div.entry-thumbnail img, div.post-thumbnail img, article img.wp-post-image, img.poster")?.let {
+            ?: doc.selectFirst(
+                "div.entry-thumbnail img, div.post-thumbnail img, article img.wp-post-image, img.poster"
+            )?.let {
                 it.attr("data-src").ifBlank { it.attr("src") }
             }
             ?: manga.coverUrl
 
         // 提取标签/分类
-        val tags = doc.select("a[rel=tag], a[href*=/tag/], a[href*=/category/], a[href*=/categoria/], a[href*=/genero/]").mapNotNullToSet { elem ->
+        val tags = doc.select(
+            "a[rel=tag], a[href*=/tag/], a[href*=/category/], a[href*=/categoria/], a[href*=/genero/]"
+        ).mapNotNullToSet { elem ->
             val tagName = elem.text().trim()
             if (tagName.isNotEmpty()) {
                 ContentTag(
@@ -198,11 +205,15 @@ internal class Redecanais(context: ContentLoaderContext) :
 
         // 提取元数据（时长、年份等）
         val metadataParts = mutableListOf<String>()
-        doc.select("span.duration, span.duracao, span.year, span.ano, span.quality, span.qualidade").forEach { span ->
+        doc.select(
+            "span.duration, span.duracao, span.year, span.ano, span.quality, span.qualidade"
+        ).forEach { span ->
             val text = span.text().trim()
             if (text.isNotEmpty()) metadataParts.add(text)
         }
-        val metadataDescription = if (metadataParts.isNotEmpty()) metadataParts.joinToString(" | ") else null
+        val metadataDescription = if (metadataParts.isNotEmpty()) {
+            metadataParts.joinToString(" | ")
+        } else null
 
         val finalDescription = listOfNotNull(description, metadataDescription)
             .joinToString("\n")
@@ -305,8 +316,11 @@ internal class Redecanais(context: ContentLoaderContext) :
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
-        // 策略 1: WordPress 文章卡片
-        val articles = doc.select("article.post, article.type-post, article.hentai, div.post, div.movie-item, div.video-item, div.item")
+        // 策略 1: 文章/视频卡片
+        val articles = doc.select(
+            "article.post, article.type-post, article.hentai, " +
+                "div.post, div.movie-item, div.video-item, div.item"
+        )
 
         for (article in articles) {
             val link = article.selectFirst("a[href]")
@@ -314,8 +328,9 @@ internal class Redecanais(context: ContentLoaderContext) :
 
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
             // 过滤非详情链接
-            if (href.contains("/category/") || href.contains("/tag/") || href.contains("/categoria/") ||
-                href.contains("/page/") || href == "/" || href == domain || href.contains("/search/")
+            if (href.contains("/category/") || href.contains("/tag/") ||
+                href.contains("/categoria/") || href.contains("/page/") ||
+                href.contains("/search/") || href == "/" || href == domain
             ) continue
 
             val absoluteUrl = href.toAbsoluteUrl(domain)
@@ -326,23 +341,28 @@ internal class Redecanais(context: ContentLoaderContext) :
                 it.attr("data-src").ifBlank { it.attr("data-original").ifBlank { it.attr("src") } }
             }
 
-            val title = article.selectFirst("h2.entry-title, h2.post-title, h2.title, h2, h3")?.text()?.trim()
+            val title = article.selectFirst(
+                "h2.entry-title, h2.post-title, h2.title, h2, h3"
+            )?.text()?.trim()
                 ?: img?.attr("alt")?.trim()
                 ?: link.attr("title")?.trim()
                 ?: link.text().trim().ifEmpty { "Untitled" }
 
-            val duration = article.selectFirst("span.duration, span.duracao, span.time")?.text()?.trim()
-            val quality = article.selectFirst("span.quality, span.qualidade")?.text()?.trim()
+            val duration = article.selectFirst("span.duration, span.duracao, span.time")
+                ?.text()?.trim()
+            val quality = article.selectFirst("span.quality, span.qualidade")
+                ?.text()?.trim()
 
             val descParts = listOfNotNull(
-                if (duration.isNullOrBlank()) null else "Duração: $duration",
+                if (duration.isNullOrBlank()) null else "Duracao: $duration",
                 if (quality.isNullOrBlank()) null else "Qualidade: $quality",
             ).joinToString(" | ")
 
             items.add(
                 Content(
                     id = generateUid(absoluteUrl),
-                    url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                    url = absoluteUrl.removePrefix("https://$domain")
+                        .removePrefix("http://$domain"),
                     publicUrl = absoluteUrl,
                     title = title,
                     altTitles = emptySet(),
@@ -365,10 +385,12 @@ internal class Redecanais(context: ContentLoaderContext) :
         if (items.isEmpty()) {
             val cards = doc.select("a[href]").filter { a ->
                 val href = a.attr("href")
-                href.isNotBlank() && !href.contains("/category/") && !href.contains("/tag/") &&
-                !href.contains("/categoria/") && !href.contains("/page/") && !href.contains("/search/") &&
-                !href.contains("/cdn-cgi/") && href != "/" && !href.startsWith("#") &&
-                !href.startsWith("javascript:") && !href.contains("consentmanager")
+                href.isNotBlank() && !href.contains("/category/") &&
+                    !href.contains("/tag/") && !href.contains("/categoria/") &&
+                    !href.contains("/page/") && !href.contains("/search/") &&
+                    !href.contains("/cdn-cgi/") && href != "/" &&
+                    !href.startsWith("#") && !href.startsWith("javascript:") &&
+                    !href.contains("consentmanager")
             }
 
             for (card in cards) {
@@ -379,13 +401,16 @@ internal class Redecanais(context: ContentLoaderContext) :
                 val img = card.selectFirst("img")
                 if (img == null) continue
 
-                val coverUrl = img.attr("data-src").ifBlank { img.attr("data-original").ifBlank { img.attr("src") } }
-                val title = img.attr("alt").trim().ifBlank { card.attr("title").trim().ifBlank { card.text().trim().ifEmpty { "Untitled" } } }
+                val coverUrl = img.attr("data-src")
+                    .ifBlank { img.attr("data-original").ifBlank { img.attr("src") } }
+                val title = img.attr("alt").trim()
+                    .ifBlank { card.attr("title").trim().ifBlank { card.text().trim().ifEmpty { "Untitled" } } }
 
                 items.add(
                     Content(
                         id = generateUid(absoluteUrl),
-                        url = absoluteUrl.removePrefix("https://$domain").removePrefix("http://$domain"),
+                        url = absoluteUrl.removePrefix("https://$domain")
+                            .removePrefix("http://$domain"),
                         publicUrl = absoluteUrl,
                         title = title,
                         altTitles = emptySet(),
@@ -431,14 +456,16 @@ internal class Redecanais(context: ContentLoaderContext) :
                 if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
                     return iframeSrc
                 }
-                // 返回 iframe URL 作为备用
                 return iframeSrc.toAbsoluteUrl(domain)
             }
         }
 
         // 策略 4: JavaScript 中的视频 URL
         val jsVideoPatterns = listOf(
-            Regex("""(?:videoUrl|video_url|videoSrc|video_src|file|source|src|player_url|embed_url)\s*[:=]\s*['\"]([^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]""", RegexOption.IGNORE_CASE),
+            Regex(
+                """(?:videoUrl|video_url|videoSrc|video_src|file|source|src|player_url|embed_url)\s*[:=]\s*['\"]([^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]""",
+                RegexOption.IGNORE_CASE,
+            ),
             Regex("""['\"](https?://[^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]"""),
         )
 
@@ -450,11 +477,17 @@ internal class Redecanais(context: ContentLoaderContext) :
         }
 
         // 策略 5: 通用 m3u8/mp4 正则
-        val m3u8Pattern = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+        val m3u8Pattern = Regex(
+            """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""",
+            RegexOption.IGNORE_CASE,
+        )
         val m3u8Match = m3u8Pattern.find(html)
         if (m3u8Match != null) return m3u8Match.value
 
-        val mp4Pattern = Regex("""https?://[^\s"'<>]+\.mp4[^\s"'<>]*""", RegexOption.IGNORE_CASE)
+        val mp4Pattern = Regex(
+            """https?://[^\s"'<>]+\.mp4[^\s"'<>]*""",
+            RegexOption.IGNORE_CASE,
+        )
         val mp4Match = mp4Pattern.find(html)
         return mp4Match?.value
     }
