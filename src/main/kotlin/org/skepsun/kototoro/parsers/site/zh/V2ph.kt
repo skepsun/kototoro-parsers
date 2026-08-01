@@ -16,7 +16,7 @@ import java.util.*
  * Login is required to view full albums (non-logged-in users are limited to ~10 images).
  * Uses browser-based login via WebView since the site has Cloudflare protection.
  */
-@ContentSourceParser(name = "V2PH", title = "微图坊", locale = "zh", type = ContentType.IMAGE_SET)
+@ContentSourceParser(name = "V2PH", title = "微图坊", locale = "zh", type = ContentType.HENTAI_MANGA)
 internal class V2ph(
     context: ContentLoaderContext,
 ) : PagedContentParser(
