@@ -21,7 +21,7 @@ import kotlin.runCatching
 /**
  * MangaFire (mangafire.to) — 基于新 REST API。
  *
- * 单一源，所有语言翻译混合展示，按语言分 branch。
+ * 单一源，章节仅加载设置中选定的语言，并按翻译版本分 branch。
  *
  * API 端点:
  * - GET /api/titles        — 列表/搜索
@@ -44,7 +44,6 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
     private val preferredLanguageKey = ConfigKey.PreferredLanguage(
         title = "Preferred Language",
         presetValues = linkedMapOf(
-            "all" to "All Languages",
             "en" to "English",
             "es" to "Spanish",
             "es-la" to "Spanish (Latin America)",
@@ -53,22 +52,11 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
             "pt" to "Portuguese",
             "pt-br" to "Portuguese (Brazil)",
         ),
-        defaultValue = "all",
+        defaultValue = DEFAULT_LANGUAGE,
     )
 
-    /**
-     * 所有可能用到的语言代码，章节加载时会逐一尝试。
-     * 如果用户设置了 preferred language，则只加载该语言。
-     */
-    private val targetLanguages: List<String>
-        get() {
-            val preferred = config[preferredLanguageKey]
-            return if (preferred.isNotBlank() && preferred != "all") {
-                listOf(preferred)
-            } else {
-                allLanguages
-            }
-        }
+    private val preferredLanguage: String
+        get() = config[preferredLanguageKey].takeIf(langCodeToName::containsKey) ?: DEFAULT_LANGUAGE
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
@@ -176,7 +164,7 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
             }
         }.build()
 
-        val json = webClient.httpGet(url).parseJson()
+        val json = webClient.httpGet(MangaFireVrfSigner.sign(url)).parseJson()
         val items = json.optJSONArray("items") ?: return emptyList()
 
         return items.mapJSON { item -> item.parseMangaListItem() }
@@ -216,7 +204,7 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
 
     override suspend fun getDetails(manga: Content): Content {
         val hid = getHid(manga.url)
-        val json = webClient.httpGet("https://$domain/api/titles/$hid").parseJson()
+        val json = webClient.httpGet(apiUrl("titles/$hid")).parseJson()
         val data = json.getJSONObject("data")
 
         val title = data.getString("title")
@@ -253,7 +241,7 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
         val allTags = (genreTags + themeTags).toSet()
         val state = status?.let { parseStatus(it) }
         val description = synopsisHtml?.let { Jsoup.parseBodyFragment(it).text() }
-        val chapters = loadAllChapters(manga.url)
+        val chapters = loadChapters(manga.url, preferredLanguage)
 
         return manga.copy(
             title = title,
@@ -270,27 +258,11 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
 
     // ============================== Chapters ==============================
 
-    /**
-     * 遍历所有目标语言，为每个语言加载章节，按语言名分 branch。
-     * 没有章节的语言被跳过。
-     */
-    private suspend fun loadAllChapters(mangaUrl: String): List<ContentChapter> {
-        val allChapters = mutableListOf<ContentChapter>()
-        for (lang in targetLanguages) {
-            val langChapters = loadChapters(mangaUrl, lang)
-            if (langChapters.isNotEmpty()) {
-                allChapters.addAll(langChapters)
-            }
-        }
-        return allChapters
-    }
-
     private suspend fun loadChapters(mangaUrl: String, langCode: String): List<ContentChapter> {
         val hid = getHid(mangaUrl)
         val chapters = mutableListOf<ContentChapter>()
         var page = 1
         var lastPage = 1
-        val branchName = langCodeToName[langCode] ?: langCode
 
         do {
             val url = "https://$domain/api/titles/$hid/chapters".toHttpUrl().newBuilder()
@@ -301,7 +273,7 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
                 .addQueryParameter("limit", "200")
                 .build()
 
-            val json = runCatching { webClient.httpGet(url).parseJson() }.getOrNull() ?: break
+            val json = webClient.httpGet(MangaFireVrfSigner.sign(url)).parseJson()
             val items = json.optJSONArray("items") ?: break
             val meta = json.optJSONObject("meta")
             lastPage = meta?.optInt("lastPage", 1) ?: 1
@@ -311,6 +283,7 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
                 val number = ch.getDouble("number").toFloat()
                 val name = ch.optString("name", "").takeIf { it.isNotEmpty() }
                 val createdAt = ch.getLongOrDefault("createdAt", 0L)
+                val translationType = ch.optString("type", "").trim().ifEmpty { UNKNOWN_TRANSLATION }
 
                 val chapterUrl = "$mangaUrl/$id-chapter-${number.toDisplayString()}-$langCode"
 
@@ -328,9 +301,9 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
                         number = number,
                         volume = 0,
                         url = chapterUrl,
-                        scanlator = null,
+                        scanlator = translationType,
                         uploadDate = createdAt * 1000L,
-                        branch = branchName,
+                        branch = translationType,
                         source = source,
                     ),
                 )
@@ -346,7 +319,7 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val chapterId = chapter.url.substringAfterLast("/").substringBefore("-")
-        val json = webClient.httpGet("https://$domain/api/chapters/$chapterId").parseJson()
+        val json = webClient.httpGet(apiUrl("chapters/$chapterId")).parseJson()
         val data = json.getJSONObject("data")
         val pages = data.getJSONArray("pages")
 
@@ -371,6 +344,10 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
             else -> lastPart
         }
     }
+
+    private fun apiUrl(path: String) = MangaFireVrfSigner.sign(
+        "https://$domain/api/${path.removePrefix("/")}".toHttpUrl(),
+    )
 
     private fun SortOrder.toApiSort(): Pair<String, String> = when (this) {
         SortOrder.UPDATED -> "chapter_updated_at" to "desc"
@@ -399,12 +376,16 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
         "finished" -> ContentState.FINISHED
         "on_hiatus" -> ContentState.PAUSED
         "discontinued" -> ContentState.ABANDONED
+        "not_yet_released" -> ContentState.UPCOMING
         else -> null
     }
 
     private suspend fun resolveAuthorId(authorQuery: String): String? {
-        val url = "https://$domain/api/tags?keyword=${authorQuery.urlEncoded()}"
-        val json = runCatching { webClient.httpGet(url).parseJson() }.getOrNull() ?: return null
+        val url = "https://$domain/api/tags".toHttpUrl().newBuilder()
+            .addQueryParameter("keyword", authorQuery)
+            .build()
+        val json = runCatching { webClient.httpGet(MangaFireVrfSigner.sign(url)).parseJson() }.getOrNull()
+            ?: return null
         val data = json.optJSONArray("data") ?: return null
         return data.mapJSONNotNull { tag ->
             val type = tag.optString("type", "")
@@ -421,8 +402,6 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
 
     // ============================== Languages ==============================
 
-    private val allLanguages = listOf("en", "es", "es-la", "fr", "ja", "pt", "pt-br")
-
     private val langCodeToName = mapOf(
         "en" to "English",
         "es" to "Spanish",
@@ -433,93 +412,67 @@ internal class MangaFireParser(context: ContentLoaderContext) : PagedContentPars
         "pt-br" to "Portuguese (Brazil)",
     )
 
+    private companion object {
+        const val DEFAULT_LANGUAGE = "en"
+        const val UNKNOWN_TRANSLATION = "Unknown"
+    }
+
     // ============================== Genres ==============================
 
     private val genres: List<ContentTag> = listOf(
         "1" to "Action",
+        "268929" to "Adult",
         "78" to "Adventure",
-        "90" to "Boys Love",
-        "89" to "Girls Love",
-        "77" to "Comedy",
-        "83" to "Drama",
-        "92" to "Fantasy",
-        "91" to "Hentai",
-        "10" to "Horror",
-        "93" to "Ecchi",
-        "11" to "Mecha",
-        "82" to "Mystery",
-        "9" to "Psychological",
-        "79" to "Romance",
-        "3" to "Sci-Fi",
-        "81" to "Slice of Life",
-        "8" to "Sports",
-        "7" to "Supernatural",
-        "17" to "Martial Arts",
-        "85" to "Historical",
-        "80" to "Isekai",
-        "84" to "Medical",
-        "88" to "Music",
-        "86" to "Philosophical",
-        "87" to "Tragedy",
-        "19" to "Demons",
-        "22" to "Magic",
-        "21" to "Monsters",
-        "18" to "Samurai",
-        "20" to "Vampires",
-        "14" to "Harem",
-        "76" to "Reverse Harem",
-        "6" to "School Life",
-        "13" to "Shoujo Ai",
-        "12" to "Shounen Ai",
-        "15" to "Yuri",
-        "16" to "Yaoi",
-        "5" to "Gender Bender",
-        "42" to "Josei",
-        "41" to "Seinen",
-        "40" to "Shoujo",
-        "4" to "Shounen",
-        "25" to "Cooking",
-        "26" to "Crossdressing",
-        "28" to "Delinquents",
-        "27" to "Gyaru",
-        "29" to "Loli",
-        "30" to "Mafia",
-        "31" to "Military",
-        "32" to "Monster Girls",
-        "33" to "Shota",
-        "34" to "Survival",
-        "35" to "Time Travel",
-        "36" to "Video Games",
-        "37" to "Villainess",
-        "38" to "Zombies",
-        "39" to "Animals",
-        "43" to "Aliens",
-        "44" to "Ghosts",
-        "45" to "Ninja",
-        "46" to "Office Workers",
-        "47" to "Police",
-        "48" to "Post-Apocalyptic",
-        "49" to "Reincarnation",
-        "50" to "Traditional Games",
-        "51" to "Virtual Reality",
-        "52" to "4-Koma",
-        "53" to "Adaptation",
-        "54" to "Anthology",
-        "55" to "Award Winning",
-        "56" to "Doujinshi",
-        "57" to "Fan Colored",
-        "58" to "Full Color",
-        "59" to "Long Strip",
-        "60" to "Oneshot",
-        "61" to "Web Comic",
-        "62" to "Magical Girls",
-        "63" to "Superhero",
-        "64" to "Wuxia",
-        "65" to "Adult",
-        "66" to "Sexual Violence",
-        "67" to "Smut",
-        "68" to "Gore",
-        "69" to "Official Colored",
+        "3" to "Avant Garde",
+        "4" to "Boys Love",
+        "5" to "Comedy",
+        "268921" to "Crime",
+        "77" to "Demons",
+        "6" to "Drama",
+        "7" to "Ecchi",
+        "79" to "Fantasy",
+        "9" to "Girls Love",
+        "10" to "Gourmet",
+        "11" to "Harem",
+        "268930" to "Hentai",
+        "268922" to "Historical",
+        "530" to "Horror",
+        "13" to "Isekai",
+        "531" to "Iyashikei",
+        "15" to "Josei",
+        "532" to "Kids",
+        "539" to "Magic",
+        "268923" to "Magical Girls",
+        "533" to "Mahou Shoujo",
+        "534" to "Martial Arts",
+        "268931" to "Mature",
+        "19" to "Mecha",
+        "268924" to "Medical",
+        "535" to "Military",
+        "21" to "Music",
+        "22" to "Mystery",
+        "23" to "Parody",
+        "268925" to "Philosophical",
+        "536" to "Psychological",
+        "25" to "Reverse Harem",
+        "26" to "Romance",
+        "73" to "School",
+        "28" to "Sci-Fi",
+        "537" to "Seinen",
+        "30" to "Shoujo",
+        "31" to "Shounen",
+        "538" to "Slice of Life",
+        "268932" to "Smut",
+        "33" to "Space",
+        "34" to "Sports",
+        "75" to "Super Power",
+        "268926" to "Superhero",
+        "76" to "Supernatural",
+        "37" to "Suspense",
+        "38" to "Thriller",
+        "268927" to "Tragedy",
+        "39" to "Vampire",
+        "268928" to "Wuxia",
     ).map { (id, name) ->
         ContentTag(
             title = name,
