@@ -3,6 +3,7 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.InternalParsersApi
@@ -26,6 +27,7 @@ import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseJsonObject
 import org.skepsun.kototoro.parsers.util.json.mapJSONIndexed
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.util.Base64
 import java.util.EnumSet
 
 /**
@@ -39,8 +41,9 @@ internal class GodaParser(context: ContentLoaderContext) :
     override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("godamh.com")
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
 
-    private val apiDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("api-get-v3.mgsearcher.com")
-    private val imgDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("t40-1-4.g-mh.online")
+    private val apiDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("v2.apikk.top")
+    private val imageLine2Domain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("c-nd2-1.6wm.top")
+    private val imageDefaultDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("c-nd3-1.6wm.top")
 
     private val typeTags: List<ContentTag> = listOf(
         "全部" to "/manga",
@@ -107,8 +110,12 @@ internal class GodaParser(context: ContentLoaderContext) :
         .add("Referer", "https://${domain}/")
         .build()
 
-    private fun apiBase(): String = "https://${config[apiDomain]}/api"
-    private fun imageBase(): String = "https://${config[imgDomain]}"
+    private fun apiBase(): String = "https://${config[apiDomain]}/api/v2"
+
+    private fun imageBase(line: Int): String = when (line) {
+        2 -> "https://${config[imageLine2Domain]}"
+        else -> "https://${config[imageDefaultDomain]}"
+    }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         // Prefer search if query present
@@ -233,15 +240,20 @@ internal class GodaParser(context: ContentLoaderContext) :
         val res = webClient.httpGet(url, headers())
         if (!res.isSuccessful) return emptyList()
         val data = res.parseJsonObject()
-        val imagesArr = data.optJSONObject("data")
+        val images = data.optJSONObject("data")
             ?.optJSONObject("info")
-            ?.optJSONObject("images")
-            ?.optJSONArray("images") ?: return emptyList()
+            ?.optJSONObject("images") ?: return emptyList()
+        val imagesArr = when (val value = images.opt("images")) {
+            is JSONArray -> value
+            is String -> GodaImageDecoder.decode(value) ?: return emptyList()
+            else -> return emptyList()
+        }
+        val imageBase = imageBase(images.optInt("line", 3))
         return imagesArr.mapJSONIndexed { index, any ->
             val obj = any as? JSONObject ?: return@mapJSONIndexed null
             val path = obj.optString("url")
             if (path.isEmpty()) return@mapJSONIndexed null
-            val full = imageBase() + path
+            val full = imageBase + path
             ContentPage(
                 id = generateUid("$full-$index"),
                 url = full,
@@ -252,4 +264,54 @@ internal class GodaParser(context: ContentLoaderContext) :
     }
 
     override suspend fun getPageUrl(page: ContentPage): String = page.url
+}
+
+/** 解码 GoDa 当前章节接口返回的混淆图片列表。 */
+internal object GodaImageDecoder {
+
+    private const val PREFIX = "J7r"
+    private const val MARKER = "kD"
+    private const val SIGNATURE = "W4s"
+    private const val SUFFIX = "nQ"
+    private const val SOURCE_ALPHABET = "_-9876543210abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    private const val BASE64_URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    private const val CHUNK_SIZE = 7
+
+    fun decode(encoded: String): JSONArray? = runCatching {
+        require(encoded.startsWith(PREFIX) && encoded.endsWith(SUFFIX))
+
+        val payload = encoded.substring(PREFIX.length, encoded.length - SUFFIX.length)
+        val contentLength = payload.length - MARKER.length - SIGNATURE.length
+        require(contentLength >= 0)
+
+        val tailLength = contentLength / 3
+        val headLength = (contentLength - tailLength) / 2
+        val middleLength = contentLength - headLength - tailLength
+
+        val head = payload.substring(0, headLength)
+        val markerStart = headLength
+        require(payload.substring(markerStart, markerStart + MARKER.length) == MARKER)
+
+        val middleStart = markerStart + MARKER.length
+        val middle = payload.substring(middleStart, middleStart + middleLength)
+        val signatureStart = middleStart + middleLength
+        require(payload.substring(signatureStart, signatureStart + SIGNATURE.length) == SIGNATURE)
+        val tail = payload.substring(signatureStart + SIGNATURE.length)
+        require(tail.length == tailLength)
+
+        val shuffled = tail + head + middle
+        val substituted = buildString(shuffled.length) {
+            shuffled.chunked(CHUNK_SIZE).forEachIndexed { index, chunk ->
+                append(if (index % 2 == 1) chunk.reversed() else chunk)
+            }
+        }
+        val base64Url = buildString(substituted.length) {
+            substituted.forEach { char ->
+                val index = SOURCE_ALPHABET.indexOf(char)
+                require(index >= 0)
+                append(BASE64_URL_ALPHABET[index])
+            }
+        }
+        JSONArray(String(Base64.getUrlDecoder().decode(base64Url), Charsets.UTF_8))
+    }.getOrNull()
 }
