@@ -155,18 +155,20 @@ internal class Xanimu(context: ContentLoaderContext) :
 
         val doc = response.parseHtml()
 
-        // 提取标题 - 多策略
-        val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
+        // 提取标题 - Xanimu 使用 itemprop 而非 og: 标签
+        val title = doc.selectFirst("meta[itemprop=name]")?.attr("content")
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")
             ?: doc.selectFirst("h1.entry-title, h1.post-title, h1")?.text()?.trim()
             ?: manga.title
 
         // 提取描述
-        val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
-            ?: doc.selectFirst("meta[name=description]")?.attr("content")
+        val description = doc.selectFirst("meta[name=description]")?.attr("content")
+            ?: doc.selectFirst("meta[property=og:description]")?.attr("content")
             ?: doc.selectFirst("div.entry-content p, div.post-content p")?.text()?.trim()
 
-        // 提取封面
-        val coverUrl = doc.selectFirst("meta[property=og:image]")?.attr("content")
+        // 提取封面 - Xanimu 使用 itemprop
+        val coverUrl = doc.selectFirst("meta[itemprop=thumbnailUrl]")?.attr("content")
+            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
             ?: doc.selectFirst("div.entry-thumbnail img, div.post-thumbnail img, article img.wp-post-image")?.let {
                 it.attr("data-src").ifBlank { it.attr("src") }
             }
@@ -230,7 +232,8 @@ internal class Xanimu(context: ContentLoaderContext) :
         val doc = response.parseHtml()
         val videoUrl = extractVideoUrl(doc) ?: return emptyList()
 
-        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
+        val poster = doc.selectFirst("meta[itemprop=thumbnailUrl]")?.attr("content")
+            ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
 
         return listOf(
             ContentPage(
@@ -267,36 +270,42 @@ internal class Xanimu(context: ContentLoaderContext) :
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
-        // 策略 1: WordPress 文章卡片
-        val articles = doc.select(
-            "article.post, article.type-post, article.hentry, div.post, div.video-item"
-        )
+        // Xanimu 实际页面结构: 每个视频在 <div class="video-block"> 中
+        // Archive: https://web.archive.org/web/2024/https://xanimu.com/
+        val videoBlocks = doc.select("div.video-block")
 
-        for (article in articles) {
-            val link = article.selectFirst("a[href*=/]")
+        for (block in videoBlocks) {
+            // 取链接: a.thumb 或 a.infos
+            val link = block.selectFirst("a.thumb[href], a.infos[href]")
+                ?: block.selectFirst("a[href]")
             if (link == null) continue
 
             val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
-            // 过滤掉非视频链接
+            // 过滤非视频链接
             if (href.contains("/category/") || href.contains("/tag/") ||
-                href.contains("/page/") || href == "/" || href == domain
+                href.contains("/page/") || href.contains("/cdn-cgi/") ||
+                href == "/" || href == domain
             ) continue
 
             val absoluteUrl = href.toAbsoluteUrl(domain)
             if (!seen.add(absoluteUrl)) continue
 
-            val img = article.selectFirst("img")
+            // 封面: img.video-img, 优先 data-src (懒加载), 再 data-original, 最后 src
+            val img = block.selectFirst("img.video-img")
             val coverUrl = img?.let {
                 it.attr("data-src").ifBlank { it.attr("data-original").ifBlank { it.attr("src") } }
             }
 
-            val title = article.selectFirst("h2.entry-title, h2.post-title, h2, h3")
+            // 标题: span.title
+            val title = block.selectFirst("span.title")
                 ?.text()?.trim()
                 ?: img?.attr("alt")?.trim()
+                ?: link.attr("aria-label")?.trim()
                 ?: link.attr("title")?.trim()
-                ?: link.text().trim().ifEmpty { "Untitled" }
+                ?: "Untitled"
 
-            val duration = article.selectFirst("span.duration, span.length, time.duration")
+            // 时长: span.duration
+            val duration = block.selectFirst("span.duration")
                 ?.text()?.trim()
 
             items.add(
@@ -322,72 +331,29 @@ internal class Xanimu(context: ContentLoaderContext) :
             if (items.size >= pageSize) break
         }
 
-        // 策略 2: 通用视频卡片
-        if (items.isEmpty()) {
-            val cards = doc.select("a[href*=/]").filter { a ->
-                val href = a.attr("href")
-                href.isNotBlank() && !href.contains("/category/") &&
-                    !href.contains("/tag/") && !href.contains("/page/") &&
-                    !href.contains("/cdn-cgi/") && href != "/" &&
-                    !href.startsWith("#") && !href.startsWith("javascript:")
-            }
-
-            for (card in cards) {
-                val href = card.attr("href")
-                val absoluteUrl = href.toAbsoluteUrl(domain)
-                if (!seen.add(absoluteUrl)) continue
-
-                val img = card.selectFirst("img")
-                if (img == null) continue
-
-                val coverUrl = img.attr("data-src")
-                    .ifBlank { img.attr("data-original").ifBlank { img.attr("src") } }
-                val title = img.attr("alt").trim()
-                    .ifBlank { card.attr("title").trim().ifBlank { card.text().trim().ifEmpty { "Untitled" } } }
-
-                items.add(
-                    Content(
-                        id = generateUid(absoluteUrl),
-                        url = absoluteUrl.removePrefix("https://$domain")
-                            .removePrefix("http://$domain"),
-                        publicUrl = absoluteUrl,
-                        title = title,
-                        altTitles = emptySet(),
-                        coverUrl = coverUrl,
-                        largeCoverUrl = coverUrl,
-                        authors = emptySet(),
-                        tags = emptySet(),
-                        state = null,
-                        description = null,
-                        contentRating = ContentRating.ADULT,
-                        source = source,
-                        rating = RATING_UNKNOWN,
-                    )
-                )
-
-                if (items.size >= pageSize) break
-            }
-        }
-
         return items
     }
 
     private fun extractVideoUrl(doc: Document): String? {
         val html = doc.outerHtml()
 
-        // 策略 1: og:video meta 标签
+        // 策略 1: itemprop 标签 (Xanimu 实际使用的格式)
+        val itempropVideo = doc.selectFirst("meta[itemprop=contentURL]")?.attr("content")
+        if (!itempropVideo.isNullOrBlank()) return itempropVideo
+
+        // 策略 2: og:video meta 标签
         val ogVideo = doc.selectFirst("meta[property=og:video]")?.attr("content")
             ?: doc.selectFirst("meta[property=og:video:secure_url]")?.attr("content")
         if (!ogVideo.isNullOrBlank()) return ogVideo
 
-        // 策略 2: video 标签 source
+        // 策略 3: video 标签 source
         val videoSource = doc.selectFirst("video source[src]")?.attr("src")
         if (!videoSource.isNullOrBlank() && !videoSource.startsWith("blob:")) return videoSource
 
         val videoSrc = doc.selectFirst("video[src]")?.attr("src")
         if (!videoSrc.isNullOrBlank() && !videoSrc.startsWith("blob:")) return videoSrc
 
-        // 策略 3: iframe 嵌入
+        // 策略 4: iframe 嵌入
         val iframe = doc.selectFirst("iframe[src]")
         if (iframe != null) {
             val iframeSrc = iframe.attr("src")
@@ -399,7 +365,7 @@ internal class Xanimu(context: ContentLoaderContext) :
             }
         }
 
-        // 策略 4: JavaScript 中的视频 URL
+        // 策略 5: JavaScript 中的视频 URL
         val jsVideoPatterns = listOf(
             Regex(
                 """(?:videoUrl|video_url|videoSrc|video_src|file|source|src)\s*[:=]\s*['\"]([^'\"]+\.(?:m3u8|mp4)[^'\"]*)['\"]""",
@@ -415,7 +381,7 @@ internal class Xanimu(context: ContentLoaderContext) :
             }
         }
 
-        // 策略 5: 通用 m3u8/mp4 正则
+        // 策略 6: 通用 m3u8/mp4 正则
         val m3u8Pattern = Regex(
             """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""",
             RegexOption.IGNORE_CASE,

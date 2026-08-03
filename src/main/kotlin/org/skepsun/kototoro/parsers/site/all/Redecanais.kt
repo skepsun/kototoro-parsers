@@ -15,19 +15,15 @@ import java.util.EnumSet
 /**
  * Redecanais - 巴西影视/成人视频网站
  *
- * 网站: https://redecanais.to/
- * 最后验证: 2025-07-24
+ * 网站: https://redecanais.to/ (原 redecanais.win 已重定向到 redecanais.capital)
+ * 最后验证: 2025-08-03
  *
- * ⚠️ 可用性状态:
- * - JS Challenge 重定向保护 (JWT-based)
- * - 首次访问返回 <title>Loading...</title> + location.replace() 重定向
- * - 目标地址包含 ch=1&js={JWT}&sid={UUID} 参数
- * - 需要浏览器完成 JS 验证后才能获取真实页面内容
- * - 原域名 redecanais.win HTTP 403 (Cloudflare)
- * - 当前域名 redecanais.to HTTP 200 但返回 JS Challenge
- * - 需要代理访问
- * - 页面使用 consentmanager GDPR/CMP
- * - 嵌入 onelink ads
+ * ⚠️ 可用性状态: [BROKEN] 需要浏览器 JS 验证才能访问
+ * - 主域名 redecanais.to HTTP 200 JS Challenge (JWT-based location.replace)
+ * - 旧域名 redecanais.win HTTP 200 重定向到 redecanais.capital
+ * - redecanais.capital HTTP 403 Cloudflare managed challenge
+ * - 所有域名均无法直接通过 HTTP 解析，需要用户在浏览器中完成验证
+ * - 标记为 BROKEN，等待网站去除保护或找到替代方案
  *
  * 页面结构 (推断，无法获取实际 HTML):
  * - 首页: /
@@ -46,8 +42,9 @@ import java.util.EnumSet
  * - ❓ 列表 HTML 选择器需要实际页面确认
  */
 
-// 2025-07-24 验证: JS Challenge 重定向保护 (location.replace + JWT)
-// 原域名 redecanais.win 已 403，当前可用域名 redecanais.to
+// 2025-08-03 验证: [BROKEN] 所有域名均需浏览器 JS/CF 验证
+// redecanais.to HTTP 200 JS Challenge (JWT-based location.replace) — 无法直接解析
+// redecanais.win → redecanais.capital HTTP 403 CF managed challenge
 @ContentSourceParser("REDECANAIS", "Redecanais", type = ContentType.HENTAI_VIDEO)
 internal class Redecanais(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.REDECANAIS, pageSize = 24) {
