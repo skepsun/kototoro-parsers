@@ -6,7 +6,6 @@ import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.jsoup.nodes.Document
-import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
@@ -31,18 +30,18 @@ import org.skepsun.kototoro.parsers.util.parseHtml
 import java.util.EnumSet
 
 /**
- * 滴答漫画（ddmanhua.com）。
+ * 古风漫画（gfmh.app）。
  *
- * 站点 HTTPS 会重定向至 HTTP。搜索入口当前始终返回空结果，因此仅提供分类浏览。
+ * 站点搜索当前对已存在作品也返回空结果，因此仅开放服务端分类分页。阅读参数使用固定
+ * AES-CBC 协议；图片二次解密复用 Baipiaoguai 后端解码器，不执行站点 JavaScript。
  */
-@ContentSourceParser("DDMANHUA", "滴答漫画", "zh")
-internal class DdManhuaParser(context: ContentLoaderContext) :
-	PagedContentParser(context, ContentParserSource.DDMANHUA, pageSize = 30) {
+@ContentSourceParser("GUFENGMANHUA", "古风漫画", "zh")
+internal class GufengManhuaParser(context: ContentLoaderContext) :
+	PagedContentParser(context, ContentParserSource.GUFENGMANHUA, pageSize = 16) {
 
-	override val configKeyDomain = ConfigKey.Domain("ddmanhua.com")
+	override val configKeyDomain = ConfigKey.Domain("www.gfmh.app")
 
-	override val availableSortOrders: Set<SortOrder> =
-		EnumSet.of(SortOrder.POPULARITY, SortOrder.UPDATED, SortOrder.RATING)
+	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
 
 	private val regionTags by lazy {
 		REGIONS.map { (title, key) -> ContentTag(title, key, source) }
@@ -63,44 +62,39 @@ internal class DdManhuaParser(context: ContentLoaderContext) :
 		.build()
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		val response = webClient.httpGet(baseUrl() + buildListPath(page, order, filter), getRequestHeaders())
+		val response = webClient.httpGet(baseUrl() + buildListPath(page, filter), getRequestHeaders())
 		if (!response.isSuccessful) return emptyList()
 		return parseList(response.parseHtml())
 	}
 
-	internal fun buildListPath(page: Int, order: SortOrder, filter: ContentListFilter): String = buildString {
+	internal fun buildListPath(page: Int, filter: ContentListFilter): String = buildString {
 		append("/category")
-		filter.tags.firstOrNull { it.key.startsWith("list/") }?.let { append('/').append(it.key) }
-		append("/order/").append(
-			when (order) {
-				SortOrder.UPDATED, SortOrder.UPDATED_ASC -> "addtime"
-				SortOrder.RATING, SortOrder.RATING_ASC -> "score"
-				else -> "hits"
-			},
-		)
+		filter.tags.firstOrNull { tag -> REGIONS.any { it.second == tag.key } }?.let {
+			append('/').append(it.key)
+		}
 		if (page > 1) append("/page/").append(page)
 	}
 
 	internal fun parseList(document: Document): List<Content> =
-		document.select(".lists-content a.vodlist__thumb[href^=/book/]").mapNotNull { anchor ->
+		document.select(".side_commend > ul.flex > li").mapNotNull { card ->
+			val anchor = card.selectFirst(".img_span > a[href]") ?: return@mapNotNull null
 			val href = anchor.attr("href").trim()
-			val title = anchor.attr("title").trim()
-			if (!BOOK_PATH.matches(href) || title.isEmpty()) return@mapNotNull null
-			val card = anchor.parent()
-			val rating = card?.selectFirst("footer .rate")?.text()?.toFloatOrNull()
-				?.div(10f)?.coerceIn(0f, 1f) ?: RATING_UNKNOWN
+			val title = card.selectFirst("h2")?.text()?.trim().orEmpty()
+			if (!DETAIL_PATH.matches(href) || title.isEmpty()) return@mapNotNull null
 			Content(
 				id = generateUid(href),
 				title = title,
 				altTitles = emptySet(),
 				url = href,
 				publicUrl = baseUrl() + href,
-				rating = rating,
+				rating = RATING_UNKNOWN,
 				contentRating = ContentRating.SAFE,
-				coverUrl = anchor.attrAsAbsoluteUrlOrNull("data-original"),
+				coverUrl = anchor.selectFirst("img")?.attrAsAbsoluteUrlOrNull("data-original"),
 				tags = emptySet(),
-				state = parseState(anchor.selectFirst(".countrie span:last-child")?.text()),
-				authors = emptySet(),
+				state = parseState(anchor.selectFirst("span")?.text()),
+				authors = card.selectFirst(".li_bottom i")?.text()?.trim()
+					?.takeIf(String::isNotEmpty)?.let(::setOf).orEmpty(),
+				description = card.selectFirst("p.indent")?.text()?.trim(),
 				source = source,
 			)
 		}.distinctBy(Content::id)
@@ -112,37 +106,32 @@ internal class DdManhuaParser(context: ContentLoaderContext) :
 	}
 
 	internal fun parseDetails(document: Document, manga: Content): Content {
-		val header = document.selectFirst(".product-header") ?: return manga
-		val title = header.selectFirst(".product-title")?.ownText()?.trim().orEmpty().ifEmpty { manga.title }
-		val cover = header.selectFirst("img.thumb")?.attrAsAbsoluteUrlOrNull("src") ?: manga.coverUrl
-		val metadata = header.select(".product-excerpt").associate { row ->
-			val text = row.text().trim()
-			text.substringBefore('：').trim() to text.substringAfter('：', "").trim()
+		val info = document.selectFirst(".novel_info_main") ?: return manga
+		val title = info.selectFirst("h1")?.text()?.trim().orEmpty().ifEmpty { manga.title }
+		val cover = info.selectFirst("img")?.attrAsAbsoluteUrlOrNull("src") ?: manga.coverUrl
+		val authors = info.selectFirst("i")?.text()?.substringAfter('：', "")?.trim()
+			?.takeIf(String::isNotEmpty)?.let(::setOf).orEmpty()
+		val state = parseState(info.select("p > span").firstOrNull { parseState(it.text()) != null }?.text())
+		val tags = info.select("p > span").mapNotNullTo(linkedSetOf()) { element ->
+			val value = element.text().trim()
+			value.takeIf { it.isNotEmpty() && parseState(it) == null }?.let { ContentTag(it, it, source) }
 		}
-		val tags = header.select("a[href^=/category/tags/]").mapNotNullTo(linkedSetOf(), ::parseTag)
-		val authors = metadata["作者"]?.split('、', ',', '，')
-			?.mapNotNull { it.trim().takeIf(String::isNotEmpty) }
-			?.toSet()
-			.orEmpty()
-		val rating = header.selectFirst(".rate")?.text()?.toFloatOrNull()
-			?.div(10f)?.coerceIn(0f, 1f) ?: manga.rating
 
 		return manga.copy(
 			title = title,
 			coverUrl = cover,
 			largeCoverUrl = cover,
-			rating = rating,
-			description = metadata["漫画简介"] ?: manga.description,
+			description = document.selectFirst("#info .intro")?.text()?.trim() ?: manga.description,
 			authors = authors.ifEmpty { manga.authors },
 			tags = tags.ifEmpty { manga.tags },
-			state = parseState(metadata["状态"]) ?: manga.state,
+			state = state ?: manga.state,
 			chapters = parseChapters(document, manga),
 			contentRating = inferContentRating(tags),
 		)
 	}
 
 	internal fun parseChapters(document: Document, manga: Content): List<ContentChapter> =
-		document.select(".playlist a[href^=/chapter/]").mapNotNull { anchor ->
+		document.select("#ul_all_chapters a[href]").mapNotNull { anchor ->
 			val href = anchor.attr("href").trim()
 			val title = anchor.text().trim()
 			if (!CHAPTER_PATH.matches(href) || title.isEmpty()) return@mapNotNull null
@@ -201,16 +190,8 @@ internal class DdManhuaParser(context: ContentLoaderContext) :
 
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
 
-	override fun intercept(chain: Interceptor.Chain): Response {
-		return BaipiaoguaiImageDecoder.decodeResponse(chain.proceed(chain.request()), ENCRYPTED_IMAGE_FRAGMENT)
-	}
-
-	private fun parseTag(anchor: Element): ContentTag? {
-		val title = anchor.text().trim().takeIf(String::isNotEmpty) ?: return null
-		val key = anchor.attr("href").substringAfter("/category/tags/").trim('/').takeIf(String::isNotEmpty)
-			?: return null
-		return ContentTag(title, "tags/$key", source)
-	}
+	override fun intercept(chain: Interceptor.Chain): Response =
+		BaipiaoguaiImageDecoder.decodeResponse(chain.proceed(chain.request()), ENCRYPTED_IMAGE_FRAGMENT)
 
 	private fun parseState(value: String?): ContentState? = when {
 		value?.contains("完结") == true -> ContentState.FINISHED
@@ -219,19 +200,19 @@ internal class DdManhuaParser(context: ContentLoaderContext) :
 	}
 
 	private fun inferContentRating(tags: Set<ContentTag>): ContentRating = when {
-		tags.any { it.title.contains("限制") || it.title.contains("绅士") } -> ContentRating.ADULT
+		tags.any { it.title.contains("限制") || it.title.contains("成人") } -> ContentRating.ADULT
 		else -> ContentRating.SAFE
 	}
 
-	private fun baseUrl(): String = "http://$domain"
+	private fun baseUrl(): String = "https://$domain"
 
 	internal companion object {
 		private const val PARAMS_KEY = "9S8\$vJnU2ANeSRoF"
 		private const val ENCRYPTED_SOURCE_ID = "12"
-		private const val ENCRYPTED_IMAGE_FRAGMENT = "dd-aes"
-		private val BOOK_PATH = Regex("""/book/\d+\.html""")
-		private val CHAPTER_PATH = Regex("""/chapter/\d+-\d+\.html""")
-		private val CHAPTER_NUMBER = Regex("""第(\d+(?:\.\d+)?)""")
+		private const val ENCRYPTED_IMAGE_FRAGMENT = "gufeng-aes"
+		private val DETAIL_PATH = Regex("""/\d+\.html""")
+		private val CHAPTER_PATH = Regex("""/\d+/\d+\.html""")
+		private val CHAPTER_NUMBER = Regex("""(?:第|Act\.?\s*)(\d+(?:\.\d+)?)""", RegexOption.IGNORE_CASE)
 		private val PARAMS_PATTERN = Regex(
 			"""\bparams\s*=\s*(['"])(.*?)\1""",
 			setOf(RegexOption.DOT_MATCHES_ALL),
@@ -243,9 +224,5 @@ internal class DdManhuaParser(context: ContentLoaderContext) :
 			"韩国漫画" to "list/3",
 			"欧美漫画" to "list/4",
 		)
-
-		internal fun detectImageMediaType(data: ByteArray): String = BaipiaoguaiImageDecoder.detectMediaType(data)
-
-		internal fun decryptImage(data: ByteArray): ByteArray? = BaipiaoguaiImageDecoder.decrypt(data)
 	}
 }
