@@ -60,12 +60,12 @@ internal object ContentLoaderContextMock : ContentLoaderContext() {
             if (!token.isNullOrEmpty()) {
                 // 写入到 API 与站点两个域，兼容解析器在两域读取 token/authorization
                 cookieJar.insertCookies(
-                    "api.copy2000.online",
+                    "api.copy3000.com",
                     "authorization=$token;",
                     "token=$token;",
                 )
                 cookieJar.insertCookies(
-                    "copy2000.online",
+                    "www.copy3000.com",
                     "authorization=$token;",
                     "token=$token;",
                 )

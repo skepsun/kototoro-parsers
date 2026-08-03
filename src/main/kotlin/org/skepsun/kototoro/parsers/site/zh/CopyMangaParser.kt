@@ -2,14 +2,12 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
-import okhttp3.ConnectionSpec
+import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.Response
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.TlsVersion
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.skepsun.kototoro.parsers.ContentLoaderContext
@@ -27,12 +25,10 @@ import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.getCookies
 import org.skepsun.kototoro.parsers.util.insertCookies
-import org.skepsun.kototoro.parsers.util.copyCookies
 import org.skepsun.kototoro.parsers.util.await
 import org.skepsun.kototoro.parsers.util.json.mapJSON
 import org.skepsun.kototoro.parsers.util.json.mapJSONIndexed
 import org.skepsun.kototoro.parsers.util.parseJson
-import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.urlEncoded
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
@@ -40,17 +36,11 @@ import java.util.Base64
 import kotlin.random.Random
 import java.util.EnumSet
 import java.util.concurrent.atomic.AtomicReference
-import java.io.BufferedReader
-import java.io.ByteArrayInputStream
-import java.io.InputStreamReader
 import java.util.zip.GZIPInputStream
 
 import org.skepsun.kototoro.parsers.model.ContentTagGroup
 
-/**
- * 拷贝漫画（新站）解析器
- * 参考 /Users/sunchuxiong/kototoro_demo/copymanga.js
- */
+/** 拷贝漫画网页 API 解析器。 */
 @ContentSourceParser("COPYMANGA", "拷贝漫画", "zh")
 @OptIn(InternalParsersApi::class)
 @InternalParsersApi
@@ -67,14 +57,14 @@ internal class CopyContentParser(context: ContentLoaderContext) :
         searchPaginator.firstPage = 1
     }
 
-    // 仅保留测试用域名：将 parser 的公开域指向站点域，保证 HTML 回退可用
     @OptIn(InternalParsersApi::class)
     override val configKeyDomain = ConfigKey.Domain(
-        "api.copy2000.online",
+        "api.copy3000.com",
+        "api.2026copy.com",
+        "api.copy202601.com",
         "api.mangacopy.com",
         "mapi.copy20.com",
         "mapi.copy2000.site",
-        "api.2025copy.com",
         "mapi.hotmangasd.com",
         "api.manga2025.com",
         "mapi.hotmangasf.com",
@@ -84,8 +74,8 @@ internal class CopyContentParser(context: ContentLoaderContext) :
         "mapi.fgjfghkkcenter.club",
     )
     @OptIn(InternalParsersApi::class)
-    override val userAgentKey = ConfigKey.UserAgent("COPY/3.0.6")
-    // 线路设置：海外(0)/大陆(1)，用于 Header 的 region 以及优先尝试的 line
+    override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
+
     @OptIn(InternalParsersApi::class)
     private val preferredLineKey = ConfigKey.PreferredImageServer(
         presetValues = mapOf(
@@ -94,33 +84,22 @@ internal class CopyContentParser(context: ContentLoaderContext) :
         ),
         defaultValue = DEFAULT_REGION,
     )
-    // 运行期设备参数（一次生成，实例持有）
-    private val deviceInfo: String by lazy { generateDeviceInfo() }
-    private val device: String by lazy { generateDevice() }
-    private val pseudoId: String by lazy { generatePseudoId() }
     private val nicknameRef = AtomicReference<String?>()
-    private var baseUrlOverride: String? = null
-    private var searchApiOverride: String? = null
-    // 站点域（用于图片 Referer/Origin、HTML 回退等）
-    private var siteDomainOverride: String? = null
-    
-    // 作者名与其 path_word 的映射，用于点击作者搜索（参考 JS 配置）
     private val authorPathWordDict = mutableMapOf<String, String>()
-    
-    private var discoveryAttempted = false
-    
-    private var cachedRequestId: String? = null
-    private var lastRequestIdFetchTime: Long = 0L
-    
+
+    private val apiRateLimitLock = Any()
+    private var lastApiRequestTime = 0L
+
     override val faviconDomain: String
-        get() = "www.mangacopy.com"
-    // 测试/运行期开关：仅走 API 分支，跳过站点 HTML 请求
-    private fun preferApiOnly(): Boolean = true
-    private fun siteDomain(): String {
-        // 站点域优先取覆盖值；否则根据 API 域推导（移除前缀 "api."），最终回退默认值
-        val apiHost = baseUrlOverride
-        val derived = apiHost?.let { if (it.startsWith("api.", ignoreCase = true)) it.removePrefix("api.") else it }
-        return siteDomainOverride ?: derived ?: "copy2000.online"
+        get() = DEFAULT_SITE_DOMAIN
+
+    private fun siteDomain(): String = when (apiBase()) {
+        "api.copy3000.com" -> "www.copy3000.com"
+        "api.2026copy.com" -> "www.2026copy.com"
+        "api.copy202601.com" -> "www.copy202601.com"
+        "mapi.copy20.com" -> "www.copy20.com"
+        "api.mangacopy.com" -> "www.mangacopy.com"
+        else -> DEFAULT_SITE_DOMAIN
     }
     private val imageQuality: String = "1500"
     // 主题分类映射（简化为空，接口将返回全部）
@@ -197,8 +176,7 @@ internal class CopyContentParser(context: ContentLoaderContext) :
         keys.add(userAgentKey)
     }
 
-    // ===== 授权接口实现 =====
-    override val authUrl: String = "https://www.mangacopy.com/login"
+    override val authUrl: String = "https://$DEFAULT_SITE_DOMAIN/login"
 
     override suspend fun isAuthorized(): Boolean {
         return getAuthToken() != null
@@ -207,7 +185,12 @@ internal class CopyContentParser(context: ContentLoaderContext) :
     private fun getAuthToken(): String? {
         val base = apiBase()
         val site = siteDomain()
-        val domains = setOf(base, site, "api.copy2000.online", "copy2000.online", "api.mangacopy.com", "mangacopy.com", "api.copy-manga.com", "copy-manga.com")
+        val domains = buildSet {
+            add(base)
+            add(site)
+            addAll(API_DOMAINS)
+            addAll(listOf("www.copy3000.com", "www.2026copy.com", "www.copy20.com", "www.mangacopy.com"))
+        }
         logAuth("getAuthToken: searching in domains=$domains")
         for (domain in domains) {
             val cookies = context.cookieJar.getCookies(domain)
@@ -229,7 +212,7 @@ internal class CopyContentParser(context: ContentLoaderContext) :
             return it 
         }
 		val cookieName = "copy_nickname"
-		val domains = listOf(siteDomain(), apiBase(), "copy2000.online", "api.copy2000.online")
+		val domains = listOf(siteDomain(), apiBase(), DEFAULT_SITE_DOMAIN)
 		val fromCookie = domains.asSequence()
 			.mapNotNull { domain ->
 				val cookie = context.cookieJar.getCookies(domain).firstOrNull { it.name == cookieName }?.value
@@ -247,82 +230,37 @@ internal class CopyContentParser(context: ContentLoaderContext) :
 	}
 
     override suspend fun login(username: String, password: String): Boolean {
-        val base = refreshAppApi()
+        val base = apiBase()
         val url = "https://$base/api/v3/login"
-        
         val salt = Random.nextInt(1000, 10000).toString()
         val encryptedPassword = Base64.getEncoder().encodeToString("$password-$salt".toByteArray(Charsets.UTF_8))
-        
-        // 与成功终端 curl (79字节) 严格对齐：
-        // 1. 不对 username 和 encryptedPassword 进行 urlEncoded
-        // 2. 在 password 后面紧跟字面量 \\n（两个字符，占 2 字节）
-        // 3. 使用 charset=utf-8
-        val bodyText = "username=$username&password=$encryptedPassword\n&salt=$salt&authorization=Token+"
-        logAuth("CopyContentDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
-
-        val requestHeaders = getRequestHeaders().newBuilder()
-            .add("Content-Type", "application/x-www-form-urlencoded;charset=utf-8")
+        val requestBody = FormBody.Builder()
+            .add("username", username)
+            .add("password", encryptedPassword)
+            .add("salt", salt)
+            .add("source", "freeSite")
+            .add("version", WEB_API_VERSION)
+            .add("platform", WEB_PLATFORM)
             .build()
-        
-        logAuth("CopyContentDebug login: url=$url, body=${bodyText.replace(encryptedPassword, "******")}")
-        logAuth("CopyContentDebug login: request headers (manual + base):")
-        for (i in 0 until requestHeaders.size) {
-            logAuth("  [${i}] ${requestHeaders.name(i)}: ${requestHeaders.value(i)}")
-        }
-
-        val bodyBytes = bodyText.toByteArray(Charsets.UTF_8)
-        logAuth("CopyContentDebug login: body length=${bodyBytes.size} bytes (expected 79)")
-        val requestBody = bodyBytes.toRequestBody(null)
-        
-        // 使用 .tag(GZipOptions(skip = true)) 绕过全局 GZipInterceptor，彻底不发 Content-Encoding 头部
         val request = Request.Builder()
             .url(url)
             .post(requestBody)
-            .headers(requestHeaders)
+            .headers(getRequestHeaders())
             .tag(GZipOptions::class.java, GZipOptions(skip = true))
             .build()
 
         val response = try {
-            logAuth("CopyContentDebug login: sending raw request via httpClient (forcing HTTP/1.1)")
-            // 强制使用 HTTP/1.1，因为终端 curl 默认行为更有可能被放行
-            val tls12Spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                .tlsVersions(TlsVersion.TLS_1_2)
-                .build()
-            val h1Client = context.httpClient.newBuilder()
-                .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-                .connectionSpecs(listOf(tls12Spec))
-                .build()
-            h1Client.newCall(request).await()
+            context.httpClient.newCall(request).await()
         } catch (e: Exception) {
-            logAuth("CopyContentDebug login: exception during request: $e")
+            logAuth("login: request failed: $e")
             return false
-        }
-
-        logAuth("CopyContentDebug login: response code=${response.code}")
-        val handshake = response.handshake
-        if (handshake != null) {
-            logAuth(
-                "CopyContentDebug login: protocol=${response.protocol}, tls=${handshake.tlsVersion}, cipher=${handshake.cipherSuite}"
-            )
-        } else {
-            logAuth("CopyContentDebug login: protocol=${response.protocol}, tls=unknown")
-        }
-        val responsePreview = kotlin.runCatching {
-            response.peekBody(1024).string()
-        }.getOrNull()
-        if (!responsePreview.isNullOrBlank()) {
-            logAuth("CopyContentDebug login: response preview=${responsePreview.take(200)}")
         }
         val json = try {
-            logAuth("CopyContentDebug login: parsing response JSON")
-            // 必须手动调用 unzip()，因为直接使用 context.httpClient 会绕过拦截器逻辑
             response.unzip().parseJson()
         } catch (e: Exception) {
-            logAuth("CopyContentDebug login: JSON parse failed: $e")
+            logAuth("login: invalid response: $e")
             return false
         }
-        
-        logAuth("CopyContentDebug login: response JSON=$json")
 
         val code = json.optInt("code")
         if (code == 210) {
@@ -335,25 +273,17 @@ internal class CopyContentParser(context: ContentLoaderContext) :
         val token = json.optJSONObject("results")?.optString("token")
         val nickname = json.optJSONObject("results")?.optString("nickname").orEmpty()
         if (!token.isNullOrEmpty()) {
-            logAuth("CopyContentDebug login: success, token=${maskToken(token)}")
+            logAuth("login: success, token=${maskToken(token)}")
             val site = siteDomain()
-            // 使用更完整的 Cookie 属性以确保在子域和主域间共享
-            val cookieString = "token=$token; Domain=$site; Path=/; HttpOnly"
-            context.cookieJar.insertCookies(site, cookieString)
+            context.cookieJar.insertCookies(site, "token=$token; Domain=$site; Path=/; HttpOnly")
             context.cookieJar.insertCookies(base, "token=$token; Domain=$base; Path=/; HttpOnly")
-            // 同时插入默认域以保证 getAuthToken 命中
-            context.cookieJar.insertCookies("copy2000.online", "token=$token; Domain=copy2000.online; Path=/")
-            
-            logAuth("CopyContentDebug login: cookies inserted into $site, $base, and copy2000.online")
-            
             if (nickname.isNotEmpty()) {
                 nicknameRef.set(nickname)
                 context.cookieJar.insertCookies(site, "copy_nickname=$nickname; Domain=$site; Path=/")
-                logAuth("CopyContentDebug login: nickname saved: $nickname")
             }
             return true
         }
-        logAuth("CopyContentDebug login: failed (no token in results)")
+        logAuth("login: failed without token")
         return false
     }
 
@@ -394,54 +324,34 @@ internal class CopyContentParser(context: ContentLoaderContext) :
     }
 
     @OptIn(InternalParsersApi::class)
-override fun getRequestHeaders(): Headers {
-    val ts = (System.currentTimeMillis() / 1000).toString()
-    val sig = hmacSha256(COPY_SECRET, ts)
-    
-    val cal = java.util.Calendar.getInstance()
-    val year = cal.get(java.util.Calendar.YEAR)
-    val month = (cal.get(java.util.Calendar.MONTH) + 1).toString().padStart(2, '0')
-    val day = cal.get(java.util.Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
-    val dt = "$year.$month.$day"
-
-    val apiDomain = apiBase()
-    val authHeader = getAuthToken()?.let { v -> "Token $v" } ?: "Token"
-
-    return Headers.Builder()
-        .add("User-Agent", "COPY/3.0.6")
-        .add("source", "copyApp")
-        .add("deviceinfo", deviceInfo)
-        .add("dt", dt)
-        .add("platform", "3")
-        .add("referer", "com.copymanga.app-3.0.6")
-        .add("version", "3.0.6")
-        .add("device", device)
-        .add("pseudoid", pseudoId)
+    override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Accept", "application/json")
-        .add("region", config[preferredLineKey] ?: DEFAULT_REGION)
-        .add("authorization", authHeader)
-        .add("umstring", "b4c89ca4104ea9a97750314d791520ac")
-        .add("x-auth-timestamp", ts)
-        .add("x-auth-signature", sig)
-        // 魔法指纹：Content-Encoding 发送两次，夹着 Connection 和 Accept-Encoding
-        .add("Connection", "Keep-Alive")
-        .add("Accept-Encoding", "gzip")
-        .add("Host", apiDomain)
+        .add("Accept-Language", "en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7")
+        .add("Origin", WEB_ORIGIN)
+        .add("Version", WEB_API_VERSION)
+        .add("Region", config[preferredLineKey] ?: DEFAULT_REGION)
+        .add("Webp", "0")
+        .add("platform", WEB_PLATFORM)
+        .add("sec-fetch-dest", "document")
+        .add("sec-fetch-mode", "navigate")
+        .add("sec-fetch-site", "same-origin")
+        .add("sec-fetch-user", "?1")
+        .add("upgrade-insecure-requests", "1")
+        .add("User-Agent", config[userAgentKey])
+        .apply {
+            getAuthToken()?.let { add("Authorization", "Token $it") }
+        }
         .build()
-}
 
     @OptIn(InternalParsersApi::class)
     private fun apiBase(): String {
-        return baseUrlOverride ?: config[configKeyDomain]
+        return config[configKeyDomain]
     }
 
     private suspend fun resolveComicUuid(pathWord: String, headers: Headers): String? {
         val api = apiBase()
-        val rid = getRequestId()
-        val url = "https://$api/api/v3/comic2/$pathWord?in_mainland=true&request_id=$rid&platform=3"
-        val resp = webClient.httpGet(url.toHttpUrl(), headers)
-        if (!resp.isSuccessful) return null
-        return resp.parseJson().optJSONObject("results")?.optJSONObject("comic")?.optString("uuid")
+        val url = "https://$api/api/v3/comic2/$pathWord"
+        return apiGetJson(url, headers).optJSONObject("results")?.optJSONObject("comic")?.optString("uuid")
     }
 
     override suspend fun fetchFavorites(): List<Content> {
@@ -530,142 +440,24 @@ override fun getRequestHeaders(): Headers {
         return resp.isSuccessful
     }
 
-    // 刷新 API 端点（优先尝试发现接口，若失败则使用配置或回退域）
-    @OptIn(InternalParsersApi::class)
-    private suspend fun refreshAppApi(): String {
-        // 若已刷新过则复用缓存
-        baseUrlOverride?.let { return it }
-        
-        if (!discoveryAttempted) {
-            discoveryAttempted = true
-            val discoveryUrl = "https://api.copy-manga.com/api/v3/system/network2?platform=3"
-            try {
-                // 此时尚未设置 baseUrlOverride，需避免 Host 与 URL 不一致
-                val headers = Headers.Builder().apply {
-                    val baseHeaders = getRequestHeaders()
-                    for (i in 0 until baseHeaders.size) {
-                        val name = baseHeaders.name(i)
-                        if (name.equals("Host", ignoreCase = true) ||
-                            name.equals("Connection", ignoreCase = true) ||
-                            name.equals("Accept-Encoding", ignoreCase = true)
-                        ) {
-                            continue
-                        }
-                        add(name, baseHeaders.value(i))
-                    }
-                }.build()
-                val resp = webClient.httpGet(discoveryUrl, headers)
-                val json = resp.parseJson()
-                val api = json.optJSONObject("results")?.optJSONArray("api")?.optJSONArray(0)?.optString(0)
-                if (!api.isNullOrBlank()) {
-                    baseUrlOverride = api
-                    siteDomainOverride = if (api.startsWith("api.")) api.removePrefix("api.") else api
-                    
-                    // 同时尝试刷新搜索 API
-                    refreshSearchApi()
-                    
-                    return api
-                }
-            } catch (e: Exception) {
-                // 忽略发现异常，继续走默认流程
-            }
-        }
-        
-        val host = config[configKeyDomain]
-        baseUrlOverride = host
-        // 同步推导站点域（移除 "api." 前缀）
-        siteDomainOverride = if (host.startsWith("api.")) host.removePrefix("api.") else siteDomainOverride
-        refreshSearchApi()
-        return host
-    }
+    private suspend fun apiGetJson(url: String, headers: Headers = getRequestHeaders()): JSONObject {
+        val response = webClient.httpGet(url, headers)
+        val body = response.parseJson()
+        val code = body.optInt("code", response.code)
+        if (code == 200) return body
 
-    private suspend fun refreshSearchApi() {
-        val url = "https://www.copy20.com/search"
-        try {
-            // 使用普通浏览器 User-Agent 访问网页，避免被 API 专属请求头拦截
-            val headers = Headers.Builder()
-                .add("User-Agent", UserAgents.CHROME_DESKTOP)
-                .build()
-            val resp = webClient.httpGet(url, headers)
-            if (resp.isSuccessful) {
-                val text = resp.parseRaw()
-                val match = Regex("""const countApi = "([^"]+)"""").find(text)
-                match?.groupValues?.get(1)?.let {
-                    searchApiOverride = it
-                }
-            }
-        } catch (e: Exception) {
-            // Ignore
+        val message = body.optString("message").ifBlank {
+            body.optJSONObject("results")?.optString("detail").orEmpty()
         }
-    }
-
-    private suspend fun getRequestId(): String {
-        val region = config[preferredLineKey] ?: DEFAULT_REGION
-        if (region == "0") return ""
-        
-        val now = System.currentTimeMillis()
-        if (cachedRequestId != null && now - lastRequestIdFetchTime < 3600_000L) { // Cache for 1 hour
-            return cachedRequestId!!
-        }
-
-        val url = "https://marketing.aiacgn.com/api/v2/adopr/query3/?format=json&ident=200100001"
-        return try {
-            val resp = webClient.httpGet(url.toHttpUrl(), getRequestHeaders())
-            if (resp.isSuccessful) {
-                val rid = resp.parseJson().optJSONObject("results")?.optString("request_id").orEmpty()
-                cachedRequestId = rid
-                lastRequestIdFetchTime = now
-                rid
-            } else ""
-        } catch (e: Exception) {
-            ""
-        }
-    }
-
-    // 统一的 210 抗刷重试 GET（返回 JSON）；用于详情与章节列表
-    @OptIn(InternalParsersApi::class)
-    private suspend fun httpGetJsonWithAntiAbuse(url: String, headers: Headers, maxAttempts: Int = 3): JSONObject {
-        var attempt = 0
-        val defaultWaitMs = 40_000L
-        while (attempt < maxAttempts) {
-            val response = try {
-                webClient.httpGet(url, headers)
-            } catch (e: Exception) {
-                // 4xx/5xx 等状态异常，交由调用方回退到其他参数组合
-                return JSONObject()
-            }
-            if (response.code == 210) {
-                val body = runCatching { response.parseJson() }.getOrElse { JSONObject() }
-                val msg = body.optString("message")
-                
-                // 仅当明确提及等待时间时才重试；否则视为维护或区域限制，直接返回 body
-                val isRateLimit = msg.contains("seconds", ignoreCase = true) || 
-                                 msg.contains("available in", ignoreCase = true)
-                
-                if (!isRateLimit) {
-                    return body
-                }
-                
-                // 访问过于频繁，解析等待时间并重试
-                val waitMs = runCatching {
-                    val m = Regex("(\\d+)\\s*seconds").find(msg)
-                    val seconds = m?.groups?.get(1)?.value?.toLongOrNull()
-                        ?: msg.toLongOrNull()
-                        ?: 40L
-                    seconds * 1000L
-                }.getOrElse { defaultWaitMs }
-                kotlinx.coroutines.delay(waitMs)
-                attempt++
-                continue
-            }
-            return response.parseJson()
-        }
-        return JSONObject()
+        throw ParseException(
+            shortMessage = "拷贝漫画接口错误 $code${message.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()}",
+            url = url,
+        )
     }
 
     @OptIn(InternalParsersApi::class)
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val base = refreshAppApi()
+        val base = apiBase()
         val offset = (page - paginator.firstPage) * pageSize
         val isRanking = filter.tags.any { it.key == "ranking" }
         val url = if (isRanking) {
@@ -686,13 +478,22 @@ override fun getRequestHeaders(): Headers {
                 append(dateType)
                 append("&free_type=1")
             }
+        } else if (!filter.query.isNullOrEmpty() && filter.query.startsWith("作者:")) {
+            val authorName = filter.query.removePrefix("作者:").trim()
+            val pathWord = authorPathWordDict[authorName]
+            if (pathWord != null) {
+                "https://$base/api/v3/comics?limit=$pageSize&offset=$offset" +
+                    "&ordering=-datetime_updated&author=${pathWord.urlEncoded()}&_update=true&free_type=1"
+            } else {
+                "https://$base$BASE_SEARCH_API?limit=$pageSize&offset=$offset" +
+                    "&q=${authorName.urlEncoded()}&q_type=author"
+            }
         } else if (!filter.query.isNullOrEmpty()) {
             val q = filter.query.urlEncoded()
-            val searchPath = searchApiOverride ?: BASE_SEARCH_API
             buildString {
                 append("https://")
                 append(base)
-                append(searchPath)
+                append(BASE_SEARCH_API)
                 append("?limit=")
                 append(pageSize)
                 append("&offset=")
@@ -701,38 +502,6 @@ override fun getRequestHeaders(): Headers {
                 append(q)
                 append("&q_type=")
                 append("") // 默认空字符串，匹配全部或按 JS 逻辑
-            }
-        } else if (!filter.query.isNullOrEmpty() && filter.query.startsWith("作者:")) {
-            val authorName = filter.query.removePrefix("作者:").trim()
-            val pathWord = authorPathWordDict[authorName]
-            if (pathWord != null) {
-                buildString {
-                    append("https://")
-                    append(base)
-                    append("/api/v3/comics?limit=")
-                    append(pageSize)
-                    append("&offset=")
-                    append(offset)
-                    append("&ordering=-datetime_updated&author=")
-                    append(pathWord.urlEncoded())
-                    append("&_update=true&free_type=1")
-                }
-            } else {
-                val q = authorName.urlEncoded()
-                val searchPath = searchApiOverride ?: BASE_SEARCH_API
-                buildString {
-                    append("https://")
-                    append(base)
-                    append(searchPath)
-                    append("?limit=")
-                    append(pageSize)
-                    append("&offset=")
-                    append(offset)
-                    append("&q=")
-                    append(q)
-                    append("&q_type=")
-                    append("author")
-                }
             }
         } else {
             // 主题分类列表
@@ -766,12 +535,9 @@ override fun getRequestHeaders(): Headers {
             }
         }
 
-        // 先尝试 API；若返回维护页/异常/空列表，则改用 HTML 列表页解析
-        val apiResults = runCatching {
-            val resp = webClient.httpGet(url, getRequestHeaders())
-            val root = resp.parseJson()
-            val list = root.optJSONObject("results")?.optJSONArray("list") ?: JSONArray()
-            list.mapJSON { jo ->
+        val root = apiGetJson(url)
+        val list = root.optJSONObject("results")?.optJSONArray("list") ?: JSONArray()
+        return list.mapJSON { jo ->
                 val comic = jo.optJSONObject("comic") ?: jo
                 val id = comic.optString("path_word")
                 val title = comic.optString("name")
@@ -798,33 +564,15 @@ override fun getRequestHeaders(): Headers {
                     source = source,
                     contentRating = null,
                 )
-            }
-        }.getOrElse { emptyList() }
-
-        return apiResults
+        }
     }
 
     @OptIn(InternalParsersApi::class)
     override suspend fun getDetails(manga: Content): Content {
-        // 仅使用 API 详情与分组章节批量拉取（含 210 重试与参数回退）
-        val base = refreshAppApi()
+        val base = apiBase()
         val headers = getRequestHeaders()
-        
-        var res: JSONObject? = fetchDetailsWithFallbackParams(base, manga.url, headers)
-        
-        // 若主域失败，尝试回退域
-        if (res == null) {
-            for (fallback in FALLBACK_DOMAINS) {
-                if (fallback == base) continue
-                res = fetchDetailsWithFallbackParams(fallback, manga.url, headers)
-                if (res != null) {
-                    baseUrlOverride = fallback
-                    break
-                }
-            }
-        }
-        
-        if (res == null) return manga
+        val detailUrl = "https://$base/api/v3/comic2/${manga.url}"
+        val res = apiGetJson(detailUrl, headers).optJSONObject("results") ?: return manga
         val comic = res.optJSONObject("comic") ?: return manga
 
         // 记录作者 path_word (参考 JS 配置)
@@ -849,7 +597,6 @@ override fun getRequestHeaders(): Headers {
             else -> manga.state
         }
 
-        // 分组与章节批量拉取（每次 100），支持 JSONArray / JSONObject 两种返回
         val pathList = mutableListOf<String>()
         val groupsArr = res.optJSONArray("groups")
         if (groupsArr != null && groupsArr.length() > 0) {
@@ -873,13 +620,12 @@ override fun getRequestHeaders(): Headers {
         if (pathList.isEmpty()) pathList += "default"
 
         val chapters = ArrayList<ContentChapter>()
-        val currentBase = baseUrlOverride ?: base
         for (path in pathList) {
-            logDebug("chapters: branch=${manga.url} group=$path base=$currentBase")
+            logDebug("chapters: branch=${manga.url} group=$path base=$base")
             var offset = 0
             while (true) {
-                val list = fetchChaptersWithFallbackParams(currentBase, manga.url, path, offset, headers)
-                if (list == null || list.length() == 0) break
+                val list = fetchChapters(base, manga.url, path, offset, headers)
+                if (list.length() == 0) break
                 
                 for (j in 0 until list.length()) {
                     val c = list.optJSONObject(j) ?: continue
@@ -900,7 +646,6 @@ override fun getRequestHeaders(): Headers {
                         source = source,
                     )
                 }
-                // 如果返回不足 100，则已到末尾
                 if (list.length() < 100) break
                 offset += 100
             }
@@ -916,207 +661,53 @@ override fun getRequestHeaders(): Headers {
         )
     }
 
-    private suspend fun fetchDetailsWithFallbackParams(base: String, mangaUrl: String, headers: Headers): JSONObject? {
-        val detailBase = "https://$base/api/v3/comic2/$mangaUrl"
-        val rid = getRequestId()
-        val detailParamCombos = listOf(
-            "?in_mainland=true&request_id=$rid&platform=3",
-            "?platform=3&_update=true",
-            "?platform=3&_update=true&in_mainland=true&request_id=$rid",
-            "?in_mainland=true&_update=true&request_id=$rid",
-            "?platform=3&_update=true&request_id=$rid",
-            "?platform=3",
-        )
-        for (suffix in detailParamCombos) {
-            val data = httpGetJsonWithAntiAbuse(detailBase + suffix, headers)
-            val candidate = data.optJSONObject("results")
-            if (candidate != null) return candidate
-        }
-        return null
-    }
-
-    private suspend fun fetchChaptersWithFallbackParams(base: String, mangaUrl: String, groupPath: String, offset: Int, headers: Headers): JSONArray? {
-        val baseQuery = "https://$base/api/v3/comic/$mangaUrl/group/$groupPath/chapters?limit=100&offset=$offset"
-        val rid = getRequestId()
-        val paramCombos = listOf(
-            "&in_mainland=true&request_id=$rid",
-            "&platform=3&_update=true&in_mainland=true&request_id=$rid",
-            "&platform=3&_update=true",
-            "&_update=true",
-            "&platform=3",
-        )
-        for (suffix in paramCombos) {
-            val groupData = httpGetJsonWithAntiAbuse(baseQuery + suffix, headers)
-            val results = groupData.optJSONObject("results")
-            val candidate = results?.optJSONArray("list")
-            if (candidate != null && candidate.length() > 0) return candidate
-            if (results?.optInt("total", -1) == 0) return JSONArray()
-        }
-        return null
+    private suspend fun fetchChapters(
+        base: String,
+        mangaUrl: String,
+        groupPath: String,
+        offset: Int,
+        headers: Headers,
+    ): JSONArray {
+        val url = "https://$base/api/v3/comic/$mangaUrl/group/$groupPath/chapters" +
+            "?limit=100&offset=$offset&_update=true"
+        return apiGetJson(url, headers).optJSONObject("results")?.optJSONArray("list") ?: JSONArray()
     }
 
     @OptIn(InternalParsersApi::class)
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        // 仅使用 API 读取章节内容（含 210 重试与参数回退组合）
-        val base = refreshAppApi()
-        val headers = getRequestHeaders()
-        
-        var pages = fetchPagesFromBase(base, chapter, headers)
-        if (pages.isEmpty()) {
-            for (fallback in FALLBACK_DOMAINS) {
-                if (fallback == base) continue
-                logDebug("pages: retry base=$fallback chapter=${chapter.url}")
-                pages = fetchPagesFromBase(fallback, chapter, headers)
-                if (pages.isNotEmpty()) {
-                    baseUrlOverride = fallback
-                    break
-                }
-            }
-        }
-        return pages
+        val url = "https://${apiBase()}/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
+        val chapterData = apiGetJson(url).optJSONObject("results")?.optJSONObject("chapter")
+            ?: throw ParseException("章节内容为空", url)
+        return parsePages(chapter, chapterData)
     }
 
-    private suspend fun fetchPagesFromBase(base: String, chapter: ContentChapter, headers: Headers): List<ContentPage> {
-        val epBase = "https://$base/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
-        val rid = getRequestId()
-        val paramCombos = listOf(
-            "?in_mainland=true&request_id=$rid",
-            "?platform=3&_update=true&line=1",
-            "?platform=3&_update=true&line=0",
-            "?line=1&_update=true",
-            "?line=0&_update=true",
-            "?platform=3&_update=true&line=1&in_mainland=true&request_id=$rid",
-            "?platform=3&_update=true&line=0&in_mainland=true&request_id=$rid",
-            "?platform=3&line=1",
-            "?platform=3&line=0",
-        )
+    private fun parsePages(chapter: ContentChapter, chapterData: JSONObject): List<ContentPage> {
+        val contents = chapterData.optJSONArray("contents") ?: JSONArray()
+        val orders = chapterData.optJSONArray("words") ?: JSONArray()
+        val pages = contents.mapJSONIndexed { index, item ->
+            val rawUrl = item.optString("url")
+            val pageUrl = if (rawUrl.hasSignedQuery()) rawUrl else rawUrl.replaceResolution()
+            orders.optInt(index, index) to pageUrl
+        }.filter { (_, url) -> url.isNotBlank() }
 
-        for (suffix in paramCombos) {
-            val url = epBase + suffix
-            logDebug("pages: fetch url=$url")
-            val data = httpGetJsonWithAntiAbuse(url, headers)
-            val res = data.optJSONObject("results") ?: JSONObject()
-            val chapterObj = res.optJSONObject("chapter") ?: JSONObject()
-            val contents = chapterObj.optJSONArray("contents") ?: JSONArray()
-            val orders = chapterObj.optJSONArray("words") ?: JSONArray()
-
-            val urls = ArrayList<String>(contents.length())
-            for (i in 0 until contents.length()) {
-                val item = contents.optJSONObject(i) ?: continue
-                val rawUrl = item.optString("url")
-                if (rawUrl.isNullOrEmpty()) continue
-                // 仅当 URL 为纯路径（不含查询/签名）时才尝试替换清晰度；否则保留原始 URL，避免签名失效
-                val hasQueryOrSignature = rawUrl.contains('?') || rawUrl.contains("token=", ignoreCase = true) ||
-                    rawUrl.contains("sign", ignoreCase = true) || rawUrl.contains("auth", ignoreCase = true)
-                val hdUrl = if (hasQueryOrSignature) rawUrl else rawUrl.replace(
-                    Regex("""([./])c\d+x\.([a-zA-Z]+)$""")) { m ->
-                    val sep = m.groupValues.getOrNull(1).orEmpty()
-                    // 与 Venera 对齐：无签名路径强制使用 webp 清晰度变体
-                    "$sep" + "c${imageQuality}x.webp"
-                }
-                urls += hdUrl
-            }
-
-            // 根据 words 排序；若映射失败则采用原始顺序回退
-            val pagesByOrder = MutableList(urls.size) { "" }
-            for (i in urls.indices) {
-                val pos = orders.optInt(i, i)
-                if (pos in pagesByOrder.indices) {
-                    pagesByOrder[pos] = urls[i]
-                }
-            }
-            val ordered = pagesByOrder.mapIndexedNotNull { i, u ->
-                if (u.isEmpty()) null else ContentPage(
-                    id = generateUid("${chapter.url}/$i"),
-                    url = u,
-                    preview = null,
-                    source = source,
-                )
-            }
-            if (ordered.isNotEmpty()) {
-                return ordered
-            }
-            if (urls.isNotEmpty()) {
-                // 回退：使用原始顺序（仅当存在内容时）
-                return urls.mapIndexed { i, u ->
-                    ContentPage(
-                        id = generateUid("${chapter.url}/$i"),
-                        url = u,
-                        preview = null,
-                        source = source,
-                    )
-                }
-            }
-            // 无内容则尝试下一个参数组合
-            continue
-        }
-        // 回退：依次尝试 cartoon 与旧 chapter 端点，并对每个端点尝试 line=1/0 等参数组合
-        run {
-            val altBases = listOf(
-                "https://$base/api/v3/cartoon/${chapter.branch}/chapter/${chapter.url}",
-                "https://$base/api/v3/comic/${chapter.branch}/chapter/${chapter.url}",
+        return pages.sortedBy { it.first }.mapIndexed { index, (_, url) ->
+            ContentPage(
+                id = generateUid("${chapter.url}/$index"),
+                url = url,
+                preview = null,
+                source = source,
             )
-            val rid = getRequestId()
-            for (altBase in altBases) {
-                for (suffix in paramCombos) {
-                    val altSuffix = if (suffix.contains("request_id=")) {
-                        suffix.substringBefore("request_id=") + "request_id=$rid" + suffix.substringAfter("request_id=").substringAfter("&", "")
-                    } else suffix
-                    
-                    val altUrl = altBase + altSuffix
-                    val altData = httpGetJsonWithAntiAbuse(altUrl, headers)
-                    val altRes = altData.optJSONObject("results") ?: JSONObject()
-                    val altChapter = altRes.optJSONObject("chapter") ?: JSONObject()
-                    val altContents = altChapter.optJSONArray("contents") ?: JSONArray()
-                    val altOrders = altChapter.optJSONArray("words") ?: JSONArray()
-                    if (altContents.length() == 0) continue
-
-                    val altUrls = ArrayList<String>(altContents.length())
-                    for (i in 0 until altContents.length()) {
-                        val item = altContents.optJSONObject(i) ?: continue
-                        val rawUrl = item.optString("url")
-                        if (rawUrl.isNullOrEmpty()) continue
-                        val hasQueryOrSignature = rawUrl.contains('?') || rawUrl.contains("token=", ignoreCase = true) ||
-                            rawUrl.contains("sign", ignoreCase = true) || rawUrl.contains("auth", ignoreCase = true)
-                        val hdUrl = if (hasQueryOrSignature) rawUrl else rawUrl.replace(
-                            Regex("""([./])c\d+x\.([a-zA-Z]+)$""")) { m ->
-                            val sep = m.groupValues.getOrNull(1).orEmpty()
-                            "${sep}c${imageQuality}x.webp"
-                        }
-                        altUrls += hdUrl
-                    }
-
-                    // 排序：优先根据 words 映射；否则使用原始顺序
-                    val pagesByOrder = MutableList(altUrls.size) { "" }
-                    for (i in altUrls.indices) {
-                        val pos = altOrders.optInt(i, i)
-                        if (pos in pagesByOrder.indices) pagesByOrder[pos] = altUrls[i]
-                    }
-                    val ordered = pagesByOrder.mapIndexedNotNull { i, u ->
-                        if (u.isEmpty()) null else ContentPage(
-                            id = generateUid("${chapter.url}/$i"),
-                            url = u,
-                            preview = null,
-                            source = source,
-                        )
-                    }
-                    if (ordered.isNotEmpty()) return ordered
-                    if (altUrls.isNotEmpty()) {
-                        return altUrls.mapIndexed { i, u ->
-                            ContentPage(
-                                id = generateUid("${chapter.url}/$i"),
-                                url = u,
-                                preview = null,
-                                source = source,
-                            )
-                        }
-                    }
-                    // 若无内容，继续尝试下一个参数组合
-                }
-            }
         }
-        return emptyList()
     }
+
+    private fun String.hasSignedQuery(): Boolean = contains('?') ||
+        contains("token=", ignoreCase = true) ||
+        contains("sign", ignoreCase = true) ||
+        contains("auth", ignoreCase = true)
+
+    private fun String.replaceResolution(): String = replace(
+        Regex("""([./])c\d+x\.([a-zA-Z]+)$"""),
+    ) { match -> "${match.groupValues[1]}c${imageQuality}x.webp" }
 
     // 从章节标题中解析话序号，如 “第1话”、“1话”、“第12章”等，失败返回 null
     private fun parseChapterNumber(title: String): Float? {
@@ -1137,117 +728,64 @@ override fun getRequestHeaders(): Headers {
     }
 
 
-    // 为图片请求设置站点 Referer/Origin，避免静态资源服务端返回 4xx/5xx
     @OptIn(InternalParsersApi::class)
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
         val accept = req.header("Accept").orEmpty()
         val url = req.url
-        val host = url.host
         val path = url.encodedPath
-        val isApiRequest = host.startsWith("api.") || path.contains("/api/")
+        val isApiRequest = path.startsWith("/api/")
         val hasImageExt = url.pathSegments.lastOrNull()?.let { seg ->
             seg.endsWith(".jpg", true) || seg.endsWith(".jpeg", true) || seg.endsWith(".png", true) || seg.endsWith(".webp", true) || seg.endsWith(".gif", true) || seg.endsWith(".avif", true) || seg.endsWith(".svg", true) || seg.endsWith(".ico", true)
         } == true
         val isImageRequest = accept.contains("image/") || hasImageExt
-        val site = siteDomain()
 
-        return if (isImageRequest) {
-            // 图片请求：不设置 Referer（匹配 Venera 的行为，JS 配置没有为图片设置特殊 headers）
-            // 或者使用图片 CDN 自身的域作为 Referer
-            val originSite = when {
-                host.contains("mangacopy.com", ignoreCase = true) -> "www.mangacopy.com"
-                host.contains("copy-manga.com", ignoreCase = true) -> "copy-manga.com"
-                host.contains("copy2000.online", ignoreCase = true) -> "copy2000.online"
-                else -> site
+        if (isApiRequest) {
+            synchronized(apiRateLimitLock) {
+                val waitMs = API_REQUEST_INTERVAL_MS - (System.currentTimeMillis() - lastApiRequestTime)
+                if (waitMs > 0) Thread.sleep(waitMs)
+                lastApiRequestTime = System.currentTimeMillis()
             }
-            val builder = req.newBuilder()
-                // 直接使用标准的图片 Accept 头，避免服务端因缺失 Accept 而拒绝
+            return chain.proceed(req).unzip()
+        }
+
+        if (isImageRequest) {
+            val imageRequest = req.newBuilder()
                 .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
                 .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-                // 与 JS curl 对齐：显式允许 gzip/deflate/br，移除 Content-Encoding
-                .header("Accept-Encoding", "gzip, deflate, br")
-                .removeHeader("Content-Encoding")
-                .removeHeader("content-encoding")
-                // 覆盖 Host，避免被上游公共拦截器改成 API 域
-                .header("Host", host)
-                // 使用移动 WebView UA（与 JS 配置接近）
                 .header("User-Agent", UserAgents.CHROME_MOBILE)
-                // 对齐 JS 行为，为图片请求附带站点域 Referer/Origin
-                .header("Referer", "https://$originSite/")
-                .header("Origin", "https://$originSite")
-                // 移除认证头，让图片请求与 JS curl 一致（不带 token）
+                .header("Referer", "https://${siteDomain()}/")
                 .removeHeader("Authorization")
-                .removeHeader("authorization")
                 .removeHeader("Cookie")
-                .removeHeader("cookie")
-                // 清理 App 特征头，避免静态域安全校验拒绝
-                .removeHeader("source")
-                .removeHeader("deviceinfo")
-                .removeHeader("platform")
-                .removeHeader("version")
-                .removeHeader("device")
-                .removeHeader("pseudoid")
-                .removeHeader("region")
-                .removeHeader("dt")
-                .removeHeader("x-auth-timestamp")
-                .removeHeader("x-auth-signature")
-                .removeHeader("umstring")
+                .build()
+            val response = chain.proceed(imageRequest)
+            return if (response.header("Content-Type").orEmpty().contains("octet-stream", ignoreCase = true)) {
+                response.newBuilder().header("Content-Type", "image/jpeg").build()
+            } else {
+                response
+            }
+        }
 
-            val newReq = builder.build()
-            val resp = chain.proceed(newReq)
-            val ct = resp.header("Content-Type").orEmpty()
-            return if (ct.contains("octet-stream", ignoreCase = true)) {
-                resp.newBuilder().header("Content-Type", "image/jpeg").build()
-            } else resp
-
-        } else if (!isApiRequest && req.method == "GET") {
-            // 统一处理非 API 的 GET：放宽 Accept，设置 Referer/Origin，移除 App 特征与认证头
-            val newReq = req.newBuilder()
+        if (req.method == "GET") {
+            val webRequest = req.newBuilder()
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,image/png,image/*,*/*;q=0.8")
                 .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                 .header("User-Agent", config[userAgentKey])
-                // .apply {
-                //     val originSite = when {
-                //         host.contains("mangacopy.com", ignoreCase = true) -> "www.mangacopy.com"
-                //         host.contains("copy-manga.com", ignoreCase = true) -> "copy-manga.com"
-                //         host.contains("copy2000.online", ignoreCase = true) -> "copy2000.online"
-                //         else -> site
-                //     }
-                //     header("Referer", "https://$originSite/")
-                //     header("Origin", "https://$originSite")
-                // }
                 .removeHeader("Authorization")
-                .removeHeader("authorization")
                 .removeHeader("Cookie")
-                .removeHeader("cookie")
-                .removeHeader("source")
-                .removeHeader("deviceinfo")
-                .removeHeader("platform")
-                .removeHeader("version")
-                .removeHeader("device")
-                .removeHeader("pseudoid")
-                .removeHeader("region")
-                .removeHeader("dt")
-                .removeHeader("x-auth-timestamp")
-                .removeHeader("x-auth-signature")
-                .removeHeader("umstring")
                 .build()
-            val resp = chain.proceed(newReq)
-            val ct = resp.header("Content-Type").orEmpty()
-            val decompressed = resp.unzip()
-            return if (ct.contains("octet-stream", ignoreCase = true)) {
-                decompressed.newBuilder().header("Content-Type", "image/jpeg").build()
-            } else decompressed
-        } else {
-            return chain.proceed(req).unzip()
+            val response = chain.proceed(webRequest).unzip()
+            return if (response.header("Content-Type").orEmpty().contains("octet-stream", ignoreCase = true)) {
+                response.newBuilder().header("Content-Type", "image/jpeg").build()
+            } else {
+                response
+            }
         }
+
+        return chain.proceed(req).unzip()
     }
 
-    /**
-     * 透明处理 GZIP 解压。
-     * 因为我们手动添加了 Accept-Encoding: gzip，OkHttp 会禁用其内置的透明解压逻辑。
-     */
+    /** 兼容服务端返回已压缩但未被 OkHttp 自动解压的响应。 */
     @OptIn(InternalParsersApi::class)
     private fun Response.unzip(): Response {
         val contentEncoding = header("Content-Encoding")
@@ -1261,7 +799,7 @@ override fun getRequestHeaders(): Headers {
             newBuilder()
                 .removeHeader("Content-Encoding")
                 .removeHeader("Content-Length")
-                .body(okhttp3.ResponseBody.create(contentType, bytes))
+                .body(bytes.toResponseBody(contentType))
                 .build()
         } catch (e: Exception) {
             logAuth("unzip: decompression failed: $e")
@@ -1281,51 +819,20 @@ override fun getRequestHeaders(): Headers {
         kotlin.runCatching { println("[CopyContentDebug] $msg") }
     }
 
-    private fun generateDeviceInfo(): String {
-        fun randInt(min: Int, max: Int): Int = Random.Default.nextInt(min, max + 1)
-        return "${randInt(1000000, 9999999)}V-${randInt(1000, 9999)}"
-    }
-
-    private fun generateDevice(): String {
-        fun randCharA(): Char = (Random.Default.nextInt('A'.code, 'Z'.code + 1)).toChar()
-        fun randDigit(): Char = (Random.Default.nextInt('0'.code, '9'.code + 1)).toChar()
-        return buildString {
-            append(randCharA()); append(randCharA()); append(randDigit()); append(randCharA());
-            append('.'); repeat(6) { append(randDigit()) }
-            append('.'); repeat(3) { append(randDigit()) }
-        }
-    }
-
-    private fun generatePseudoId(): String {
-        val chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        return buildString {
-            repeat(16) { append(chars[Random.Default.nextInt(chars.length)]) }
-        }
-    }
-
-    private fun hmacSha256(secretBase64: String, data: String): String {
-        val secret = java.util.Base64.getDecoder().decode(secretBase64)
-        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
-        val keySpec = javax.crypto.spec.SecretKeySpec(secret, "HmacSHA256")
-        mac.init(keySpec)
-        val bytes = mac.doFinal(data.toByteArray())
-        return bytes.joinToString(separator = "") { "%02x".format(it) }
-    }
-
     companion object {
-        // 默认使用海外线路（与 Python 校验一致）
-        private const val DEFAULT_REGION = "1"
-        private const val COPY_SECRET = "M2FmMDg1OTAzMTEwMzJlZmUwNjYwNTUwYTA1NjNhNTM="
+        private const val DEFAULT_SITE_DOMAIN = "www.copy3000.com"
+        private const val DEFAULT_REGION = "0"
+        private const val WEB_ORIGIN = "https://2025copy.com"
+        private const val WEB_API_VERSION = "2025.11.21"
+        private const val WEB_PLATFORM = "1"
+        private const val API_REQUEST_INTERVAL_MS = 100L
         private const val BASE_SEARCH_API = "/api/v3/search/comic"
-        private const val WEB_SEARCH_API = "/api/kb/web/searchb/comics"
-        private val FALLBACK_DOMAINS = listOf(
-            "api.copy2000.online",
-            "api.copy2001.online",
-            "api.copy2002.online",
-            "api.copymanga.tv",
-            "api.copymanga.org",
-            "api.mangacopy.com"
+        private val API_DOMAINS = listOf(
+            "api.copy3000.com",
+            "api.2026copy.com",
+            "api.copy202601.com",
+            "api.mangacopy.com",
+            "mapi.copy20.com",
         )
-        private val HAN_REGEX = Regex("[\\p{IsHan}]")
     }
 }

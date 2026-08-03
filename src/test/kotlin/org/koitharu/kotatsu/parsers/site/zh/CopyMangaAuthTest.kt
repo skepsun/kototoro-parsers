@@ -35,7 +35,7 @@ class CopyContentAuthTest {
         assertTrue(isAuth, "登录后 isAuthorized=false")
 
         // Cookie 中应存在 token/authorization 于 API 域
-        val cookies = context.cookieJar.getCookies("api.copy2000.online")
+        val cookies = context.cookieJar.getCookies("api.copy3000.com")
         val tokenCookie = cookies.find { it.name.equals("token", true) || it.name.equals("authorization", true) }
         assertTrue(tokenCookie != null && tokenCookie!!.value.isNotBlank(), "API 域未发现有效 token/authorization Cookie")
     }

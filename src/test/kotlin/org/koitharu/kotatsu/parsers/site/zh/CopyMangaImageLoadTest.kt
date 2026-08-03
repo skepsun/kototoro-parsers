@@ -115,7 +115,7 @@ class CopyContentImageLoadTest {
                 val req = resp.request
                 val referer = req.header("Referer").orEmpty()
                 val ua = req.header("User-Agent").orEmpty()
-                assertTrue(referer.contains("copy2000.online"), "未设置站点 Referer 或不正确：$referer")
+                assertTrue(referer.contains("copy3000.com"), "未设置站点 Referer 或不正确：$referer")
                 assertTrue(ua.isNotBlank(), "图片请求缺少 User-Agent")
 
                 // 图片请求不应携带认证头
@@ -124,7 +124,7 @@ class CopyContentImageLoadTest {
 
                 // 若图片域非同域且非子域，则不应携带 Cookie；同域/子域允许携带站点 Cookie（用于 token）
                 val host = req.url.host
-                val site = "copy2000.online"
+                val site = "copy3000.com"
                 val isSameSiteOrSub = host.equals(site, ignoreCase = true) || host.endsWith("." + site, ignoreCase = true)
                 if (!isSameSiteOrSub) {
                     assertTrue(req.header("Cookie") == null && req.header("cookie") == null,
