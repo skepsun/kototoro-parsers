@@ -23,10 +23,15 @@
 
 ## 滴答漫画
 
-- 候选域名 `https://ddmanhua.com` 会 301 降级到 `http://ddmanhua.com/`。
-- 首页缓存内容实际标识为“催漫画”，脚本配置和绝对链接指向 `www.cuimh.com`；搜索页又使用“滴答漫画”模板，站点身份和模板不一致。
-- 搜索入口为 GET `/index.php/search?key={关键词}`，同时存在 `/search/{关键词}` 路径。本次三个关键词的搜索结果均为空。
-- 当前无法从稳定搜索结果建立可重复的详情、章节和图片链路，暂不实现。
+- 真实入口为 `http://ddmanhua.com`；HTTPS 会 301 降级到 HTTP，因此解析器显式使用 HTTP 基址。
+- 分类：`/category/list/{地区}`，地区编号 1 至 4 分别是国产、日本、韩国和欧美；每页 30 部，分页路径为 `/page/{页码}`。
+- 排序：`order/hits`、`order/addtime`、`order/score` 分别对应人气、更新时间和评分。
+- 搜索：GET `/index.php/search?key={关键词}` 和 `/search/{关键词}` 当前对站内确实存在的标题仍返回空结果，因此实现中主动关闭搜索能力，不扫描分类页伪造搜索。
+- 详情：`/book/{id}.html`，服务端 HTML 包含标题、评分、作者、状态、类型、简介、封面和完整章节目录；失效作品仍返回 HTTP 200，但没有详情容器。
+- 章节：`/chapter/{bookId}-{chapterId}.html`。站点目录包含大量不连续和无编号标题，实现保留原始 DOM 顺序，仅单独解析明确的“第 N 话”。
+- 阅读参数：章节 HTML 中的 `params` 采用“前 16 字节 IV + AES-128-CBC/PKCS7 密文”，解密后读取 `host`、`source_id` 和 `images`；实现使用 JVM 原生密码库，不执行站点 JavaScript。
+- 普通图片线路：当前在线样本 `source_id=6` 直接返回 JPEG，无需 Referer。样本 `/chapter/618076-224176.html` 解析到 22 张图片。
+- 加密图片线路：脚本中的 `source_id=12` 会下载加密二进制并再次进行 AES-CBC 解密。实现通过带内部 URL fragment 的精确拦截器替换响应体，离线密码夹具已通过；当前尚未找到在线的 `source_id=12` 章节，不能视为线上验证完成。
 
 ## 漫画100
 
@@ -44,7 +49,7 @@
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | 图库漫画 | 5 | 4 | 5 | 4 | 5 | 4 | 4 | 3 | 4 | 立即实现 |
 | 漫画100 | 5 | 4 | 5 | 3 | 3 | 3 | 4 | 4 | 3 | 已实现 |
-| 滴答漫画 | 2 | 3 | 4 | 2 | 2 | 3 | 1 | 5 | 1 | 暂不建议 |
+| 滴答漫画 | 3 | 3 | 4 | 2 | 3 | 3 | 1 | 5 | 2 | 已实现（无搜索） |
 
 “解析难度”“防护强度”和“维护成本”列的高分表示更容易解析、防护更弱、维护成本更低；“重复度”高分表示与现有内容重复更多。
 
@@ -57,8 +62,12 @@
 TUKU_INTEGRATION_TEST=1 ./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.TukuParserIntegrationTest"
 ./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.Manhua100ParserTest"
 MANHUA100_INTEGRATION_TEST=1 ./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.Manhua100ParserIntegrationTest"
+./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.DdManhuaParserTest"
+DDMANHUA_INTEGRATION_TEST=1 ./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.DdManhuaParserIntegrationTest"
 ```
 
 当前线上集成样本：搜索“海贼王”；作品 `/manga-70923/`；首章 `/chapter768098/`；详情页解析到 1034 个章节，首章解析到 104 张图片；首图和末图均为 HTTP 200、`image/jpeg`。
 
 漫画100 线上集成样本：搜索“一人之下”；作品 `/26459`；详情页解析到 811 个章节，首章解析到 17 张图片；首图和末图均为 HTTP 200、`image/webp`。
+
+滴答漫画线上集成样本：更新分类每页 30 部；作品 `/book/618076.html`；首章 `/chapter/618076-224176.html` 解析到 22 张图片；首图和末图均为 HTTP 200、`image/jpeg`。

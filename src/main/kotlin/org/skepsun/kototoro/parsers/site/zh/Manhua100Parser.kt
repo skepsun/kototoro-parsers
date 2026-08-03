@@ -30,9 +30,6 @@ import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.Base64
 import java.util.EnumSet
-import javax.crypto.Cipher
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
 
 /**
  * 漫画100（manhua100.com）。
@@ -320,18 +317,6 @@ internal class Manhua100Parser(context: ContentLoaderContext) :
 
 internal object Manhua100ImageDecoder {
 	private const val KEY = "5V&RoR%Jf@pJPydF"
-	private const val IV_SIZE = 16
 
-	fun decode(encoded: String): JSONObject? = runCatching {
-		val bytes = Base64.getDecoder().decode(encoded)
-		require(bytes.size > IV_SIZE)
-		val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-		cipher.init(
-			Cipher.DECRYPT_MODE,
-			SecretKeySpec(KEY.toByteArray(Charsets.UTF_8), "AES"),
-			IvParameterSpec(bytes.copyOfRange(0, IV_SIZE)),
-		)
-		val plaintext = cipher.doFinal(bytes.copyOfRange(IV_SIZE, bytes.size))
-		JSONObject(String(plaintext, Charsets.UTF_8))
-	}.getOrNull()
+	fun decode(encoded: String): JSONObject? = AesCbcDecoder.decodeJsonWithPrefixedIv(encoded, KEY)
 }
