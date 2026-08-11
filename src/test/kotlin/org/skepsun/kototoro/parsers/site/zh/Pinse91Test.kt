@@ -23,6 +23,14 @@ internal class Pinse91Test {
     }
 
     @Test
+    fun `requests hd playback source`() {
+        assertEquals(
+            "https://91pinse.com/api/videos/452450/playback?hd=1",
+            parser.buildPlaybackApiUrl("/api/videos/452450/playback").toString(),
+        )
+    }
+
+    @Test
     fun `preserves signed query parameters from html`() {
         val html = """<video src="https://cdn.example/pl.m3u8?token=a+b&amp;expires=42"></video>"""
 

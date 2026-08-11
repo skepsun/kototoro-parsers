@@ -343,7 +343,7 @@ internal class Pinse91(
                 .set("Referer", baseUrl)
                 .set("X-Requested-With", "XMLHttpRequest")
                 .build()
-            val apiUrl = requireNotNull(playbackApiPath.toAbsoluteUrl(domain).toHttpUrlOrNull())
+            val apiUrl = buildPlaybackApiUrl(playbackApiPath)
             val json = webClient.httpPost(apiUrl, emptyMap(), apiHeaders).parseJson()
             addSource(json.optString("url"))
             addSource(json.optString("fallback_url"))
@@ -418,6 +418,12 @@ internal class Pinse91(
     internal fun findPlaybackApiPath(html: String): String? {
         return PLAYBACK_API_REGEX.find(html)?.groupValues?.get(1)
     }
+
+    internal fun buildPlaybackApiUrl(path: String) =
+        requireNotNull(path.toAbsoluteUrl(domain).toHttpUrlOrNull())
+            .newBuilder()
+            .addQueryParameter("hd", "1")
+            .build()
 
     internal fun findUrlsByRegex(html: String): List<String> {
         val cleanHtml = decodeMediaText(html)
