@@ -1,11 +1,11 @@
 package org.skepsun.kototoro.parsers.site.zh
 
+import org.json.JSONObject
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentParserAuthProvider
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
-import java.net.URLEncoder
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.Content
@@ -24,9 +24,12 @@ import org.skepsun.kototoro.parsers.util.attrAsRelativeUrl
 import org.skepsun.kototoro.parsers.util.attrOrNull
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
+import org.skepsun.kototoro.parsers.util.parseJson
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.jsoup.parser.Parser
 import java.util.EnumSet
 
 @ContentSourceParser(name = "PINSE91", title = "91Pinse", locale = "zh", type = ContentType.HENTAI_VIDEO)
@@ -324,40 +327,49 @@ internal class Pinse91(
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val baseUrl = chapter.url.toAbsoluteUrl(domain)
-        val sources = ArrayList<String>()
-        val seenUrls = HashSet<String>()
+        val sources = LinkedHashSet<String>()
 
         fun addSource(url: String?) {
-            val u = normalizeMediaUrl(url) ?: return
-            if (seenUrls.add(u)) sources.add(u)
+            normalizeMediaUrl(url)?.let(sources::add)
         }
 
-        // Try standard page and HD page
-        val pagesToTry = mutableListOf(baseUrl)
-        if (baseUrl.contains("/v/")) {
-            pagesToTry.add(baseUrl.replace("/v/", "/vhd/"))
-        }
+        val doc = webClient.httpGet(baseUrl, getRequestHeaders()).parseHtml()
+        val playbackApiPath = findPlaybackApiPath(doc.outerHtml())
 
-        pagesToTry.forEach { url ->
-            runCatching {
-                val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-                
-                // 1. Iframes
-                doc.select("iframe[src]").forEach {
-                    val iframeUrl = it.attrAsAbsoluteUrlOrNull("src") ?: return@forEach
-                    if (iframeUrl.contains("player") || iframeUrl.contains("video") || iframeUrl.contains(domain)) {
-                        runCatching {
-                            val iframeHeaders = getRequestHeaders().newBuilder()
-                                .set("Referer", url)
-                                .build()
-                            val iframeDoc = webClient.httpGet(iframeUrl, iframeHeaders).parseHtml()
-                            findUrlsByRegex(iframeDoc.outerHtml()).forEach { addSource(it) }
-                        }
-                    }
+        if (playbackApiPath != null) {
+            val apiHeaders = getRequestHeaders().newBuilder()
+                .set("Accept", "application/json")
+                .set("Origin", "https://$domain")
+                .set("Referer", baseUrl)
+                .set("X-Requested-With", "XMLHttpRequest")
+                .build()
+
+            // 高清画质分流（存在多画质时返回 {"url": <mp4>, "fallback_url": <hls>}）。
+            // 只有单画质的视频对 ?hd=1 返回 404/空响应，因此单独请求并容错。
+            val hdJson = runCatching {
+                webClient.httpPost(buildPlaybackApiUrl(playbackApiPath), emptyMap<String, String>(), apiHeaders).parseJson()
+            }.getOrNull()
+
+            // 站点播放器默认请求的基础流（无 hd 参数），单画质视频也能正常返回 m3u8。
+            val baseJson = runCatching {
+                val baseApiUrl = requireNotNull(playbackApiPath.toAbsoluteUrl(domain).toHttpUrlOrNull())
+                webClient.httpPost(baseApiUrl, emptyMap<String, String>(), apiHeaders).parseJson()
+            }.getOrNull()
+
+            val selected = selectPlaybackJson(hdJson, baseJson)
+            if (selected != null) {
+                addSource(selected.optString("url"))
+                addSource(selected.optString("fallback_url"))
+            }
+        } else {
+            extractLegacySources(doc, baseUrl, ::addSource)
+
+            if (baseUrl.contains("/v/")) {
+                val hdUrl = baseUrl.replace("/v/", "/vhd/")
+                runCatching {
+                    val hdDoc = webClient.httpGet(hdUrl, getRequestHeaders()).parseHtml()
+                    extractLegacySources(hdDoc, hdUrl, ::addSource)
                 }
-
-                // 2. Regex in page
-                findUrlsByRegex(doc.outerHtml()).forEach { addSource(it) }
             }
         }
 
@@ -393,72 +405,89 @@ internal class Pinse91(
                 preview = null,
                 headers = headersMap,
                 source = source,
-            ).also {
-                println("Pinse91: Extracted Video URL: $url")
-            }
+            )
         }
     }
 
-    private fun findUrlsByRegex(html: String): List<String> {
-        val found = ArrayList<String>()
+    private suspend fun extractLegacySources(
+        doc: org.jsoup.nodes.Document,
+        pageUrl: String,
+        addSource: (String?) -> Unit,
+    ) {
+        doc.select("iframe[src]").forEach {
+            val iframeUrl = it.attrAsAbsoluteUrlOrNull("src") ?: return@forEach
+            if (iframeUrl.contains("player") || iframeUrl.contains("video") || iframeUrl.contains(domain)) {
+                runCatching {
+                    val iframeHeaders = getRequestHeaders().newBuilder()
+                        .set("Referer", pageUrl)
+                        .build()
+                    val iframeDoc = webClient.httpGet(iframeUrl, iframeHeaders).parseHtml()
+                    findUrlsByRegex(iframeDoc.outerHtml()).forEach(addSource)
+                }
+            }
+        }
+        findUrlsByRegex(doc.outerHtml()).forEach(addSource)
+    }
+
+    internal fun findPlaybackApiPath(html: String): String? {
+        return PLAYBACK_API_REGEX.find(html)?.groupValues?.get(1)
+    }
+
+    internal fun buildPlaybackApiUrl(path: String): HttpUrl =
+        requireNotNull(path.toAbsoluteUrl(domain).toHttpUrlOrNull())
+            .newBuilder()
+            .addQueryParameter("hd", "1")
+            .build()
+
+    /**
+     * 选择播放源 JSON。站点对不存在高清分流的视频（单画质）请求 ?hd=1 会返回 404/空
+     * 响应，此时回退到站点播放器默认使用的基础流请求，保证单画质视频也能解析出地址。
+     */
+    internal fun selectPlaybackJson(hd: JSONObject?, base: JSONObject?): JSONObject? = when {
+        hasPlaybackSource(hd) -> hd
+        hasPlaybackSource(base) -> base
+        else -> null
+    }
+
+    internal fun findUrlsByRegex(html: String): List<String> {
+        val cleanHtml = decodeMediaText(html)
+        val found = LinkedHashSet<String>()
+
+        extractMediaUrls(cleanHtml).forEach(found::add)
         
-        // 1. Direct URLs
-        extractMediaUrls(html).forEach { found.add(it) }
-        
-        // 增加对 HTML 实体转义符的处理 (&#61; -> =)
-        val cleanHtml = html
-            .replace("\\u003d", "=", ignoreCase = true)
-            .replace("&#61;", "=", ignoreCase = true)
-        
-        // 2. Base64 encoded URLs in scripts/attributes
-        // Lower threshold to 40 catch shorter URLs
         Regex("""["']([A-Za-z0-9+/=]{40,})["']""").findAll(cleanHtml).forEach { m ->
             runCatching {
                 val decoded = java.util.Base64.getDecoder().decode(m.groupValues[1]).toString(Charsets.UTF_8)
                 if (decoded.contains("http")) {
-                    extractMediaUrls(decoded).forEach { found.add(it) }
+                    extractMediaUrls(decodeMediaText(decoded)).forEach(found::add)
                 }
             }
         }
 
-        // 3. Marked Base64
         Regex("""(?i)base64,([A-Za-z0-9+/=]+)""").findAll(cleanHtml).forEach { m ->
             runCatching {
                 val decoded = java.util.Base64.getDecoder().decode(m.groupValues[1]).toString(Charsets.UTF_8)
                 if (decoded.contains("http")) {
-                    extractMediaUrls(decoded).forEach { found.add(it) }
+                    extractMediaUrls(decodeMediaText(decoded)).forEach(found::add)
                 }
             }
         }
         
-        return found
+        return found.toList()
     }
 
     private fun extractMediaUrls(text: String): List<String> {
-        val raw = ArrayList<String>()
-        val patterns = listOf(
-            Regex("""https?://[^"'\s>]+\.m3u8[?#][^"'\s>]*""", RegexOption.IGNORE_CASE),
-            Regex("""https?://[^"'\s>]+\.m3u8""", RegexOption.IGNORE_CASE),
-            Regex("""https?://[^"'\s>]+\.mp4[?#][^"'\s>]*""", RegexOption.IGNORE_CASE),
-            Regex("""https?://[^"'\s>]+\.mp4""", RegexOption.IGNORE_CASE),
-            Regex("""https?:\\\/\\\/[^"'\s>]+(?:\.m3u8|\.mp4)[^"'\s>]*""", RegexOption.IGNORE_CASE),
-            // Look for pl.m3u8 specifically used by some 91pinse CDNs
-            Regex("""https?://[^"'\s>]+/pl\.m3u8[^"'\s>]*""", RegexOption.IGNORE_CASE),
-        )
-        patterns.forEach { regex ->
-            regex.findAll(text).forEach { m ->
-                raw.add(m.value)
-            }
-        }
-        return raw.mapNotNull { normalizeMediaUrl(it) }
+        return MEDIA_URL_REGEX.findAll(text)
+            .mapNotNull { normalizeMediaUrl(it.value) }
+            .toList()
     }
 
     private fun normalizeMediaUrl(url: String?): String? {
         val raw = url?.trim()?.trim('"', '\'') ?: return null
         if (raw.isBlank()) return null
 
-        // 只处理反斜杠转义，不进行 URLDecoder 解码，防止 + 号变成空格毁掉签名
-        val unescaped = raw.replace("\\/", "/")
+        // 不使用 URLDecoder，避免把签名中的 + 转为空格。
+        val unescaped = decodeMediaText(raw)
         
         val candidate = unescaped
             .substringBefore("\"")
@@ -480,6 +509,28 @@ internal class Pinse91(
     }
 
     private companion object {
+        private fun hasPlaybackSource(json: JSONObject?): Boolean = json != null &&
+            (json.optString("url").isNotBlank() || json.optString("fallback_url").isNotBlank())
+
         private val DURATION_REGEX = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
+        private val MEDIA_URL_REGEX = Regex(
+            """https?://[^"'\s<>]+\.(?:m3u8|mp4)(?:[?#][^"'\s<>]*)?""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val PLAYBACK_API_REGEX = Regex(
+            """["'](/api/videos/\d+/playback)["']""",
+            RegexOption.IGNORE_CASE,
+        )
+
+        private fun decodeMediaText(value: String): String {
+            return Parser.unescapeEntities(value, false)
+                .replace("\\/", "/")
+                .replace("\\u002f", "/", ignoreCase = true)
+                .replace("\\u003d", "=", ignoreCase = true)
+                .replace("\\u0026", "&", ignoreCase = true)
+                .replace("\\x2f", "/", ignoreCase = true)
+                .replace("\\x3d", "=", ignoreCase = true)
+                .replace("\\x26", "&", ignoreCase = true)
+        }
     }
 }
