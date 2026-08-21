@@ -1,5 +1,6 @@
 package org.skepsun.kototoro.parsers.site.zh
 
+import org.json.JSONObject
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentParserAuthProvider
 import org.skepsun.kototoro.parsers.ContentSourceParser
@@ -26,6 +27,7 @@ import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseJson
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.parser.Parser
 import java.util.EnumSet
@@ -325,12 +327,10 @@ internal class Pinse91(
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val baseUrl = chapter.url.toAbsoluteUrl(domain)
-        val sources = ArrayList<String>()
-        val seenUrls = HashSet<String>()
+        val sources = LinkedHashSet<String>()
 
         fun addSource(url: String?) {
-            val u = normalizeMediaUrl(url) ?: return
-            if (seenUrls.add(u)) sources.add(u)
+            normalizeMediaUrl(url)?.let(sources::add)
         }
 
         val doc = webClient.httpGet(baseUrl, getRequestHeaders()).parseHtml()
@@ -343,10 +343,24 @@ internal class Pinse91(
                 .set("Referer", baseUrl)
                 .set("X-Requested-With", "XMLHttpRequest")
                 .build()
-            val apiUrl = buildPlaybackApiUrl(playbackApiPath)
-            val json = webClient.httpPost(apiUrl, emptyMap(), apiHeaders).parseJson()
-            addSource(json.optString("url"))
-            addSource(json.optString("fallback_url"))
+
+            // 高清画质分流（存在多画质时返回 {"url": <mp4>, "fallback_url": <hls>}）。
+            // 只有单画质的视频对 ?hd=1 返回 404/空响应，因此单独请求并容错。
+            val hdJson = runCatching {
+                webClient.httpPost(buildPlaybackApiUrl(playbackApiPath), emptyMap<String, String>(), apiHeaders).parseJson()
+            }.getOrNull()
+
+            // 站点播放器默认请求的基础流（无 hd 参数），单画质视频也能正常返回 m3u8。
+            val baseJson = runCatching {
+                val baseApiUrl = requireNotNull(playbackApiPath.toAbsoluteUrl(domain).toHttpUrlOrNull())
+                webClient.httpPost(baseApiUrl, emptyMap<String, String>(), apiHeaders).parseJson()
+            }.getOrNull()
+
+            val selected = selectPlaybackJson(hdJson, baseJson)
+            if (selected != null) {
+                addSource(selected.optString("url"))
+                addSource(selected.optString("fallback_url"))
+            }
         } else {
             extractLegacySources(doc, baseUrl, ::addSource)
 
@@ -419,11 +433,21 @@ internal class Pinse91(
         return PLAYBACK_API_REGEX.find(html)?.groupValues?.get(1)
     }
 
-    internal fun buildPlaybackApiUrl(path: String) =
+    internal fun buildPlaybackApiUrl(path: String): HttpUrl =
         requireNotNull(path.toAbsoluteUrl(domain).toHttpUrlOrNull())
             .newBuilder()
             .addQueryParameter("hd", "1")
             .build()
+
+    /**
+     * 选择播放源 JSON。站点对不存在高清分流的视频（单画质）请求 ?hd=1 会返回 404/空
+     * 响应，此时回退到站点播放器默认使用的基础流请求，保证单画质视频也能解析出地址。
+     */
+    internal fun selectPlaybackJson(hd: JSONObject?, base: JSONObject?): JSONObject? = when {
+        hasPlaybackSource(hd) -> hd
+        hasPlaybackSource(base) -> base
+        else -> null
+    }
 
     internal fun findUrlsByRegex(html: String): List<String> {
         val cleanHtml = decodeMediaText(html)
@@ -485,6 +509,9 @@ internal class Pinse91(
     }
 
     private companion object {
+        private fun hasPlaybackSource(json: JSONObject?): Boolean = json != null &&
+            (json.optString("url").isNotBlank() || json.optString("fallback_url").isNotBlank())
+
         private val DURATION_REGEX = Regex("""^\s*(?:[\[\(]?)\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*(?:[\]\)]?)\s*(?:HD)?\s*$""", RegexOption.IGNORE_CASE)
         private val MEDIA_URL_REGEX = Regex(
             """https?://[^"'\s<>]+\.(?:m3u8|mp4)(?:[?#][^"'\s<>]*)?""",

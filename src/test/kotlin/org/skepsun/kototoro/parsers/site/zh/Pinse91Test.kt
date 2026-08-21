@@ -1,6 +1,8 @@
 package org.skepsun.kototoro.parsers.site.zh
 
+import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import java.util.Base64
@@ -56,5 +58,30 @@ internal class Pinse91Test {
         val encoded = Base64.getEncoder().encodeToString(url.toByteArray())
 
         assertEquals(listOf(url), parser.findUrlsByRegex("data='$encoded'"))
+    }
+
+    @Test
+    fun `prefers hd source when video has multiple quality streams`() {
+        val hd = JSONObject(
+            """{"url":"https://cdn.example/web/hd.mp4","fallback_url":"https://cdn.example/hls/master.m3u8"}""",
+        )
+        val base = JSONObject("""{"url":"https://cdn.example/hls/video.m3u8","fallback_url":""}""")
+
+        assertEquals(hd, parser.selectPlaybackJson(hd, base))
+    }
+
+    @Test
+    fun `falls back to base stream when hd variant is absent`() {
+        // 单画质视频：?hd=1 返回 404/空响应，选中结果应回退到基础流。
+        val hd = JSONObject("""{}""")
+        val base = JSONObject("""{"url":"https://cdn.example/hls/video.m3u8","fallback_url":""}""")
+
+        assertEquals(base, parser.selectPlaybackJson(hd, base))
+        assertEquals(base, parser.selectPlaybackJson(null, base))
+    }
+
+    @Test
+    fun `ignores responses without any playable source`() {
+        assertNull(parser.selectPlaybackJson(JSONObject("""{}"""), JSONObject("""{"url":"","fallback_url":""}""")))
     }
 }
