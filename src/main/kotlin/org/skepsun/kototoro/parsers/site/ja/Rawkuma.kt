@@ -824,15 +824,20 @@ internal class Rawkuma(context: ContentLoaderContext) :
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val url = chapter.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
         val doc = webClient.httpGet(url.toHttpUrl(), getRequestHeaders()).parseHtml()
-        
-        // 图片可能来自 rcdn.kyut.dev 或其他 CDN
-        val images = doc.select("img[src*='rcdn.kyut.dev'], img[src*='cdn'], #readerarea img, .entry-content img, article img")
-            .filter { 
+
+        // 新站点（2026-08+）把章节图片放在 <section data-image-data> 容器内，域名是 kuma.kyut.dev；
+        // 旧站点图片来自 rcdn.kyut.dev / 其他 *cdn* 域，位于 #readerarea / .entry-content / article 容器中。
+        // 这里同时兼容新旧两种页面结构。
+        val images = doc.select(
+            "img[src*='kuma.kyut.dev'], img[src*='rcdn.kyut.dev'], img[src*='kyut.dev'], img[src*='cdn'], " +
+                "#readerarea img, .entry-content img, article img, [data-image-data] img, section[data-image-data] img",
+        )
+            .filter {
                 val src = it.attr("src")
                 src.contains(".jpg") || src.contains(".png") || src.contains(".webp") || src.contains("/uploads/")
             }
             .distinctBy { it.attr("src") }
-        
+
         return images.mapIndexed { index, img ->
             val imgUrl = img.attrOrNull("data-src") ?: img.attrOrNull("data-lazy-src") ?: img.attr("src")
             ContentPage(
