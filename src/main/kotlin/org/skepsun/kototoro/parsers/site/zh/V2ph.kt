@@ -176,6 +176,10 @@ internal class V2ph(
         }
 
         val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+        return parseList(doc)
+    }
+
+    internal fun parseList(doc: org.jsoup.nodes.Document): List<Content> {
         // Skip .actor-cover as they don't have album links
         return doc.select(".albums-list .card:not(.actor-cover)").mapNotNull { card ->
             val titleEl = card.selectFirst("h6 a")
@@ -206,7 +210,7 @@ internal class V2ph(
                 url = href,
                 publicUrl = href.toAbsoluteUrl(domain),
                 rating = RATING_UNKNOWN,
-                contentRating = ContentRating.SAFE,
+                contentRating = ContentRating.ADULT,
                 coverUrl = cover,
                 tags = tags,
                 state = null,
