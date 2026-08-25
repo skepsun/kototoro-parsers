@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.Content
+import java.util.Base64
 
 class Mh1234ParserTest {
 
@@ -30,13 +31,19 @@ class Mh1234ParserTest {
         val firstChapter = requireNotNull(details.chapters?.firstOrNull()) {
             "章节为空"
         }
-        // 章节目录使用 /go/<base64 token>，解码后应保留漫画 ID 和章节 ID；
-        // token 本身保存在 branch 中，用于 getPages 重建跳转地址。
-        assert(firstChapter.url.contains("11247")) {
-            "章节 URL 应包含漫画 ID，实际为: ${firstChapter.url}"
+        // 站点是单一翻译、无分组：branch 必须为 null，避免每章被应用当成独立分支
+        assert(firstChapter.branch == null) {
+            "单翻译站点 branch 应为 null，实际为: ${firstChapter.branch}"
         }
-        assert(!firstChapter.branch.isNullOrEmpty()) {
+        // chapter.url 是 /go/ 的 base64 token，解码后应保留漫画 ID 和章节 ID
+        assert(firstChapter.url.isNotBlank()) {
             "章节 token 不应为空"
+        }
+        val decoded = runCatching {
+            String(Base64.getUrlDecoder().decode(firstChapter.url.trimEnd('=')), Charsets.UTF_8)
+        }.getOrNull()
+        assert(decoded?.contains("11247") == true) {
+            "章节 token 解码后应包含漫画 ID，实际为: $decoded"
         }
 
         val pages = parser.getPages(firstChapter)

@@ -24,7 +24,6 @@ import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.urlEncoded
-import java.util.Base64
 import java.util.EnumSet
 
 /**
@@ -151,7 +150,8 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         // 章节现在指向 /go/<token> 跳转页，页面 JS 再转到外部阅读器 reader.hqread.cc，
         // 图片在阅读器页面以 img.reader-image[data-src] 提供。
-        val token = chapter.branch ?: chapter.url.trim('/')
+        // chapter.url 就是 /go/ 的 token（base64 章节 id）
+        val token = chapter.url.trim('/')
         val goUrl = "https://${domain}/go/$token"
         val goResp = webClient.httpGet(goUrl, getRequestHeaders())
         if (!goResp.isSuccessful) return emptyList()
@@ -204,26 +204,19 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
             val chapName = a.selectFirst(".chapter-title")?.text()?.trim() ?: a.text().trim()
             ContentChapter(
                 id = generateUid("$token-${manga.id}"),
-                // 解码后形如 "漫画ID-章节ID-校验"，与域名无关并保留漫画/章节 ID
-                url = decodeChapterToken(token) ?: token,
+                // 站点是单一翻译、无分组语义：branch 保持 null（应用按系统默认语言合并展示）；
+                // token（base64 的"漫画ID-章节ID-校验"）即章节 id，getPages 用它重建跳转地址
+                url = token,
                 title = chapName.ifEmpty { "Ch ${index + 1}" },
                 number = (index + 1).toFloat(),
                 volume = 0,
                 scanlator = null,
                 uploadDate = 0,
-                branch = token,
+                branch = null,
                 source = source,
             )
         }
     }
-
-    // /go/<token> 的 token 是 base64("漫画ID-章节ID-校验")；兼容 url-safe 与标准字母表。
-    private fun decodeChapterToken(token: String): String? = runCatching {
-        val cleaned = token.trimEnd('=')
-        val bytes = runCatching { Base64.getUrlDecoder().decode(cleaned) }
-            .getOrElse { Base64.getDecoder().decode(token) }
-        String(bytes, Charsets.UTF_8)
-    }.getOrNull()
 
     private fun ContentListFilter.toSelection(): FilterSelection {
         var category = ""
