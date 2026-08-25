@@ -21,6 +21,7 @@ import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
@@ -248,8 +249,42 @@ internal class ComickParser(context: ContentLoaderContext) :
         return fetchSearchApi(url)
     }
 
+    /**
+     * Cloudflare 挑战/验证页处理：命中时触发浏览器验证，避免静默返回空列表。
+     */
+    private fun checkCloudflare(response: okhttp3.Response, url: String) {
+        if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+            context.requestBrowserAction(this, url)
+        }
+    }
+
+    internal fun isChallengePage(doc: Document): Boolean {
+        val title = doc.title().lowercase()
+        val html = doc.outerHtml().lowercase()
+        // 注意: 详情页正常内容里也会出现 "verify your email" 等字样，
+        // 所以 body 只匹配强特征（Cloudflare/Turnstile 等），不用泛化的 "verify"。
+        return title.contains("just a moment") ||
+            title.contains("checking your browser") ||
+            title.contains("challenge") ||
+            html.contains("checking your browser") ||
+            html.contains("cf-browser-verification") ||
+            html.contains("cf_chl") ||
+            html.contains("challenge-platform") ||
+            html.contains("g-recaptcha") ||
+            html.contains("cf-turnstile")
+    }
+
+    /** Comick API 的 content_rating 为字符串（safe/suggestive/erotica）。 */
+    internal fun parseContentRating(value: String?): ContentRating? = when (value?.lowercase()) {
+        "safe" -> ContentRating.SAFE
+        "suggestive" -> ContentRating.SUGGESTIVE
+        "erotica", "pornographic", "adult" -> ContentRating.ADULT
+        else -> null
+    }
+
     private suspend fun fetchSearchApi(url: String): List<Content> {
         val res = webClient.httpGet(url, getRequestHeaders())
+        checkCloudflare(res, url)
         if (!res.isSuccessful) return emptyList()
         val root = res.parseJsonObject()
         val data = root.optJSONArray("comic") ?: root.optJSONArray("data") ?: return emptyList()
@@ -279,15 +314,20 @@ internal class ComickParser(context: ContentLoaderContext) :
                 authors = emptySet(),
                 state = null,
                 source = source,
-                contentRating = ContentRating.SAFE,
+                contentRating = parseContentRating(target.optString("content_rating")) ?: ContentRating.SAFE,
             )
         }.filterNotNull()
     }
 
     override suspend fun getDetails(manga: Content): Content {
-        val res = webClient.httpGet("$baseUrl/comic/${manga.url}", getRequestHeaders())
+        val pageUrl = "$baseUrl/comic/${manga.url}"
+        val res = webClient.httpGet(pageUrl, getRequestHeaders())
+        checkCloudflare(res, pageUrl)
         if (!res.isSuccessful) return manga
         val doc = res.parseHtml()
+        if (isChallengePage(doc)) {
+            context.requestBrowserAction(this, pageUrl)
+        }
         val sv = doc.getElementById("comic-data")?.data() ?: return manga
         val comicData = runCatching { JSONObject(sv) }.getOrNull() ?: return manga
         val title = comicData.optString("title", manga.title).ifEmpty { manga.title }
@@ -311,7 +351,9 @@ internal class ComickParser(context: ContentLoaderContext) :
             tags = if (tags.isNotEmpty()) tags else manga.tags,
             chapters = chapters.values.flatten(),
             description = comicData.optString("desc", manga.description ?: ""),
-            contentRating = manga.contentRating ?: ContentRating.SAFE,
+            contentRating = parseContentRating(comicData.optString("content_rating"))
+                ?: manga.contentRating
+                ?: ContentRating.SAFE,
         )
     }
 
@@ -333,6 +375,7 @@ internal class ComickParser(context: ContentLoaderContext) :
         while (page <= lastPage) {
             val url = "$baseUrl/api/comics/$slug/chapter-list?page=$page"
             val res = webClient.httpGet(url, getRequestHeaders())
+            checkCloudflare(res, url)
             if (!res.isSuccessful) break
             val payload = res.parseJsonObject()
             val dataArr = payload.optJSONArray("data") ?: org.json.JSONArray()
@@ -408,8 +451,12 @@ internal class ComickParser(context: ContentLoaderContext) :
         var attempts = 0
         while (nextUrl != null && attempts < 50) {
             val res = webClient.httpGet(nextUrl, getRequestHeaders())
+            checkCloudflare(res, nextUrl)
             if (!res.isSuccessful) break
             val doc = res.parseHtml()
+            if (isChallengePage(doc)) {
+                context.requestBrowserAction(this, nextUrl)
+            }
             val sv = doc.getElementById("sv-data")?.data() ?: break
             val json = runCatching { JSONObject(sv) }.getOrNull() ?: break
             val images = json.optJSONObject("chapter")?.optJSONArray("images") ?: org.json.JSONArray()
