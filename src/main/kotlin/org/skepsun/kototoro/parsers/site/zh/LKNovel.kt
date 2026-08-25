@@ -211,16 +211,19 @@ internal class LKNovelUs(context: ContentLoaderContext) :
             put("security_key", JSONObject.NULL)
         }
         val response = postJson(url, createBaseBody(data)).parseJson()
-        val dataObj = response.getJSONObject("data")
-        
+        // 站点新协议要求对 /api/article/ 请求签名，但 /api/series/ 仍开放；
+        // 失败或结构变化时降级为仅返回已有元数据，避免崩溃。
+        val dataObj = response.optJSONObject("data") ?: return manga.copy(chapters = emptyList())
+
         val articles = dataObj.optJSONArray("articles")
         val chapters = if (articles != null) {
             val list = mutableListOf<ContentChapter>()
             for (i in 0 until articles.length()) {
-                val art = articles.getJSONObject(i)
-                val aid = art.getString("aid")
+                val art = articles.optJSONObject(i) ?: continue
+                val aid = art.optString("aid")
+                if (aid.isBlank()) continue
                 val order = art.optInt("order")
-                val title = art.getString("title")
+                val title = art.optString("title").ifBlank { "Ch ${i + 1}" }
                 list.add(ContentChapter(
                     id = generateUid("/article/$aid"),
                     title = "P${order.toString().padStart(2, '0')} $title",
@@ -237,35 +240,24 @@ internal class LKNovelUs(context: ContentLoaderContext) :
         } else emptyList()
 
         return manga.copy(
-            description = dataObj.optString("intro"),
+            description = dataObj.optString("intro").ifBlank { manga.description },
             chapters = chapters
         )
     }
 
     private suspend fun getArticleDetails(manga: Content, aid: String): Content {
+        // 站点 2026 改版后 /api/article/get-detail 需要 HMAC 签名（前端签名密钥不下发），
+        // 未签名的请求返回 code 5001 且正文缺失；这里降级为「无章节」，不伪造章节也不崩溃。
         val url = "https://api.lightnovel.fun/api/article/get-detail"
         val data = JSONObject().apply {
             put("aid", aid.toInt())
             put("simple", 0)
         }
         val response = postJson(url, createBaseBody(data)).parseJson()
-        val dataObj = response.getJSONObject("data")
-        
-        val chapters = listOf(ContentChapter(
-            id = manga.id,
-            title = manga.title,
-            number = 1f,
-            volume = 0,
-            url = manga.url,
-            scanlator = null,
-            uploadDate = 0L,
-            branch = null,
-            source = source
-        ))
-
+        val dataObj = response.optJSONObject("data") ?: return manga.copy(chapters = emptyList())
         return manga.copy(
-            description = dataObj.optString("intro"),
-            chapters = chapters
+            description = dataObj.optString("intro").ifBlank { manga.description },
+            chapters = emptyList(),
         )
     }
 
@@ -289,7 +281,8 @@ internal class LKNovelUs(context: ContentLoaderContext) :
             put("simple", 0)
         }
         val response = postJson(url, createBaseBody(data)).parseJson()
-        val dataObj = response.getJSONObject("data")
+        // 内容接口需要签名；失败或结构变化时返回 null，getPages 会得到空列表而非崩溃。
+        val dataObj = response.optJSONObject("data") ?: return null
         val content = dataObj.optString("content")
         val resInfo = dataObj.optJSONObject("res_info")
             ?: dataObj.optJSONObject("res")?.optJSONObject("res_info")

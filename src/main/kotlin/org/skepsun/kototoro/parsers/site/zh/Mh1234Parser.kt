@@ -22,7 +22,9 @@ import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
+import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.util.Base64
 import java.util.EnumSet
 
 /**
@@ -147,14 +149,19 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val chapterPath = chapter.url.trim('/').substringBefore(".html")
-        val url = "https://${domain}/comic/${chapterPath}.html"
-        val resp = webClient.httpGet(url, getRequestHeaders())
-        if (!resp.isSuccessful) return emptyList()
-        val doc = resp.parseHtml()
+        // 章节现在指向 /go/<token> 跳转页，页面 JS 再转到外部阅读器 reader.hqread.cc，
+        // 图片在阅读器页面以 img.reader-image[data-src] 提供。
+        val token = chapter.branch ?: chapter.url.trim('/')
+        val goUrl = "https://${domain}/go/$token"
+        val goResp = webClient.httpGet(goUrl, getRequestHeaders())
+        if (!goResp.isSuccessful) return emptyList()
+        val readerUrl = parseReaderUrl(goResp.parseRaw()) ?: return emptyList()
+        val readerResp = webClient.httpGet(readerUrl, readerHeaders(goUrl))
+        if (!readerResp.isSuccessful) return emptyList()
+        val doc = readerResp.parseHtml()
         val images = doc.select("img.reader-image")
         val pageHeaders = mapOf(
-            "Referer" to url,
+            "Referer" to readerUrl,
             "User-Agent" to UserAgents.CHROME_DESKTOP,
         )
         return images.mapIndexedNotNull { index, img ->
@@ -170,6 +177,19 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
         }
     }
 
+    private fun readerHeaders(referer: String): Headers = Headers.Builder()
+        .add("User-Agent", UserAgents.CHROME_DESKTOP)
+        .add("Referer", referer)
+        .build()
+
+    private fun parseReaderUrl(goHtml: String): String? {
+        // 优先 JS location.replace("...")，其次 noscript meta refresh 里的 url=...
+        return Regex("""location\.replace\("([^"]+)"\)""").find(goHtml)?.groupValues?.get(1)
+            ?: Regex("""(?:url=)("?)([^"'\s>]+)\1""")
+                .find(goHtml)?.groupValues?.get(2)
+            ?.takeIf { it.startsWith("http") }
+    }
+
     override suspend fun getPageUrl(page: ContentPage): String = page.url
 
     private fun parseChapters(doc: Document, manga: Content): List<ContentChapter> {
@@ -177,23 +197,33 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
         if (items.isEmpty()) return emptyList()
         return items.mapIndexedNotNull { index, a ->
             val href = a.attr("href")
-            if (!href.startsWith("/comic/")) return@mapIndexedNotNull null
+            // 章节目录现在只保留 /go/<base64 token> 跳转链接（另有 APP 观看占位项，需过滤）
+            if (!href.startsWith("/go/")) return@mapIndexedNotNull null
+            val token = href.substringAfter("/go/").trim('/')
+            if (token.isEmpty()) return@mapIndexedNotNull null
             val chapName = a.selectFirst(".chapter-title")?.text()?.trim() ?: a.text().trim()
-            val chapterUrl = href.substringAfter("/comic/").substringBefore(".html").trim('/')
-            if (chapterUrl.isEmpty()) return@mapIndexedNotNull null
             ContentChapter(
-                id = generateUid("$chapterUrl-${manga.id}"),
-                url = chapterUrl,
+                id = generateUid("$token-${manga.id}"),
+                // 解码后形如 "漫画ID-章节ID-校验"，与域名无关并保留漫画/章节 ID
+                url = decodeChapterToken(token) ?: token,
                 title = chapName.ifEmpty { "Ch ${index + 1}" },
                 number = (index + 1).toFloat(),
                 volume = 0,
                 scanlator = null,
                 uploadDate = 0,
-                branch = null,
+                branch = token,
                 source = source,
             )
         }
     }
+
+    // /go/<token> 的 token 是 base64("漫画ID-章节ID-校验")；兼容 url-safe 与标准字母表。
+    private fun decodeChapterToken(token: String): String? = runCatching {
+        val cleaned = token.trimEnd('=')
+        val bytes = runCatching { Base64.getUrlDecoder().decode(cleaned) }
+            .getOrElse { Base64.getDecoder().decode(token) }
+        String(bytes, Charsets.UTF_8)
+    }.getOrNull()
 
     private fun ContentListFilter.toSelection(): FilterSelection {
         var category = ""

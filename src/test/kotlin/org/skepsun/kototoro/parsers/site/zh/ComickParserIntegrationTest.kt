@@ -78,14 +78,19 @@ class ComickParserIntegrationTest {
 
     private fun proxyFromEnv(): Proxy? {
         fun env(name: String) = System.getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
-        val raw = listOf("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")
-            .mapNotNull(::env)
-            .firstOrNull()
-        if (raw == null) return null
-        val uri = URI(raw)
+        val raw = listOf(
+            "HTTPS_PROXY", "https_proxy",
+            "HTTP_PROXY", "http_proxy",
+            "ALL_PROXY", "all_proxy",
+        ).firstNotNullOfOrNull { env(it) } ?: return null
+        // 环境变量可能是无 scheme 的 "127.0.0.1:7890"，先补全 scheme 再解析
+        val uri = runCatching {
+            URI(if (raw.contains("://")) raw else "http://$raw")
+        }.getOrElse { return null }
+        val scheme = uri.scheme?.lowercase() ?: "http"
+        val type = if (scheme.startsWith("socks")) Proxy.Type.SOCKS else Proxy.Type.HTTP
         val host = uri.host ?: return null
-        val port = if (uri.port > 0) uri.port else 7890
-        val type = if (raw.startsWith("socks", true)) Proxy.Type.SOCKS else Proxy.Type.HTTP
+        val port = if (uri.port in 1..65535) uri.port else 7890
         return Proxy(type, InetSocketAddress(host, port))
     }
 }

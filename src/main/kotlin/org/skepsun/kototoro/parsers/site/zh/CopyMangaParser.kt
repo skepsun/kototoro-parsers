@@ -40,6 +40,26 @@ import java.util.zip.GZIPInputStream
 
 import org.skepsun.kototoro.parsers.model.ContentTagGroup
 
+/**
+ * 同一翻译组内可能返回同名/重号章节，导致 (branch, number) 键重复。
+ * 按组（branch）分别调用本函数：先按站内章节 id 去重，再对重号章节递增补号，
+ * 保证组内键唯一且顺序稳定、不丢内容；不同组之间的并行"第N话"互不干扰。
+ */
+internal fun dedupeChapterNumbers(chapters: List<ContentChapter>): List<ContentChapter> {
+    val distinct = chapters.distinctBy { it.url }
+    val sorted = distinct.sortedWith(compareBy({ it.number }, { it.title ?: "" }))
+    val seenNumbers = HashSet<Float>(sorted.size)
+    val unique = ArrayList<ContentChapter>(sorted.size)
+    for (c in sorted) {
+        var number = c.number
+        while (!seenNumbers.add(number)) {
+            number += 1f
+        }
+        unique += if (number == c.number) c else c.copy(number = number)
+    }
+    return unique
+}
+
 /** 拷贝漫画网页 API 解析器。 */
 @ContentSourceParser("COPYMANGA", "拷贝漫画", "zh")
 @OptIn(InternalParsersApi::class)
@@ -597,13 +617,16 @@ internal class CopyContentParser(context: ContentLoaderContext) :
             else -> manga.state
         }
 
-        val pathList = mutableListOf<String>()
+        // 收集 (翻译组 path, 显示名)；显示名用于 branch，应用按语言/分支分组与自动选择
+        val groups = ArrayList<Pair<String, String>>()
         val groupsArr = res.optJSONArray("groups")
         if (groupsArr != null && groupsArr.length() > 0) {
             for (i in 0 until groupsArr.length()) {
                 val g = groupsArr.optJSONObject(i) ?: continue
                 val path = g.optString("path_word", g.optString("path"))
-                if (path.isNotBlank()) pathList += path
+                if (path.isNotBlank()) {
+                    groups += path to g.optString("name").ifBlank { path }
+                }
             }
         } else {
             val groupsObj = res.optJSONObject("groups")
@@ -613,18 +636,20 @@ internal class CopyContentParser(context: ContentLoaderContext) :
                     val k = keys.next()
                     val g = groupsObj.optJSONObject(k) ?: continue
                     val path = g.optString("path_word", g.optString("path", k))
-                    if (path.isNotBlank()) pathList += path
+                    if (path.isNotBlank()) {
+                        groups += path to g.optString("name").ifBlank { path }
+                    }
                 }
             }
         }
-        if (pathList.isEmpty()) pathList += "default"
+        if (groups.isEmpty()) groups += "default" to "默认"
 
         val chapters = ArrayList<ContentChapter>()
-        for (path in pathList) {
-            logDebug("chapters: branch=${manga.url} group=$path base=$base")
+        for ((groupPath, groupName) in groups) {
+            logDebug("chapters: branch=$groupName group=$groupPath base=$base")
             var offset = 0
             while (true) {
-                val list = fetchChapters(base, manga.url, path, offset, headers)
+                val list = fetchChapters(base, manga.url, groupPath, offset, headers)
                 if (list.length() == 0) break
                 
                 for (j in 0 until list.length()) {
@@ -639,10 +664,12 @@ internal class CopyContentParser(context: ContentLoaderContext) :
                         title = serial,
                         number = number,
                         volume = 0,
-                        url = id,
+                        // url 携带 "漫画path/章节id"，供 getPages 重建 chapter2 接口；
+                        // branch 留给翻译组显示名，实现应用的多分支分组/自动选择
+                        url = "${manga.url}/$id",
                         scanlator = null,
                         uploadDate = 0L,
-                        branch = manga.url,
+                        branch = groupName,
                         source = source,
                     )
                 }
@@ -657,7 +684,10 @@ internal class CopyContentParser(context: ContentLoaderContext) :
             largeCoverUrl = cover,
             description = desc,
             state = state,
-            chapters = chapters.sortedBy { it.number },
+            // 组内同名/重号章节去重补号；跨组保持并行的"第N话"不变
+            chapters = chapters.groupBy { it.branch }
+                .values
+                .flatMap { dedupeChapterNumbers(it) },
         )
     }
 
@@ -675,7 +705,14 @@ internal class CopyContentParser(context: ContentLoaderContext) :
 
     @OptIn(InternalParsersApi::class)
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val url = "https://${apiBase()}/api/v3/comic/${chapter.branch}/chapter2/${chapter.url}"
+        // chapter.url 为 "漫画path/章节id" 复合格式（branch 已被翻译组显示名占用）
+        val slash = chapter.url.lastIndexOf('/')
+        if (slash <= 0 || slash == chapter.url.length - 1) {
+            throw ParseException("章节缺少漫画路径", chapter.url)
+        }
+        val comicPath = chapter.url.substring(0, slash)
+        val chapterId = chapter.url.substring(slash + 1)
+        val url = "https://${apiBase()}/api/v3/comic/$comicPath/chapter2/$chapterId"
         val chapterData = apiGetJson(url).optJSONObject("results")?.optJSONObject("chapter")
             ?: throw ParseException("章节内容为空", url)
         return parsePages(chapter, chapterData)
