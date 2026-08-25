@@ -21,6 +21,7 @@ import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.ContentTagGroup
 import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
@@ -816,6 +817,16 @@ internal class NhentaiParser(context: ContentLoaderContext) :
         }
     }
 
+    /**
+     * nhentai 有 Cloudflare challenge（403 + cf-mitigated: challenge），
+     * 触发 requestBrowserAction 让 App 打开浏览器完成验证后可继续浏览。
+     */
+    private fun checkProtection(response: Response, url: String) {
+        if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+            context.requestBrowserAction(this, url)
+        }
+    }
+
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
 		val query = filter.query.orEmpty()
 		val langTag = filter.tags.firstOrNull { it.key.startsWith("language:") }
@@ -841,12 +852,13 @@ internal class NhentaiParser(context: ContentLoaderContext) :
 			else -> "https://${domain}/?page=$page"
 		}
         val resp = webClient.httpGet(url, getRequestHeaders())
+        checkProtection(resp, url)
         if (!resp.isSuccessful) return emptyList()
         val doc = resp.parseHtml()
         return parseGalleryList(doc)
     }
 
-    private fun parseGalleryList(doc: Document): List<Content> {
+    internal fun parseGalleryList(doc: Document): List<Content> {
         return doc.select(".gallery").mapNotNull { el ->
             val a = if (el.tagName() == "a") el else el.selectFirst("a")
             if (a == null) return@mapNotNull null
@@ -909,7 +921,9 @@ internal class NhentaiParser(context: ContentLoaderContext) :
     }
 
     private suspend fun fetchGallery(id: String): JSONObject? {
-        val resp = webClient.httpGet("https://${domain}/api/gallery/$id", getRequestHeaders())
+        val url = "https://${domain}/api/gallery/$id"
+        val resp = webClient.httpGet(url, getRequestHeaders())
+        checkProtection(resp, url)
         if (resp.isSuccessful) {
             return resp.parseJson()
         }
@@ -917,7 +931,9 @@ internal class NhentaiParser(context: ContentLoaderContext) :
     }
 
     private suspend fun fetchGalleryFromHtml(id: String): JSONObject? {
-        val resp = webClient.httpGet("https://${domain}/g/$id/1/", getRequestHeaders())
+        val url = "https://${domain}/g/$id/1/"
+        val resp = webClient.httpGet(url, getRequestHeaders())
+        checkProtection(resp, url)
         if (!resp.isSuccessful) return null
         val doc = resp.parseHtml()
         val script = doc.select("script").firstOrNull { it.data().contains("window._gallery") }?.data() ?: return null
