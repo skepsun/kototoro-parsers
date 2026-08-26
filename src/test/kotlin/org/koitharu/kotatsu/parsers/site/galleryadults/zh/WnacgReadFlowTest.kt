@@ -91,7 +91,10 @@ class WnacgReadFlowTest {
 
             val getResp = web.httpGet(page.url, extraHeaders)
             val ct = getResp.header("Content-Type")?.lowercase()
-            val len = getResp.body?.contentLength() ?: -1L
+            // chunked 传输时 contentLength 为 -1，退回按实际读取字节数判定长度
+            val len = getResp.body?.let { body ->
+                body.contentLength().takeIf { it > 0 } ?: body.use { it.bytes().size.toLong() }
+            } ?: -1L
             getResp.close()
 
             assertTrue(ct?.startsWith("image/") == true, "Content-Type 不是图片: $ct")
