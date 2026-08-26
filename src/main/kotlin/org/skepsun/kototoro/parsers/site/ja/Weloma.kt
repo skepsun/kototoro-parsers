@@ -354,8 +354,9 @@ internal class Weloma(context: ContentLoaderContext) :
         "Baseball" to "0zlik",
         "Basketball" to "0zkki",
     ).map { (name, token) -> ContentTag(translateTag(name), token, source) }.toSet()
+}
 
-    private val tagTranslations = mapOf(
+private val tagTranslations = mapOf(
         "Action" to "动作",
         "Adult" to "成人",
         "Adventure" to "冒险",
@@ -405,4 +406,3 @@ internal class Weloma(context: ContentLoaderContext) :
         "Yandere" to "病娇",
         "One Shot" to "短篇",
     )
-}

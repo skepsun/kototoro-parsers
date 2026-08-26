@@ -1,9 +1,17 @@
 package org.skepsun.kototoro.parsers.site.ja
 
 import kotlinx.coroutines.runBlocking
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
 import org.junit.jupiter.api.Test
+import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.ContentParser
+import org.skepsun.kototoro.parsers.config.ContentSourceConfig
 import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.util.LinkResolver
+import java.util.Locale
 
 class WelomaTest {
 
@@ -107,5 +115,37 @@ class WelomaTest {
         assert(pages.isNotEmpty()) { "Should fetch pages" }
         // data-img 内的值经 base64 解码后应是绝对地址
         assert(pages.all { it.url.startsWith("http") }) { "All page URLs should be absolute" }
+    }
+
+    // 复现 App 中文环境下的构造函数 NPE：BUILTIN_TAGS 初始化时访问尚未初始化的
+    // tagTranslations（tagTranslations 已提升为文件级属性，与实例初始化顺序解耦）。
+    private class ZhContentLoaderContext(
+        private val delegate: ContentLoaderContext = ContentLoaderContextMock,
+    ) : ContentLoaderContext() {
+        override val httpClient: OkHttpClient get() = delegate.httpClient
+        override val cookieJar: CookieJar get() = delegate.cookieJar
+        override fun newParserInstance(source: ContentSource): ContentParser = delegate.newParserInstance(source)
+        override fun newLinkResolver(link: HttpUrl): LinkResolver = delegate.newLinkResolver(link)
+        override suspend fun evaluateJs(script: String): String? = delegate.evaluateJs(script)
+        override suspend fun evaluateJs(baseUrl: String, script: String): String? = delegate.evaluateJs(baseUrl, script)
+        override fun getConfig(source: ContentSource): ContentSourceConfig = delegate.getConfig(source)
+        override fun getDefaultUserAgent(): String = delegate.getDefaultUserAgent()
+        override fun redrawImageResponse(response: okhttp3.Response, redraw: (org.skepsun.kototoro.parsers.bitmap.Bitmap) -> org.skepsun.kototoro.parsers.bitmap.Bitmap): okhttp3.Response =
+            delegate.redrawImageResponse(response, redraw)
+        override fun createBitmap(width: Int, height: Int): org.skepsun.kototoro.parsers.bitmap.Bitmap =
+            delegate.createBitmap(width, height)
+        override fun getPreferredLocales(): List<Locale> = listOf(Locale("zh", "CN"))
+    }
+
+    @Test
+    fun testZhLocaleConstructorDoesNotCrash() = runBlocking {
+        val zhParser = Weloma(ZhContentLoaderContext())
+        val options = zhParser.getFilterOptions()
+        val titles = options.availableTags.map { it.title }
+        println("zh 环境标签样例: ${titles.take(5)}")
+        assert(titles.contains("动作")) { "zh 环境下标签应翻译成中文; got $titles" }
+        assert(!titles.contains("Action")) { "zh 环境下不应保留英文标签" }
+        assert(options.tagGroups.isNotEmpty())
+        assert(options.tagGroups.first().title == "标签")
     }
 }
