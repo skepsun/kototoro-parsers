@@ -4,23 +4,26 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.util.*
 
 class WelomaTest {
 
     private val context = ContentLoaderContextMock
     private val parser = Weloma(context)
 
+    // SATANOPHANY - RAW（详情页含作者/简介/338 章，可用于详情与阅读页验证）
+    private val testToken = "0zzyL"
+    private val testUrl = "https://${parser.domain}/m/$testToken"
+
     @Test
     fun testGetListPage() = runBlocking {
-        // Test basic list (latest)
         val mangaList = parser.getListPage(1, SortOrder.UPDATED, ContentListFilter())
         println("Fetched ${mangaList.size} manga from latest")
         mangaList.take(5).forEach { manga ->
             println("Title: ${manga.title}, URL: ${manga.url}")
         }
         assert(mangaList.isNotEmpty()) { "Should fetch manga list" }
-        assert(mangaList.all { it.url.startsWith("https://weloma.ru/title/ru") }) { "URLs should be absolute and correct" }
+        assert(mangaList.all { it.url.startsWith("/m/") }) { "URLs should be relative /m/ links" }
+        assert(mangaList.all { it.id != 0L }) { "IDs should be non-zero" }
     }
 
     @Test
@@ -33,22 +36,18 @@ class WelomaTest {
             println("Search result: ${manga.title}, URL: ${manga.url}")
         }
         assert(searchResults.isNotEmpty()) { "Should find results for '$query'" }
-        assert(searchResults.any { 
-            it.title.contains(query, ignoreCase = true) || 
-            it.altTitles.any { alt -> alt.contains(query, ignoreCase = true) } ||
-            it.title == "ブルーロック"
-        }) { "Should contain the query in title or alt titles" }
+        assert(searchResults.any { it.title.contains(query, ignoreCase = true) }) {
+            "Should contain 'Blue Lock' in results"
+        }
     }
 
     @Test
     fun testGetDetails() = runBlocking {
-        // Use Blue Lock for detail test (ID 579)
-        val testUrl = "https://weloma.ru/title/ru579"
         val testContent = Content(
-            id = 579L,
-            title = "ブルーロック",
+            id = parser.getListPage(1, SortOrder.UPDATED, ContentListFilter()).first().id,
+            title = "SATANOPHANY - RAW",
             altTitles = emptySet(),
-            url = testUrl,
+            url = "/m/$testToken",
             publicUrl = testUrl,
             rating = 0f,
             contentRating = null,
@@ -58,37 +57,35 @@ class WelomaTest {
             authors = emptySet(),
             source = parser.source,
         )
-        
+
         val detailedContent = parser.getDetails(testContent)
         println("Content Details: ${detailedContent.title}")
         println("Authors: ${detailedContent.authors}")
         println("Tags: ${detailedContent.tags.map { it.title }}")
         println("Description: ${detailedContent.description?.take(100)}...")
         println("Chapters: ${detailedContent.chapters?.size ?: 0}")
-        
+
         assert(detailedContent.title.isNotBlank())
         assert(detailedContent.chapters?.isNotEmpty() ?: false)
         assert(detailedContent.tags.isNotEmpty())
         assert(detailedContent.authors.isNotEmpty())
 
-        // Refinement Check: Chapter Ordering (Ascending)
+        // 章节升序排列
         val chapters = detailedContent.chapters!!
         if (chapters.size > 1) {
             assert(chapters[0].number < chapters.last().number) { "Chapters should be in ascending order" }
         }
-
-        // Refinement Check: Chapter Formatting (Title should be null to use default)
+        // 标题交给应用格式化（number 驱动的默认格式）
         assert(chapters.first().title == null) { "Chapter title should be null for default formatting" }
     }
 
     @Test
     fun testGetPages() = runBlocking {
-        val testUrl = "https://weloma.ru/title/ru579"
-        val testContent = Content(
-            id = 579L,
-            title = "ブルーロック",
+        val seed = Content(
+            id = 1L,
+            title = "SATANOPHANY - RAW",
             altTitles = emptySet(),
-            url = testUrl,
+            url = "/m/$testToken",
             publicUrl = testUrl,
             rating = 0f,
             contentRating = null,
@@ -98,19 +95,17 @@ class WelomaTest {
             authors = emptySet(),
             source = parser.source,
         )
-        val detailedContent = parser.getDetails(testContent)
+        val detailedContent = parser.getDetails(seed)
         val firstChapter = detailedContent.chapters?.firstOrNull()
-        
+
         assert(firstChapter != null) { "Should find at least one chapter" }
         println("Testing chapter: ${firstChapter!!.number}, URL: ${firstChapter.url}")
-        
+
         val pages = parser.getPages(firstChapter)
         println("Fetched ${pages.size} pages")
-        pages.take(3).forEach { page ->
-            println("Page URL: ${page.url}")
-        }
-        
+
         assert(pages.isNotEmpty()) { "Should fetch pages" }
+        // data-img 内的值经 base64 解码后应是绝对地址
         assert(pages.all { it.url.startsWith("http") }) { "All page URLs should be absolute" }
     }
 }

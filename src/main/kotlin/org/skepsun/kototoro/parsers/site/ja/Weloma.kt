@@ -2,32 +2,48 @@
 
 package org.skepsun.kototoro.parsers.site.ja
 
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import org.json.JSONArray
-import org.json.JSONObject
 import org.jsoup.Jsoup
-import org.skepsun.kototoro.parsers.InternalParsersApi
+import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
-import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.util.Base64
 import java.util.EnumSet
+import okhttp3.HttpUrl.Companion.toHttpUrl
 
+/**
+ * WeLoMa - 日文生肉漫画站
+ * 网站: https://weloma.net/（原 weloma.ru 已失联，仅在配置里保留为备选域名）
+ *
+ * 站点结构（2026-08 重迁后）:
+ * - 全站列表/A-Z:  /l/{token}?page=N      （token 固定为站内导航的 0OYCn）
+ * - 排序:          ?sort=last_update|most_viewed|most_viewed_today
+ * - 搜索:          /l/{token}?name=<query>
+ * - 分类/标签:     /l/{genreToken}?page=N
+ * - 连载/完结:     /manga-on-going.html / manga-completed.html
+ * - 详情页:        /m/{token}             （HTML 渲染，标题在面包屑、封面 img.thumbnail）
+ * - 章节页:        /c/{token}             （图片地址 base64 编码在 img.chapter-img[data-img]）
+ */
 @ContentSourceParser("WELOMA", "Weloma", "ja")
 internal class Weloma(context: ContentLoaderContext) :
-    PagedContentParser(context, ContentParserSource.WELOMA, pageSize = 40) {
+    PagedContentParser(context, ContentParserSource.WELOMA, pageSize = 20) {
 
-    override val configKeyDomain = ConfigKey.Domain("weloma.ru")
+    // weloma.ru 已失联（TLS 握手失败），站点迁移到 weloma.net，旧域名保留为备选
+    override val configKeyDomain = ConfigKey.Domain("weloma.net", "weloma.ru")
+
+    // 全站"A-Z 列表"的定位 token（站内导航统一使用，作为默认/搜索列表入口）
+    private val allListToken = "0OYCn"
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
         SortOrder.POPULARITY,
-        SortOrder.POPULARITY_TODAY
+        SortOrder.POPULARITY_TODAY,
     )
 
     override val filterCapabilities get() = ContentListFilterCapabilities(
@@ -41,186 +57,185 @@ internal class Weloma(context: ContentLoaderContext) :
     }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+        val query = filter.query
         val url = when {
-            filter.query != null -> {
-                "https://$domain/spa/search?query=${filter.query.urlEncoded()}&page=$page"
+            query != null -> "/l/$allListToken?name=${query.urlEncoded()}&page=$page"
+            filter.tags.isNotEmpty() -> {
+                // 分类页：tag key 即 /l/{genreToken}
+                val token = filter.tags.firstOrNull()?.key
+                "/l/$token?page=$page"
             }
-            filter.tags.isNotEmpty() || filter.states.isNotEmpty() || order != SortOrder.UPDATED -> {
-                // Genre page uses HTML, not SPA API
-                val genrePath = filter.tags.firstOrNull()?.key ?: "all"
-                val sort = when (order) {
-                    SortOrder.POPULARITY -> "most_viewed"
-                    SortOrder.POPULARITY_TODAY -> "most_viewed_today"
-                    else -> ""
-                }
-                val status = when {
-                    filter.states.contains(ContentState.ONGOING) -> "ongoing"
-                    filter.states.contains(ContentState.FINISHED) -> "completed"
-                    else -> ""
-                }
-                buildString {
-                    append("https://$domain/genre/$genrePath")
-                    val params = mutableListOf<String>()
-                    if (page > 1) params.add("page=$page")
-                    if (sort.isNotEmpty()) params.add("sort=$sort")
-                    if (status.isNotEmpty()) params.add("status=$status")
-                    if (params.isNotEmpty()) {
-                        append("?")
-                        append(params.joinToString("&"))
-                    }
+            filter.states.isNotEmpty() -> {
+                // 连载/完结有独立列表页
+                when {
+                    filter.states.contains(ContentState.ONGOING) && !filter.states.contains(ContentState.FINISHED) ->
+                        "/manga-on-going.html?page=$page"
+                    filter.states.contains(ContentState.FINISHED) && !filter.states.contains(ContentState.ONGOING) ->
+                        "/manga-completed.html?page=$page"
+                    else -> "/l/$allListToken?page=$page"
                 }
             }
             else -> {
-                "https://$domain/spa/latest-manga?page=$page"
-            }
-        }
-
-        // Check if it's an SPA API endpoint or HTML page
-        return if (url.contains("/spa/")) {
-            val response = webClient.httpGet(url.toHttpUrl())
-            val json = JSONObject(response.parseRaw())
-            val mangaArray = json.optJSONArray("manga_list") ?: JSONArray()
-            
-            val mangaList = mutableListOf<Content>()
-            for (i in 0 until mangaArray.length()) {
-                val item = mangaArray.getJSONObject(i)
-                mangaList.add(parseContentFromJson(item))
-            }
-            mangaList
-        } else {
-            // Parse HTML genre page
-            val doc = webClient.httpGet(url.toHttpUrl()).parseHtml()
-            val mangaItems = doc.select("div.genre-manga-list a.manga-item, div.manga-list a[href*=/title/], .manga-card a[href*=/title/], a.manga-poster[href*=/title/]")
-            
-            mangaItems.mapNotNull { element ->
-                val href = element.attr("href")
-                val match = Regex("/title/ru(\\d+)").find(href) ?: return@mapNotNull null
-                val id = match.groupValues[1].toLongOrNull() ?: return@mapNotNull null
-                val title = element.selectFirst("h3, .title, .manga-title, img[alt]")?.let {
-                    it.text().ifEmpty { it.attr("alt") }
-                } ?: element.attr("title").ifEmpty { "Unknown" }
-                val cover = element.selectFirst("img")?.let { img ->
-                    img.attr("data-src").ifEmpty { img.attr("src") }
+                // 默认列表；站点排序参数映射
+                val sort = when (order) {
+                    SortOrder.POPULARITY -> "most_viewed"
+                    SortOrder.POPULARITY_TODAY -> "most_viewed_today"
+                    else -> "" // UPDATED
                 }
-                
-                Content(
-                    id = id,
-                    title = title,
-                    altTitles = emptySet(),
-                    url = "https://$domain/title/ru$id",
-                    publicUrl = "https://$domain/title/ru$id",
-                    rating = RATING_UNKNOWN,
-                    contentRating = null,
-                    coverUrl = cover,
-                    tags = emptySet(),
-                    state = null,
-                    authors = emptySet(),
-                    source = source,
-                )
+                val sortParam = if (sort.isEmpty()) "last_update" else sort
+                "/l/$allListToken?sort=$sortParam&page=$page"
             }
         }
+        val doc = webClient.httpGet(("https://$domain$url").toHttpUrl()).parseHtml()
+        return parseList(doc)
     }
 
-    private fun parseContentFromJson(json: JSONObject): Content {
-        val id = json.getLong("manga_id")
-        val title = json.getString("manga_name")
-        val altTitles = setOfNotNull(json.optString("manga_others_name").ifEmpty { null })
-        val cover = json.getString("manga_cover_img")
-        
-        return Content(
-            id = id,
-            title = title,
-            altTitles = altTitles,
-            url = "https://$domain/title/ru$id",
-            publicUrl = "https://$domain/title/ru$id",
-            rating = RATING_UNKNOWN,
-            contentRating = null,
-            coverUrl = cover,
-            tags = emptySet(),
-            state = null,
-            authors = emptySet(),
-            source = source,
-        )
+    // 站点标题常带 "- RAW"/"- Raw" 生肉标记，列表与详情大小写不一致，统一去掉以便匹配
+    private fun normalizeTitle(raw: String): String =
+        raw.trim().replace(Regex("""\s*[-–—]\s*raw\s*$""", RegexOption.IGNORE_CASE), "")
+
+    // 详情面包屑是列表标题的全大写变体时视为同一个标题
+    private fun isSameTitle(listTitle: String, detailTitle: String): Boolean =
+        listTitle.isNotEmpty() && listTitle.equals(detailTitle, ignoreCase = true)
+
+    private fun parseList(doc: Document): List<Content> {
+        val result = ArrayList<Content>()
+        // 列表卡片容器是 .thumb-item-flow；标题 .series-title 在 .thumb-wrapper 之外（兄弟节点）
+        for (item in doc.select("div.thumb-item-flow")) {
+            val link = item.selectFirst(".series-title a[href*=/m/]")
+                ?: item.selectFirst("a[href*=/m/]") ?: continue
+            val href = link.attr("href")
+            val token = href.substringAfter("/m/").trim('/')
+            if (token.isEmpty()) continue
+            val title = normalizeTitle(link.attr("title").ifEmpty { link.text().trim() })
+            if (title.isEmpty()) continue
+
+            val coverUrl = item.selectFirst(".img-in-ratio")?.attr("style")
+                ?.let { parseBackgroundImage(it) }
+
+            result += Content(
+                id = generateUid("/m/$token"),
+                title = title,
+                altTitles = emptySet(),
+                url = "/m/$token",
+                publicUrl = "https://$domain/m/$token",
+                rating = RATING_UNKNOWN,
+                contentRating = null,
+                coverUrl = coverUrl,
+                tags = emptySet(),
+                state = null,
+                authors = emptySet(),
+                source = source,
+            )
+        }
+        return result
+    }
+
+    private fun parseBackgroundImage(style: String): String? {
+        return Regex("""url\(\s*['"]?([^'")]+)['"]?\s*\)""").find(style)?.groupValues?.get(1)
     }
 
     override suspend fun getDetails(manga: Content): Content {
-        val url = "https://$domain/spa/manga/${manga.id}"
-        val response = webClient.httpGet(url.toHttpUrl())
-        val json = JSONObject(response.parseRaw())
-        
-        val detail = json.getJSONObject("detail")
-        val title = detail.getString("manga_name")
-        val description = detail.optString("manga_description").ifEmpty { null }
-        val cover = detail.getString("manga_cover_img")
-        val state = if (detail.optInt("manga_status") == 0) ContentState.ONGOING else ContentState.FINISHED
-        
-        val tagsArray = json.optJSONArray("tags") ?: JSONArray()
-        val tags = mutableSetOf<ContentTag>()
-        for (i in 0 until tagsArray.length()) {
-            val tagItem = tagsArray.getJSONObject(i)
-            val tagName = tagItem.getString("tag_name")
-            tags.add(ContentTag(translateTag(tagName), tagItem.opt("tag_id").toString(), source))
+        val url = "https://$domain${manga.url}"
+        val doc = webClient.httpGet(url.toHttpUrl()).parseHtml()
+
+        // 标题在面包屑: <li class="breadcrumb-item active">SATANOPHANY - RAW</li>
+        // 详情页标题是全大写变体，若与列表标题仅大小写/生肉后缀不同，保留列表的正常大小写
+        val breadcrumb = doc.selectFirst("li.breadcrumb-item.active")?.text()?.trim()
+            ?.let { normalizeTitle(it) }?.ifEmpty { null }
+        val title = when {
+            breadcrumb.isNullOrEmpty() -> manga.title
+            isSameTitle(manga.title, breadcrumb) -> manga.title
+            else -> breadcrumb
         }
 
-        val authorsArray = json.optJSONArray("authors") ?: JSONArray()
-        val authors = mutableSetOf<String>()
-        for (i in 0 until authorsArray.length()) {
-            authors.add(authorsArray.getJSONObject(i).getString("author_name"))
+        // 简介 HTML 被转义成可见文本（形如 "<p>Updating</p>"），重新解析去掉包裹标签
+        val description = doc.selectFirst(".summary-content p")?.let { p ->
+            Jsoup.parseBodyFragment(p.html()).text().trim().ifEmpty { null }
         }
 
-        val chaptersArray = json.optJSONArray("chapters") ?: JSONArray()
-        val chaptersList = mutableListOf<ContentChapter>()
-        for (i in 0 until chaptersArray.length()) {
-            val chapterItem = chaptersArray.getJSONObject(i)
-            val number = chapterItem.optDouble("chapter_number", 0.0).toFloat()
-            val chapterId = chapterItem.optLong("chapter_id", 0L)
-            chaptersList.add(
+        val coverUrl = doc.selectFirst("img.thumbnail")?.attr("src")?.ifEmpty { null }
+            ?: manga.coverUrl
+
+        // 作者: <b> Author(s)</b> 所在 li 内的链接
+        val authors = doc.select("b:containsOwn(Author)").firstOrNull()?.closest("li")
+            ?.select("a")?.mapNotNull { it.text().trim().ifEmpty { null } }?.toSet()
+            ?: emptySet()
+
+        // 分类: <b> Genre(s)</b> 所在 li 内的 /l/{token} 链接
+        val tags = doc.select("b:containsOwn(Genre)").firstOrNull()?.closest("li")
+            ?.select("a")?.mapNotNull { link ->
+                val href = link.attr("href")
+                val name = link.text().trim()
+                if (href.startsWith("/l/") && name.isNotEmpty()) {
+                    ContentTag(name, href.substringAfter("/l/").trim('/'), source)
+                } else {
+                    null
+                }
+            }?.toSet() ?: emptySet()
+
+        // 状态: <b> Status</b> 所在 li 的链接文本（"On going" / "Completed"）
+        val state = doc.select("b:containsOwn(Status)").firstOrNull()?.closest("li")
+            ?.selectFirst("a")?.text()?.lowercase()?.let {
+                when {
+                    "going" in it -> ContentState.ONGOING
+                    "finish" in it || "complete" in it -> ContentState.FINISHED
+                    else -> null
+                }
+            }
+
+        // 章节: ul.list-chapters 内 /c/{token}，标题形如 "Chapter 338" / "Chap 73.1"
+        val chapters = doc.select("ul.list-chapters.at-series a[href^=/c/]")
+            .mapNotNull { a ->
+                val href = a.attr("href")
+                val token = href.substringAfter("/c/").trim('/')
+                if (token.isEmpty()) return@mapNotNull null
+                val number = Regex("""(\d+(?:\.\d+)?)""")
+                    .find(a.attr("title"))?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
                 ContentChapter(
-                    id = chapterId,
-                    title = null, // Strip .0 by letting the app format it
+                    id = generateUid("/c/$token"),
+                    title = null, // 交给应用按 number 格式化
                     number = number,
                     volume = 0,
-                    url = "/reader/ru${manga.id}/chapter-${chapterItem.optString("chapter_number")}",
+                    url = "/c/$token",
                     scanlator = null,
                     uploadDate = 0L,
                     branch = null,
                     source = source,
                 )
-            )
-        }
+            }
+            .sortedBy { it.number } // 页面按最新在前，阅读时按正序
 
         return manga.copy(
             title = title,
             description = description,
-            coverUrl = cover,
+            coverUrl = coverUrl,
             state = state,
             tags = tags,
             authors = authors,
-            chapters = chaptersList.sortedBy { it.number } // Ascending order
+            chapters = chapters,
         )
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val match = Regex("/reader/ru(\\d+)/chapter-([\\d.]+)").find(chapter.url) ?: return emptyList()
-        val mangaId = match.groupValues[1]
-        val chapterNum = match.groupValues[2]
-        
-        val url = "https://$domain/spa/manga/$mangaId/$chapterNum"
-        val response = webClient.httpGet(url.toHttpUrl())
-        val json = JSONObject(response.parseRaw())
-        
-        val chapterDetail = json.getJSONObject("chapter_detail")
-        val contentHtml = chapterDetail.getString("chapter_content")
-        val server = chapterDetail.getString("server")
-        
-        val doc = Jsoup.parseBodyFragment(contentHtml)
-        val canvases = doc.select("canvas.lazy")
-        
-        return canvases.mapIndexed { index, canvas ->
-            val dataSrcset = canvas.attr("data-srcset")
+        val url = "https://$domain${chapter.url}"
+        val doc = webClient.httpGet(url.toHttpUrl()).parseHtml()
+
+        // 每页图片的真实地址 base64 编码在 img.chapter-img[data-img]（JS 用 atob 解码后加载）
+        val images = doc.select("img.chapter-img[data-img]")
+        if (images.isEmpty()) {
+            throw ParseException("章节页未找到图片", url)
+        }
+        return images.mapIndexed { index, img ->
+            val encoded = img.attr("data-img")
+            val realUrl = try {
+                String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
+            } catch (e: IllegalArgumentException) {
+                throw ParseException("章节图片 data-img 解码失败", chapter.url)
+            }
             ContentPage(
-                id = generateUid("$mangaId-$chapterNum-$index"),
-                url = server + dataSrcset,
+                id = generateUid("${chapter.url}-$index"),
+                url = realUrl,
                 preview = null,
                 source = source,
             )
@@ -229,81 +244,20 @@ internal class Weloma(context: ContentLoaderContext) :
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
         return ContentListFilterOptions(
+            availableTags = BUILTIN_TAGS,
             tagGroups = listOf(
                 ContentTagGroup(
                     title = translateText("ジャンル", "标签"),
-                    tags = setOf(
-                        // English tags
-                        createTag("Adaptions", "t163/Adaptions"),
-                        createTag("Animals", "t168/Animals"),
-                        createTag("Crime", "t165/Crime"),
-                        createTag("Girls' Love", "t167/Girls'%20Love"),
-                        createTag("Hentai", "t169/Hentai"),
-                        createTag("n/a", "t156/n%2Fa"),
-                        createTag("Police", "t166/Police"),
-                        createTag("Thriller", "t164/Thriller"),
-                        // Japanese tags with URL-encoded names
-                        createTag("アクション", "t85/%E3%82%A2%E3%82%AF%E3%82%B7%E3%83%A7%E3%83%B3"),
-                        createTag("アダルト", "t139/%E3%82%A2%E3%83%80%E3%83%AB%E3%83%88"),
-                        createTag("アニメ化された", "t140/%E3%82%A2%E3%83%8B%E3%83%A1%E5%8C%96%E3%81%95%E3%82%8C%E3%81%9F"),
-                        createTag("ウェブトゥーン", "t116/%E3%82%A6%E3%82%A7%E3%83%96%E3%83%88%E3%82%A5%E3%83%BC%E3%83%B3"),
-                        createTag("エッチ", "t88/%E3%82%A8%E3%83%83%E3%83%81"),
-                        createTag("エルフ", "t150/%E3%82%A8%E3%83%AB%E3%83%95"),
-                        createTag("ゲーム", "t155/%E3%82%B2%E3%83%BC%E3%83%A0"),
-                        createTag("コメディ", "t87/%E3%82%B3%E3%83%A1%E3%83%87%E3%82%A3"),
-                        createTag("サイエンスフィクション", "t122/%E3%82%B5%E3%82%A4%E3%82%A8%E3%83%B3%E3%82%B9%E3%83%95%E3%82%A3%E3%82%AF%E3%82%B7%E3%83%A7%E3%83%B3"),
-                        createTag("ショウジョアイ", "t131/%E3%82%B7%E3%83%A7%E3%82%A6%E3%82%B8%E3%83%A7%E3%82%A2%E3%82%A4"),
-                        createTag("ショタコン", "t154/%E3%82%B7%E3%83%A7%E3%82%BF%E3%82%B3%E3%83%B3"),
-                        createTag("スクールライフ", "t108/%E3%82%B9%E3%82%AF%E3%83%BC%E3%83%AB%E3%83%A9%E3%82%A4%E3%83%95"),
-                        createTag("スポーツ", "t124/%E3%82%B9%E3%83%9D%E3%83%BC%E3%83%84"),
-                        createTag("スムット", "t123/%E3%82%B9%E3%83%A0%E3%83%83%E3%83%88"),
-                        createTag("スライス・オブ・ライフ", "t92/%E3%82%B9%E3%83%A9%E3%82%A4%E3%82%B9%E3%83%BB%E3%82%AA%E3%83%96%E3%83%BB%E3%83%A9%E3%82%A4%E3%83%95"),
-                        createTag("トラジディ", "t135/%E3%83%88%E3%83%A9%E3%82%B8%E3%83%87%E3%82%A3"),
-                        createTag("トラップ（クロスドレッシング）", "t138/%E3%83%88%E3%83%A9%E3%83%83%E3%83%97%EF%BC%88%E3%82%AF%E3%83%AD%E3%82%B9%E3%83%89%E3%83%AC%E3%83%83%E3%82%B7%E3%83%B3%E3%82%B0%EF%BC%89"),
-                        createTag("ドラマ", "t114/%E3%83%89%E3%83%A9%E3%83%9E"),
-                        createTag("ハーレム", "t90/%E3%83%8F%E3%83%BC%E3%83%AC%E3%83%A0"),
-                        createTag("ファンタジー", "t89/%E3%83%95%E3%82%A1%E3%83%B3%E3%82%BF%E3%82%B8%E3%83%BC"),
-                        createTag("ホラー", "t127/%E3%83%9B%E3%83%A9%E3%83%BC"),
-                        createTag("マンhua", "t128/%E3%83%9E%E3%83%B3hua"),
-                        createTag("マンファ", "t125/%E3%83%9E%E3%83%B3%E3%83%95%E3%82%A1"),
-                        createTag("ミステリー", "t121/%E3%83%9F%E3%82%B9%E3%83%86%E3%83%AA%E3%83%BC"),
-                        createTag("メカ", "t143/%E3%83%A1%E3%82%AB"),
-                        createTag("やおい", "t161/%E3%82%84%E3%81%8A%E3%81%84"),
-                        createTag("ロマンス", "t106/%E3%83%AD%E3%83%9E%E3%83%B3%E3%82%B9"),
-                        createTag("ロリ", "t91/%E3%83%AD%E3%83%AA"),
-                        createTag("ロリコン", "t148/%E3%83%AD%E3%83%AA%E3%82%B3%E3%83%B3"),
-                        createTag("ワンショット", "t142/%E3%83%AF%E3%83%B3%E3%82%B7%E3%83%A7%E3%83%83%E3%83%88"),
-                        createTag("冒険", "t86/%E5%86%92%E9%99%BA"),
-                        createTag("医療", "t132/%E5%8C%BB%E7%99%82"),
-                        createTag("女性漫画", "t130/%E5%A5%B3%E6%80%A7%E6%BC%AB%E7%94%BB"),
-                        createTag("少女", "t120/%E5%B0%91%E5%A5%B3"),
-                        createTag("少年", "t118/%E5%B0%91%E5%B9%B4"),
-                        createTag("少年愛", "t109/%E5%B0%91%E5%B9%B4%E6%84%9B"),
-                        createTag("心理的", "t119/%E5%BF%83%E7%90%86%E7%9A%84"),
-                        createTag("性別転換", "t111/%E6%80%A7%E5%88%A5%E8%BB%A2%E6%8F%9B"),
-                        createTag("成熟 (せいじゅく)", "t112/%E6%88%90%E7%86%9F%20(%E3%81%9B%E3%81%84%E3%81%98%E3%82%85%E3%81%8F)"),
-                        createTag("戦争", "t153/%E6%88%A6%E4%BA%89"),
-                        createTag("料理", "t134/%E6%96%99%E7%90%86"),
-                        createTag("更新中", "t147/%E6%9B%B4%E6%96%B0%E4%B8%AD"),
-                        createTag("武道", "t126/%E6%AD%A6%E9%81%93"),
-                        createTag("歴史", "t115/%E6%AD%B4%E5%8F%B2"),
-                        createTag("異世界", "t144/%E7%95%B0%E4%B8%96%E7%95%8C"),
-                        createTag("百合", "t110/%E7%99%BE%E5%90%88"),
-                        createTag("萌え", "t141/%E8%90%8C%E3%81%88"),
-                        createTag("超自然", "t93/%E8%B6%85%E8%87%AA%E7%84%B6"),
-                        createTag("青年", "t107/%E9%9D%92%E5%B9%B4"),
-                        createTag("食べ物", "t152/%E9%A3%9F%E3%81%B9%E7%89%A9"),
-                        createTag("魔法", "t151/%E9%AD%94%E6%B3%95")
-                    )
-                )
+                    tags = BUILTIN_TAGS,
+                ),
             ),
-            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED)
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
+            availableContentRating = emptySet(),
         )
     }
 
-    private fun createTag(name: String, key: String): ContentTag {
-        return ContentTag(translateTag(name), key, source)
-    }
+    // 站点声明了 /favicon.ico 但实际 404，覆盖为无图标，避免无效探测
+    public override suspend fun getFavicons(): Favicons = Favicons(emptyList(), null)
 
     private fun translateTag(name: String): String {
         if (context.getPreferredLocales().firstOrNull()?.language == "zh") {
@@ -313,63 +267,142 @@ internal class Weloma(context: ContentLoaderContext) :
     }
 
     private fun translateText(ja: String, zh: String): String {
-        if (context.getPreferredLocales().firstOrNull()?.language == "zh") {
-            return zh
-        }
-        return ja
+        return if (context.getPreferredLocales().firstOrNull()?.language == "zh") zh else ja
     }
 
+    // 常用分类（token 取自站内 /l/{token} 分类链接）；站点还提供更多细分分类，可按需补充
+    private val BUILTIN_TAGS: Set<ContentTag> = linkedSetOf(
+        "Action" to "0zkHB",
+        "Adult" to "0zkRl",
+        "Adventure" to "0zkWS",
+        "Comedy" to "0zkPw",
+        "Drama" to "0zkUH",
+        "Ecchi" to "0zkbr",
+        "Fantasy" to "0zkxQ",
+        "Gender Bender" to "0zk3Y",
+        "Harem" to "0zk47",
+        "Historical" to "0zkpP",
+        "Horror" to "0zko4",
+        "Martial Arts" to "0zgfZ",
+        "Mature" to "0zkC2",
+        "Mecha" to "0zkDa",
+        "Medical" to "0zkdy",
+        "Mystery" to "0zkAZ",
+        "Psychological" to "0zjfN",
+        "Romance" to "0zjas",
+        "School Life" to "0zjlD",
+        "Sci-fi" to "0zjhh",
+        "Seinen" to "0zk9J",
+        "Shoujo" to "0zk05",
+        "Shounen" to "0zkr9",
+        "Slice of Life" to "0zjJE",
+        "Smut" to "0zjcb",
+        "Sports" to "0zjYu",
+        "Supernatural" to "0zjEU",
+        "Thriller" to "0zlX0",
+        "Tragedy" to "0zjzo",
+        "Yuri" to "0zjIz",
+        "Yaoi" to "0zzqA",
+        "Shoujo Ai" to "0zlwp",
+        "Shounen Ai" to "0zjQt",
+        "Josei" to "0zjnX",
+        "Lolicon" to "0zhor",
+        "Shotacon" to "0zlnM",
+        "Magic" to "0zlzC",
+        "Cooking" to "0zkmT",
+        "Isekai" to "0zlfF",
+        "Reincarnation" to "0zlQ3",
+        "Regression" to "0zh4w",
+        "Revenge" to "0zlIn",
+        "Dungeon" to "0zglB",
+        "Game Lit" to "0zh9S",
+        "VRMMO" to "0zxiN",
+        "MMORPG" to "0zbWw",
+        "Time Travel" to "0zsKU",
+        "Time Loop" to "0zjGe",
+        "Vampire" to "8YvPR",
+        "Ninja" to "VDCkp",
+        "Yakuza" to "rEzd",
+        "Police" to "0zsk5",
+        "Detective" to "0zzvK",
+        "Crime" to "0zgn2",
+        "Mafia" to "0znV6",
+        "Military" to "0zdZv",
+        "War" to "0zd12",
+        "Super Power" to "0zdw9",
+        "Magic School" to "0zfgK",
+        "Academy" to "0za1y",
+        "Otaku Culture" to "0zgG5",
+        "Idol" to "0zfRn",
+        "Music" to "0zgJJ",
+        "Arts" to "0zg7u",
+        "Gourmet" to "0x50e",
+        "Business" to "0zlG6",
+        "Workplace" to "0zjid",
+        "Fashion" to "0zhDc",
+        "Crossdressing" to "0zdeW",
+        "Tsundere" to "0zx6X",
+        "Yandere" to "0zl5c",
+        "One Shot" to "0zlaj",
+        "Anthology" to "0zlSR",
+        "Cyberpunk" to "0zhOk",
+        "Post-Apocalyptic" to "0zgSD",
+        "Steampunk" to "0zfH3",
+        "Monster Girl" to "0znJ1",
+        "Beastman" to "0zgav",
+        "Animals" to "0zh8l",
+        "Baseball" to "0zlik",
+        "Basketball" to "0zkki",
+    ).map { (name, token) -> ContentTag(translateTag(name), token, source) }.toSet()
+
     private val tagTranslations = mapOf(
-        "アクション" to "动作",
-        "アダルト" to "成人",
-        "アニメ化された" to "动画化",
-        "ウェブトゥーン" to "韩漫",
-        "エッチ" to "微H",
-        "エルフ" to "精灵",
-        "ゲーム" to "游戏",
-        "コメディ" to "喜剧",
-        "サイエンスフィクション" to "科幻",
-        "ショウジョアイ" to "少女爱",
-        "ショタコン" to "正太控",
-        "スクールライフ" to "校园",
-        "スポーツ" to "运动",
-        "スムット" to "肉番",
-        "スライス・オブ・ライフ" to "日常",
-        "トラジディ" to "悲剧",
-        "トラップ（クロスドレッシング）" to "伪娘",
-        "ドラマ" to "剧情",
-        "ハーレム" to "后宫",
-        "ファンタジー" to "奇幻",
-        "ホラー" to "恐怖",
-        "マンhua" to "国漫",
-        "マンファ" to "韩漫",
-        "ミステリー" to "悬疑",
-        "メカ" to "机甲",
-        "やおい" to "耽美",
-        "ロマンス" to "罗曼史",
-        "ロリ" to "萝莉",
-        "ロリコン" to "萝莉控",
-        "ワンショット" to "短篇",
-        "冒険" to "冒险",
-        "医療" to "医疗",
-        "女性漫画" to "女性向",
-        "少女" to "少女",
-        "少年" to "少年",
-        "少年愛" to "少年爱",
-        "心理的" to "心理",
-        "性別転換" to "性转换",
-        "成熟 (せいじゅく)" to "成人",
-        "戦争" to "战争",
-        "料理" to "料理",
-        "更新中" to "更新中",
-        "武道" to "武道",
-        "歴史" to "历史",
-        "異世界" to "异世界",
-        "百合" to "百合",
-        "萌え" to "萌",
-        "超自然" to "超自然",
-        "青年" to "青年",
-        "食べ物" to "食物",
-        "魔法" to "魔法"
+        "Action" to "动作",
+        "Adult" to "成人",
+        "Adventure" to "冒险",
+        "Comedy" to "喜剧",
+        "Drama" to "剧情",
+        "Ecchi" to "微H",
+        "Fantasy" to "奇幻",
+        "Harem" to "后宫",
+        "Historical" to "历史",
+        "Horror" to "恐怖",
+        "Martial Arts" to "武术",
+        "Mature" to "成人向",
+        "Mecha" to "机甲",
+        "Medical" to "医疗",
+        "Mystery" to "悬疑",
+        "Psychological" to "心理",
+        "Romance" to "恋爱",
+        "School Life" to "校园",
+        "Sci-fi" to "科幻",
+        "Seinen" to "青年",
+        "Shoujo" to "少女",
+        "Shounen" to "少年",
+        "Slice of Life" to "日常",
+        "Smut" to "肉番",
+        "Sports" to "运动",
+        "Supernatural" to "超自然",
+        "Thriller" to "惊悚",
+        "Tragedy" to "悲剧",
+        "Yuri" to "百合",
+        "Yaoi" to "耽美",
+        "Magic" to "魔法",
+        "Cooking" to "料理",
+        "Isekai" to "异世界",
+        "Reincarnation" to "转生",
+        "Revenge" to "复仇",
+        "Vampire" to "吸血鬼",
+        "Ninja" to "忍者",
+        "Police" to "警察",
+        "Detective" to "侦探",
+        "Mafia" to "黑帮",
+        "Military" to "军事",
+        "War" to "战争",
+        "Idol" to "偶像",
+        "Music" to "音乐",
+        "Crossdressing" to "伪娘",
+        "Tsundere" to "傲娇",
+        "Yandere" to "病娇",
+        "One Shot" to "短篇",
     )
 }
