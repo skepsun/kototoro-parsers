@@ -5,6 +5,8 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.json.JSONObject
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
@@ -302,60 +304,58 @@ internal class Dmbus(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val doc = webClient.httpGet(("https://$domain" + chapter.url).toHttpUrl()).parseHtml()
-        
-        // Find iframe
-        val iframe = doc.selectFirst("iframe")
-        val iframeSrc = iframe?.attr("src")
-        
+        val pageUrl = "https://$domain${chapter.url}"
+        val doc = webClient.httpGet(pageUrl.toHttpUrl()).parseHtml()
+
+        // 章节页通过 iframe 引入 hhplayer 播放器
+        val iframeSrc = doc.selectFirst("iframe")?.attr("src")
         if (iframeSrc.isNullOrBlank()) {
-            throw Exception("Video iframe not found")
+            throw ParseException("视频播放器 iframe 缺失", pageUrl)
         }
-        
-        // Fetch iframe content
-        val iframeContent = webClient.httpGet(iframeSrc.toHttpUrl()).parseHtml().html()
-        
-        // Extract parameters
-        val urlPattern = Regex("""var\s+url\s*=\s*"([^"]+)"""")
-        val tPattern = Regex("""var\s+t\s*=\s*"([^"]+)"""")
-        val keyPattern = Regex("""var\s+key\s*=\s*OKOK\("([^"]+)"\)""")
-        
-        val urlVal = urlPattern.find(iframeContent)?.groupValues?.get(1)
-        val tVal = tPattern.find(iframeContent)?.groupValues?.get(1)
-        val keyVal = keyPattern.find(iframeContent)?.groupValues?.get(1)
-        
-        if (urlVal.isNullOrBlank() || tVal.isNullOrBlank() || keyVal.isNullOrBlank()) {
-            throw Exception("Failed to extract API parameters from iframe")
+        val iframeUrl = when {
+            iframeSrc.startsWith("//") -> "https:$iframeSrc"
+            iframeSrc.startsWith("http") -> iframeSrc
+            else -> "https://$domain$iframeSrc"
         }
-        
-        // Decode key
-        val decodedKey = decodeKey(keyVal)
-        
-        if (decodedKey.isBlank()) {
-            throw Exception("Failed to decode key")
+
+        // 播放器页面把播放参数以 JSON 打在 window.__HHJX_BOOTSTRAP__（新版协议；
+        // 旧版 var url/t/key = OKOK(...) 混淆式脚本已废弃，无需再解码）
+        val iframeContent = webClient.httpGet(iframeUrl.toHttpUrl()).parseRaw()
+        val bootstrap = Regex("""window\.__HHJX_BOOTSTRAP__\s*=\s*(\{.*?\});""")
+            .find(iframeContent)?.groupValues?.get(1)
+            ?: throw ParseException("无法从播放器页面提取播放参数", iframeUrl)
+        val boot = JSONObject(bootstrap)
+        val hhUrl = boot.optString("url")
+        val hhT = boot.opt("t")
+        val hhKey = boot.optString("key")
+        if (hhUrl.isBlank() || hhT == null || hhKey.isBlank()) {
+            throw ParseException("播放参数不完整", iframeUrl)
         }
-        
-        // Call API
-        val apiUrl = "https://hhjx.hhplayer.com/api.php"
+
+        // 调用 hhplayer 的 JSON 解析接口换取直链
+        val apiHost = "https://${iframeUrl.toHttpUrl().host}"
+        val apiUrl = "$apiHost/api/parse"
+        val body = JSONObject().apply {
+            put("url", hhUrl)
+            put("t", hhT)
+            put("key", hhKey)
+            put("client_fallback", false)
+        }
         val headers = Headers.Builder()
-            .add("Referer", iframeSrc)
-            .add("Origin", "https://hhjx.hhplayer.com")
-            .add("Content-Type", "application/x-www-form-urlencoded")
+            .add("Referer", iframeUrl)
+            .add("Origin", apiHost)
             .build()
-            
-        val formData = mapOf(
-            "url" to urlVal,
-            "t" to tVal,
-            "key" to decodedKey,
-            "act" to "0",
-            "play" to "1"
-        )
-            
-        val response = webClient.httpPost(apiUrl.toHttpUrl(), formData, headers).parseJson()
-        val videoUrl = response.getString("url")
-        
+        val result = webClient.httpPost(apiUrl.toHttpUrl(), body, headers).parseJson()
+        if (result.optInt("code") != 200) {
+            throw ParseException("站点解析接口未返回成功", apiUrl)
+        }
+        val videoUrl = result.optString("url")
         if (videoUrl.isBlank()) {
-            throw Exception("No video URL returned from API")
+            throw ParseException("站点解析接口未返回播放地址", apiUrl)
+        }
+        if (result.optString("ext") == "youku") {
+            // 优酷线路需要在浏览器端解析 CNA/签名参数，无头环境无法完成
+            throw ParseException("该章节为优酷线路，暂不支持直接解析", apiUrl)
         }
 
         return listOf(
@@ -363,45 +363,8 @@ internal class Dmbus(context: ContentLoaderContext) :
                 id = generateUid(videoUrl),
                 url = videoUrl,
                 preview = null,
-                source = source
+                source = source,
             )
         )
-    }
-
-    private fun decodeKey(t: String): String {
-        val ee = mapOf(
-            "0Oo0o0Oo" to "a", "1O0bO001" to "b", "1OoCcO1" to "c", "3O0dO0O3" to "d", "4OoEeO4" to "e",
-            "5O0fO0O5" to "f", "6OoGgO6" to "g", "7O0hO0O7" to "h", "8OoIiO8" to "i", "9O0jO0O9" to "j",
-            "0OoKkO0" to "k", "1O0lO0O1" to "l", "2OoMmO2" to "m", "3O0nO0O3" to "n", "4OoOoO4" to "o",
-            "5O0pO0O5" to "p", "6OoQqO6" to "q", "7O0rO0O7" to "r", "8OoSsO8" to "s", "9O0tOoO9" to "t",
-            "0OoUuO0" to "u", "1O0vO0O1" to "v", "2OoWwO2" to "w", "3O0xO0O3" to "x", "4OoYyO4" to "y",
-            "5O0zO0O5" to "z", "0OoAAO0" to "A", "1O0BBO1" to "B", "2OoCCO2" to "C", "3O0DDO3" to "D",
-            "4OoEEO4" to "E", "5O0FFO5" to "F", "6OoGGO6" to "G", "7O0HHO7" to "H", "8OoIIO8" to "I",
-            "9O0JJO9" to "J", "0OoKKO0" to "K", "1O0LLO1" to "L", "2OoMMO2" to "M", "3O0NNO3" to "N",
-            "4OoOOO4" to "O", "5O0PPO5" to "P", "6OoQQO6" to "Q", "7O0RRO7" to "R", "8OoSSO8" to "S",
-            "9O0TTO9" to "T", "0OoUO0" to "U", "1O0VVO1" to "V", "2OoWWO2" to "W", "3O0XXO3" to "X",
-            "4OoYYO4" to "Y", "5O0ZZO5" to "Z"
-        )
-        
-        var n = ""
-        try {
-            val o = String(java.util.Base64.getDecoder().decode(t))
-            var i = 0
-            while (i < o.length) {
-                var l = o[i].toString()
-                for ((k, v) in ee) {
-                    if (o.startsWith(k, i)) {
-                        l = v
-                        i += k.length - 1
-                        break
-                    }
-                }
-                n += l
-                i++
-            }
-        } catch (e: Exception) {
-            return ""
-        }
-        return n
     }
 }
