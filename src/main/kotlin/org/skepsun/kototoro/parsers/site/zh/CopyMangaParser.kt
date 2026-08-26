@@ -327,9 +327,12 @@ internal class CopyContentParser(context: ContentLoaderContext) :
     @OptIn(InternalParsersApi::class)
     override suspend fun getFilterOptions(): ContentListFilterOptions {
         // 将 JS 中的“主题”和“排行”的选择映射为标签组（固定分类）
-        val themeTags: Set<ContentTag> = CATEGORY_PARAM_DICT.entries.map { entry ->
-            ContentTag(title = entry.key, key = entry.value, source = source)
-        }.toSet()
+        // “全部”映射为空 key，表示“无过滤”，不应作为可筛选标签暴露
+        val themeTags: Set<ContentTag> = CATEGORY_PARAM_DICT.entries
+            .filter { it.value.isNotBlank() }
+            .map { entry ->
+                ContentTag(title = entry.key, key = entry.value, source = source)
+            }.toSet()
         return ContentListFilterOptions(
             availableTags = themeTags,
             tagGroups = listOf(

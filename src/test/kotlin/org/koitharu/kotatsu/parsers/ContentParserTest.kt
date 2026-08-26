@@ -98,6 +98,8 @@ internal class ContentParserTest {
 		}
 		assert(tags.all { it.source == source })
 
+		// 单标签源不支持 TAG 查询（与 tags_multiple 守卫一致），跳过查询段
+		if (!parser.filterCapabilities.isMultipleTagsSupported) return@runTest
 		val tag = tags.last()
 		val list = parser.getList(
 			ContentSearchQuery.Builder()
@@ -113,7 +115,7 @@ internal class ContentParserTest {
 	@ContentSources
 	fun tagsMultiple(source: ContentParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
-//		if (!parser.filterCapabilities.isMultipleTagsSupported) return@runTest
+		if (!parser.filterCapabilities.isMultipleTagsSupported) return@runTest
 		val tags = parser.getFilterOptions().availableTags.shuffled().take(2).toSet()
 
 		val list = parser.getList(
