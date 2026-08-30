@@ -34,6 +34,9 @@ class VideoSourceRequestIntegrationTest {
     @Test
     fun tnaflix() = runBlocking { verify(Tnaflix(context), "TNAFLIX") }
 
+    @Test
+    fun erome() = runBlocking { verify(Erome(context), "EROME") }
+
     private suspend fun verify(parser: PagedContentParser, name: String) {
         val list = parser.getListPage(1, SortOrder.UPDATED, ContentListFilter())
         assertTrue(list.isNotEmpty(), "$name: 列表为空")

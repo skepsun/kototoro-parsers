@@ -165,6 +165,7 @@ internal class Erome(context: ContentLoaderContext) :
                     id = generateUid("page:${mediaUrl}"),
                     url = mediaUrl,
                     preview = null,
+                    headers = pageHeaders(),
                     source = source,
                 )
             )
@@ -181,6 +182,7 @@ internal class Erome(context: ContentLoaderContext) :
                     id = generateUid("${chapterUrl}#img${index}"),
                     url = mediaItem.url,
                     preview = mediaItem.preview,
+                    headers = pageHeaders(),
                     source = source,
                 )
             }
@@ -200,6 +202,7 @@ internal class Erome(context: ContentLoaderContext) :
                 id = generateUid("${chapterUrl}#${index}"),
                 url = mediaItem.url,
                 preview = mediaItem.preview,
+                headers = pageHeaders(),
                 source = source,
             )
         }
@@ -269,9 +272,15 @@ internal class Erome(context: ContentLoaderContext) :
         return items
     }
 
-    private data class Media(val url: String, val preview: String?)
+    /**
+     * Erome 媒体 CDN（v{id}.erome.com）要求带 Referer，否则直接 403。
+     * 播放器/图片加载都需要按页面请求携带该头。
+     */
+    private fun pageHeaders(): Map<String, String> = mapOf("Referer" to "https://$domain/")
 
-    private fun extractMedia(doc: Document): List<Media> {
+    internal data class Media(val url: String, val preview: String?)
+
+    internal fun extractMedia(doc: Document): List<Media> {
         val items = linkedSetOf<Media>()
 
         // 视频 source
