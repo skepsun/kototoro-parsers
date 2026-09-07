@@ -2,12 +2,9 @@ package org.skepsun.kototoro.parsers.site.all
 
 import androidx.collection.ArraySet
 import androidx.collection.MutableIntLongMap
-import androidx.collection.MutableIntObjectMap
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
-import okhttp3.internal.closeQuietly
-import org.jsoup.internal.StringUtil
 import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentParserAuthProvider
@@ -19,6 +16,7 @@ import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.TooManyRequestExceptions
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.Collections.emptyList
@@ -34,7 +32,14 @@ internal class ExHentaiParser(
     context: ContentLoaderContext,
 ) : PagedContentParser(context, ContentParserSource.EXHENTAI, pageSize = 25), ContentParserAuthProvider, Interceptor {
 
-    override val availableSortOrders: Set<SortOrder> = setOf(SortOrder.NEWEST)
+    override val availableSortOrders: Set<SortOrder> = setOf(
+        SortOrder.NEWEST,
+        SortOrder.POPULARITY,
+        SortOrder.POPULARITY_MONTH,
+        SortOrder.POPULARITY_YEAR,
+    )
+
+    override val defaultSortOrder: SortOrder = SortOrder.NEWEST
 
     override val configKeyDomain: ConfigKey.Domain
         get() {
@@ -52,8 +57,9 @@ internal class ExHentaiParser(
     private val titleCleanupPattern = Regex("(\\[.*?]|\\([C0-9]*\\))")
     private val spacesCleanupPattern = Regex("(^\\s+|\\s+\$|\\s+(?=\\s))")
     private val authCookies = arrayOf("ipb_member_id", "ipb_pass_hash")
+    private val exhentaiAuthCookies = arrayOf("ipb_member_id", "ipb_pass_hash", "igneous")
     private val suspiciousContentKey = ConfigKey.ShowSuspiciousContent(false)
-    private val nextPages = MutableIntObjectMap<MutableIntLongMap>()
+    private val nextPages = mutableMapOf<ContentListFilter, MutableIntLongMap>()
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
@@ -73,36 +79,39 @@ internal class ExHentaiParser(
         searchPaginator.firstPage = 0
     }
 
-    override suspend fun getFilterOptions() = ContentListFilterOptions(
-        availableTags = mapTags(),
-        tagGroups = cachedTagGroups,
-        availableContentTypes = EnumSet.of(
-            ContentType.DOUJINSHI,
-            ContentType.MANGA,
-            ContentType.ARTIST_CG,
-            ContentType.GAME_CG,
-            ContentType.COMICS,
-            ContentType.IMAGE_SET,
-            ContentType.OTHER,
-        ),
-        availableLocales = setOf(
-            Locale.JAPANESE,
-            Locale.ENGLISH,
-            Locale.CHINESE,
-            Locale("nl"),
-            Locale.FRENCH,
-            Locale.GERMAN,
-            Locale("hu"),
-            Locale.ITALIAN,
-            Locale("kr"),
-            Locale("pl"),
-            Locale("pt"),
-            Locale("ru"),
-            Locale("es"),
-            Locale("th"),
-            Locale("vi"),
-        ),
-    )
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        refreshTagCaches()
+        return ContentListFilterOptions(
+            availableTags = mapTags(),
+            tagGroups = cachedTagGroups,
+            availableContentTypes = EnumSet.of(
+                ContentType.DOUJINSHI,
+                ContentType.MANGA,
+                ContentType.ARTIST_CG,
+                ContentType.GAME_CG,
+                ContentType.COMICS,
+                ContentType.IMAGE_SET,
+                ContentType.OTHER,
+            ),
+            availableLocales = setOf(
+                Locale.JAPANESE,
+                Locale.ENGLISH,
+                Locale.CHINESE,
+                Locale("nl"),
+                Locale.FRENCH,
+                Locale.GERMAN,
+                Locale("hu"),
+                Locale.ITALIAN,
+                Locale.KOREAN,
+                Locale("pl"),
+                Locale("pt"),
+                Locale("ru"),
+                Locale("es"),
+                Locale("th"),
+                Locale("vi"),
+            ),
+        )
+    }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         return getListPage(page, order, filter, updateDm = false)
@@ -115,7 +124,7 @@ internal class ExHentaiParser(
         updateDm: Boolean,
     ): List<Content> {
         val next = synchronized(nextPages) {
-            nextPages[filter.hashCode()]?.getOrDefault(page, 0L) ?: 0L
+            nextPages[filter]?.getOrDefault(page, 0L) ?: 0L
         }
 
         if (page > 0 && next == 0L) {
@@ -123,21 +132,42 @@ internal class ExHentaiParser(
             return emptyList()
         }
 
-        val url = urlBuilder()
-        url.addEncodedQueryParameter("next", next.toString())
-        url.addQueryParameter("f_search", filter.toSearchQuery())
+        // Popular and toplist pages do not support search filters; keep the search URL
+        // whenever a filter is active.
+        val toplistIndex = when {
+            filter.isEmpty() && order == SortOrder.POPULARITY_MONTH -> 13
+            filter.isEmpty() && order == SortOrder.POPULARITY_YEAR -> 12
+            else -> 0
+        }
+        val isPopular = filter.isEmpty() && order == SortOrder.POPULARITY
+        val isToplist = toplistIndex != 0
 
-        val fCats = filter.types.toFCats()
-        if (fCats != 0) {
-            url.addEncodedQueryParameter("f_cats", (1023 - fCats).toString())
-        }
-        if (updateDm) {
-            // by unknown reason cookie "sl=dm_2" is ignored, so, we should request it again
-            url.addQueryParameter("inline_set", "dm_e")
-        }
-        url.addQueryParameter("advsearch", "1")
-        if (config[suspiciousContentKey]) {
-            url.addQueryParameter("f_sh", "on")
+        val url = urlBuilder()
+        if (isToplist) {
+            url.addPathSegment("toplist.php")
+            url.addQueryParameter("tl", toplistIndex.toString())
+            url.addQueryParameter("p", page.toString())
+        } else {
+            if (isPopular) {
+                url.addPathSegment("popular")
+            }
+            url.addEncodedQueryParameter("next", next.toString())
+            if (!isPopular) {
+                url.addQueryParameter("f_search", filter.toSearchQuery())
+
+                val fCats = filter.types.toFCats()
+                if (fCats != 0) {
+                    url.addEncodedQueryParameter("f_cats", (1023 - fCats).toString())
+                }
+                if (updateDm) {
+                    // by unknown reason cookie "sl=dm_2" is ignored, so, we should request it again
+                    url.addQueryParameter("inline_set", "dm_e")
+                }
+                url.addQueryParameter("advsearch", "1")
+                if (config[suspiciousContentKey]) {
+                    url.addQueryParameter("f_sh", "on")
+                }
+            }
         }
         val body = webClient.httpGet(url.build()).parseHtml().body()
         val root = body.selectFirst("table.itg")?.selectFirst("tbody")
@@ -152,58 +182,86 @@ internal class ExHentaiParser(
                 return getListPage(page, order, filter, updateDm = true)
             }
         }
-        val nextTimestamp = getNextTimestamp(body)
+        val nextTimestamp = if (isToplist) 1L else getNextTimestamp(body)
         synchronized(nextPages) {
-            nextPages.getOrPut(filter.hashCode()) {
+            nextPages.getOrPut(filter) {
                 MutableIntLongMap()
             }.put(page + 1, nextTimestamp)
         }
 
-        return root.children().mapNotNull { tr ->
-            if (tr.childrenSize() != 2) return@mapNotNull null
-            val (td1, td2) = tr.children()
-            val gLink = td2.selectFirstOrThrow("div.glink")
-            val a = gLink.parents().select("a").first() ?: gLink.parseFailed("link not found")
-            val href = a.attrAsRelativeUrl("href")
-            val tagsDiv = gLink.nextElementSibling() ?: gLink.parseFailed("tags div not found")
-            val rawTitle = gLink.text()
-            val author = tagsDiv.getElementsContainingOwnText("artist:").first()
-                ?.nextElementSibling()?.textOrNull()
-            Content(
-                id = generateUid(href),
-                title = rawTitle.cleanupTitle(),
-                altTitles = emptySet(),
-                url = href,
-                publicUrl = a.absUrl("href"),
-                rating = td2.selectFirst("div.ir")?.parseRating() ?: RATING_UNKNOWN,
-                contentRating = ContentRating.ADULT,
-                coverUrl = td1.selectFirst("img")?.attrAsAbsoluteUrlOrNull("src"),
-                tags = tagsDiv.parseTags(),
-                state = when {
-                    rawTitle.contains("(ongoing)", ignoreCase = true) -> ContentState.ONGOING
-                    else -> null
-                },
-                authors = setOfNotNull(author),
-                source = source,
-            )
+        val rows = root.children().filter { tr ->
+            tr.selectFirst("th") == null && tr.selectFirst(".itd") == null
         }
+        val list = rows.mapNotNull { tr -> parseListRow(tr) }
+        if (domain == DOMAIN_AUTHORIZED && list.isEmpty()) {
+            val igneous = context.cookieJar.getCookies(DOMAIN_AUTHORIZED)
+                .firstOrNull { it.name == "igneous" }?.value
+            if (igneous.equals("mystery", ignoreCase = true)) {
+                throw AuthRequiredException(source)
+            }
+        }
+        return list
+    }
+
+    private fun parseListRow(tr: Element): Content? {
+        val a = tr.selectFirst(".gl3c > a, .gl2e > div > a")
+            ?: tr.selectFirst("a[href*='/g/']")
+            ?: tr.selectFirst("div.glink")?.parents()?.select("a")?.firstOrNull()
+            ?: return null
+        val thumbnail = tr.selectFirst(".gl1e img, .gl2c .glthumb img") ?: tr.selectFirst("img")
+        val gLink = tr.selectFirst("div.glink")
+        val tagsDiv = gLink?.nextElementSibling()
+        val rawTitle = thumbnail?.attr("title")?.takeIf { it.isNotBlank() }
+            ?: gLink?.text()
+            ?: a.text()
+        if (rawTitle.isNullOrBlank()) {
+            return null
+        }
+        val author = (tagsDiv ?: tr).getElementsContainingOwnText("artist:").firstOrNull()
+            ?.nextElementSibling()?.textOrNull()
+        return Content(
+            id = generateUid(a.attrAsRelativeUrl("href")),
+            title = rawTitle.cleanupTitle(),
+            altTitles = emptySet(),
+            url = a.attrAsRelativeUrl("href"),
+            publicUrl = a.absUrl("href"),
+            rating = tr.selectFirst("div.ir")?.parseRating() ?: RATING_UNKNOWN,
+            contentRating = ContentRating.ADULT,
+            coverUrl = thumbnail?.attrAsAbsoluteUrlOrNull("src"),
+            tags = (tagsDiv ?: tr).parseTags(),
+            state = when {
+                rawTitle.contains("(ongoing)", ignoreCase = true) -> ContentState.ONGOING
+                else -> null
+            },
+            authors = setOfNotNull(author),
+            source = source,
+        )
     }
 
     override suspend fun getDetails(manga: Content): Content {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         val root = doc.body().selectFirstOrThrow("div.gm")
-        val cover = root.getElementById("gd1")?.children()?.first()
+        val cover = root.getElementById("gd1")?.children()?.firstOrNull()
         val title = root.getElementById("gd2")
         val tagList = root.getElementById("taglist")
         val tabs = doc.body().selectFirst("table.ptt")?.selectFirst("tr")
         val gd3 = root.getElementById("gd3")
-        val lang = gd3
-            ?.selectFirst("tr:contains(Language)")
-            ?.selectFirst(".gdt2")?.ownTextOrNull()
-        val uploadDate = gd3
-            ?.selectFirst("tr:contains(Posted)")
-            ?.selectFirst(".gdt2")?.ownTextOrNull()
-            .let { SimpleDateFormat("yyyy-MM-dd HH:mm", sourceLocale).parseSafe(it) }
+        val gdd = doc.body().selectFirst("#gdd")
+        val gddRows = gdd?.select("tr").orEmpty()
+        fun gddValue(vararg labels: String): String? {
+            val row = gddRows.firstOrNull { tr ->
+                val left = tr.selectFirst(".gdt1")?.text()?.trim()?.removeSuffix(":")?.lowercase()
+                left in labels
+            }
+            return row?.selectFirst(".gdt2")?.text()?.trim()?.nullIfEmpty()
+        }
+        val lang = gddValue("language")
+            ?.replace(Regex("\\s*TR$", RegexOption.IGNORE_CASE), "")
+        val uploadDate = SimpleDateFormat("yyyy-MM-dd HH:mm", sourceLocale).parseSafe(gddValue("posted"))
+        val fileSize = gddValue("file size")
+        val length = gddValue("length")
+        val favorited = gddValue("favorited")
+        val visible = gddValue("visible")
         val uploader = gd3
             ?.getElementsByAttributeValueContaining("href", "/uploader/")
             ?.firstOrNull()
@@ -218,13 +276,17 @@ internal class ExHentaiParser(
                 ?.substringAfterLast(' ')
                 ?.toFloatOrNull()
                 ?.div(5f) ?: manga.rating,
-            largeCoverUrl = cover?.styleValueOrNull("background")?.cssUrl(),
+            largeCoverUrl = cover?.styleValueOrNull("background")?.cssUrl()
+                ?: cover?.selectFirst("img")?.attrAsAbsoluteUrlOrNull("src"),
             tags = manga.tags + tags,
-            description = tagList?.select("tr")?.joinToString("<br>") { tr ->
-                val (tc, td) = tr.children()
-                val subTags = td.select("a").joinToString { it.html() }
-                "<b>${tc.html()}</b> $subTags"
-            },
+            description = buildDetailsDescription(
+                tagList = tagList,
+                fileSize = fileSize,
+                length = length,
+                favorited = favorited,
+                visible = visible,
+                gnd = doc.body().selectFirst("#gnd"),
+            ) ?: manga.description,
             chapters = tabs?.select("a")?.findLast { a ->
                 a.text().toIntOrNull() != null
             }?.let { a ->
@@ -249,6 +311,35 @@ internal class ExHentaiParser(
         )
     }
 
+    private fun buildDetailsDescription(
+        tagList: Element?,
+        fileSize: String?,
+        length: String?,
+        favorited: String?,
+        visible: String?,
+        gnd: Element?,
+    ): String? {
+        val parts = mutableListOf<String>()
+        tagList?.select("tr")?.forEach { tr ->
+            val (tc, td) = tr.children()
+            val subTags = td.select("a").joinToString { it.html() }
+            parts += "<b>${tc.html()}</b> $subTags"
+        }
+        listOfNotNull(
+            fileSize?.let { "File Size" to it },
+            length?.let { "Length" to it },
+            favorited?.let { "Favorited" to it },
+            visible?.let { "Visible" to it },
+        ).forEach { (name, value) ->
+            parts += "<b>$name</b> $value"
+        }
+        val versionLinks = gnd?.select("a")
+        if (!versionLinks.isNullOrEmpty()) {
+            parts += "<b>Versions</b> " + versionLinks.joinToString(" ") { it.text() }
+        }
+        return parts.joinToString("<br>").nullIfEmpty()
+    }
+
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
         val root = doc.body().requireElementById("gdt")
@@ -264,8 +355,29 @@ internal class ExHentaiParser(
     }
 
     override suspend fun getPageUrl(page: ContentPage): String {
-        val doc = webClient.httpGet(page.url.toAbsoluteUrl(domain)).parseHtml()
-        return doc.body().requireElementById("img").attrAsAbsoluteUrl("src")
+        var url = page.url.toAbsoluteUrl(domain)
+        var attempts = 0
+        while (attempts < 2) {
+            val doc = webClient.httpGet(url).parseHtml()
+            val currentImage = doc.body().requireElementById("img").attrAsAbsoluteUrl("src")
+            if (currentImage != "https://ehgt.org/g/509.gif") {
+                return currentImage
+            }
+            val nl = doc.body().selectFirst("#loadfail")?.attr("onclick")
+                ?.substringAfter('\'')
+                ?.substringBefore('\'')
+                .orEmpty()
+            if (nl.isEmpty()) {
+                break
+            }
+            url = url.toHttpUrlOrNull()?.newBuilder()
+                ?.addQueryParameter("nl", nl)
+                ?.build()
+                ?.toString()
+                ?: url
+            attempts++
+        }
+        throw IOException("Exceeded page quota")
     }
 
     @Suppress("SpellCheckingInspection")
@@ -283,14 +395,14 @@ internal class ExHentaiParser(
             "sex toys,shemale,sister,small breasts,smell,sole dickgirl,sole female,squirting,stockings,sundress,sweating," +
             "swimsuit,swinging,tail,tall girl,teacher,tentacles,thigh high boots,tomboy,transformation,twins,twintails," +
             "unusual pupils,urination,vore,vtuber,widow,wings,witch,wolf girl,x-ray,yuri,zombie,sole male,males only,yaoi," +
-            "tomgirl,tall man,oni,shotacon,prostate massage,policeman,males only,huge penis,fox boy,feminization,dog boy,dickgirl on male,big penis," +
+            "tomgirl,tall man,oni,shotacon,prostate massage,policeman,huge penis,fox boy,feminization,dog boy,dickgirl on male,big penis," +
             "triple vaginal,fff threesome,fft threesome,ffm threesome,mmf threesome,mmt threesome,mtf threesome,ttf threesome,ttt threesome,ttm threesome," +
             "real doll,strap-on,speculum,tail plug,tube,vacbed,wooden horse,wormhole,apparel bukkake,cum bath,giant sperm," +
             "internal urination,omorashi,public use,scat insertion,chikan,confinement,food on body,forniphilia,human cattle,petplay,slave,smalldom," +
             "tickling,fanny packing,harness,shibari,stuck in wall,abortion,cannibalism,catfight,cbt,cuntbusting,dismantling,electric shocks,ryona," +
             "snuff,torture,trampling,wrestling,autofellatio,autopaizuri,clone,phone sex,selfcest,solo action,table masturbation,blind,handicapped,mute," +
             "gender change,gender morph,dickgirl on dickgirl,dickgirl on female,male on dickgirl,first person perspective,coach,mesugaki,prostitution,tutor," +
-            "dickgirls only,netorase,aunt,cousin,daughter,granddaughter,grandmother,inseki,niece,oyakodon,shimaidon,forced exposure,voyeurism,low bestiality," +
+            "dickgirls only,netorase,aunt,cousin,granddaughter,grandmother,inseki,niece,oyakodon,shimaidon,forced exposure,voyeurism,low bestiality," +
             "low guro,low incest,low lolicon,low scat,low smegma,focus anal,focus blowjob,focus paizuri"
 
     private val tagTranslations = mapOf(
@@ -467,7 +579,6 @@ internal class ExHentaiParser(
         "yuri" to "百合",
         "aunt" to "阿姨",
         "cousin" to "表姐妹",
-        "daughter" to "女儿",
         "granddaughter" to "孙女",
         "grandmother" to "祖母",
         "inseki" to "姻亲",
@@ -636,20 +747,33 @@ internal class ExHentaiParser(
         return result
     }
 
-    private val cachedTagMap: Map<String, ContentTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { buildTagMap() }
-    private val cachedTagsSet: Set<ContentTag> by lazy(LazyThreadSafetyMode.PUBLICATION) { cachedTagMap.values.toSet() }
-    private val tagKeyToGroup: Map<String, String> by lazy(LazyThreadSafetyMode.PUBLICATION) {
-        buildMap {
-            groupedTagKeys.forEach { (group, keys) ->
-                keys.forEach { put(it, group) }
+    @Volatile
+    private var cachedTagLocale: String? = null
+    @Volatile
+    private var cachedTagMap: Map<String, ContentTag> = emptyMap()
+    @Volatile
+    private var cachedTagsSet: Set<ContentTag> = emptySet()
+    @Volatile
+    private var cachedTagGroups: List<ContentTagGroup> = emptyList()
+
+    private fun refreshTagCaches() {
+        val localeKey = if (isChineseLocale) "zh" else "other"
+        if (cachedTagLocale != localeKey) {
+            synchronized(this) {
+                if (cachedTagLocale != localeKey) {
+                    val tagMap = buildTagMap()
+                    cachedTagMap = tagMap
+                    cachedTagsSet = tagMap.values.toSet()
+                    cachedTagGroups = buildTagGroups(tagMap)
+                    cachedTagLocale = localeKey
+                }
             }
         }
     }
 
     private fun mapTags(): Set<ContentTag> = cachedTagsSet
 
-    private fun mapTagGroups(): List<ContentTagGroup> {
-        val tagMap = cachedTagMap
+    private fun buildTagGroups(tagMap: Map<String, ContentTag>): List<ContentTagGroup> {
         val used = HashSet<String>(tagMap.size)
         val groups = mutableListOf<ContentTagGroup>()
         groupedTagKeys.forEach { (name, keys) ->
@@ -667,20 +791,20 @@ internal class ExHentaiParser(
         return groups
     }
 
-    private val cachedTagGroups: List<ContentTagGroup> by lazy(LazyThreadSafetyMode.PUBLICATION) { mapTagGroups() }
-
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
         if (response.headersContentLength(BANNED_RESPONSE_LENGTH) <= BANNED_RESPONSE_LENGTH) {
             val text = response.peekBody(BANNED_RESPONSE_LENGTH).use { it.string() }
-            if (text.contains("IP address has been temporarily banned", ignoreCase = true)) {
+            if (text.contains("temporarily banned", ignoreCase = true)) {
+                val days = Regex("([0-9]+) days?").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0
                 val hours = Regex("([0-9]+) hours?").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0
                 val minutes = Regex("([0-9]+) minutes?").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0
                 val seconds = Regex("([0-9]+) seconds?").find(text)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0
-                response.closeQuietly()
+                response.close()
                 throw TooManyRequestExceptions(
                     url = response.request.url.toString(),
-                    retryAfter = TimeUnit.HOURS.toMillis(hours)
+                    retryAfter = TimeUnit.DAYS.toMillis(days)
+                        + TimeUnit.HOURS.toMillis(hours)
                         + TimeUnit.MINUTES.toMillis(minutes)
                         + TimeUnit.SECONDS.toMillis(seconds),
                 )
@@ -706,6 +830,7 @@ internal class ExHentaiParser(
     }
 
     private fun Locale.toLanguagePath() = when (language) {
+        "ko" -> "korean"
         else -> getDisplayLanguage(Locale.ENGLISH).lowercase()
     }
 
@@ -738,9 +863,9 @@ internal class ExHentaiParser(
         )
     }
 
-    private fun isAuthorized(domain: String): Boolean {
-        val cookies = context.cookieJar.getCookies(domain).mapToSet { x -> x.name }
-        return authCookies.all { it in cookies }
+    private fun isAuthorized(domain: String, cookies: Array<String> = authCookies): Boolean {
+        val cookieNames = context.cookieJar.getCookies(domain).mapToSet { x -> x.name }
+        return cookies.all { it in cookieNames }
     }
 
     private fun Element.parseRating(): Float {
@@ -762,6 +887,7 @@ internal class ExHentaiParser(
     }
 
     private fun Element.parseTags(): Set<ContentTag> {
+        refreshTagCaches()
 
         fun Element.parseTag() = textOrNull()?.let {
             // 优先复用已缓存的 Tag，避免重复创建与翻译
@@ -772,6 +898,19 @@ internal class ExHentaiParser(
         for (prefix in TAG_PREFIXES) {
             getElementsByAttributeValueStarting("id", "ta_$prefix").mapNotNullTo(result, Element::parseTag)
             getElementsByAttributeValueStarting("title", prefix).mapNotNullTo(result, Element::parseTag)
+        }
+        select("div.gt, div.gtl, div.gtw").mapNotNullTo(result) { tag ->
+            val title = tag.attr("title").trim()
+            if (title.isEmpty()) {
+                return@mapNotNullTo null
+            }
+            val key = title.substringAfter(':').trim()
+                .ifEmpty { tag.textOrNull()?.trim().orEmpty() }
+            if (key.isEmpty()) {
+                null
+            } else {
+                cachedTagMap[key] ?: ContentTag(title = displayTagTitle(key), key = key, source = source)
+            }
         }
         return result
     }
@@ -797,44 +936,43 @@ internal class ExHentaiParser(
             ?.attrAsAbsoluteUrlOrNull("href")
             ?.toHttpUrlOrNull()
             ?.queryParameter("next")
-            ?.toLongOrNull() ?: 1
+            ?.toLongOrNull() ?: 0
     }
 
     private fun ContentListFilter.toSearchQuery(): String? {
         if (isEmpty()) {
             return null
         }
-        val joiner = StringUtil.StringJoiner(" ")
+        val parts = mutableListOf<String>()
         if (!query.isNullOrEmpty()) {
-            joiner.add(query)
+            parts += query
         }
         for (tag in tags) {
-            if (tag.key.isNumeric()) {
-                continue
-            }
-            joiner.add("tag:\"")
-            joiner.append(tag.key)
-            joiner.append("\"$")
+            tag.toSearchTerm()?.let { parts += it }
         }
         for (tag in tagsExclude) {
-            if (tag.key.isNumeric()) {
-                continue
-            }
-            joiner.add("-tag:\"")
-            joiner.append(tag.key)
-            joiner.append("\"$")
+            tag.toSearchTerm()?.let { parts += "-$it" }
         }
         locale?.let { lc ->
-            joiner.add("language:\"")
-            joiner.append(lc.toLanguagePath())
-            joiner.append("\"$")
+            parts += "language:\"${lc.toLanguagePath()}\"$"
         }
         if (!author.isNullOrEmpty()) {
-            joiner.add("artist:\"")
-            joiner.append(author)
-            joiner.append("\"$")
+            parts += "artist:\"$author\"$"
         }
-        return joiner.complete().nullIfEmpty()
+        return parts.joinToString(" ").nullIfEmpty()
+    }
+
+    private fun ContentTag.toSearchTerm(): String? {
+        if (key.isNumeric()) {
+            return null
+        }
+        val namespace = key.substringBefore(':')
+        val value = key.substringAfter(':')
+        return if (value != key) {
+            "$namespace:\"$value\"$"
+        } else {
+            "tag:\"$key\"$"
+        }
     }
 
     private fun Collection<ContentType>.toFCats(): Int = fold(0) { acc, ct ->
@@ -853,11 +991,11 @@ internal class ExHentaiParser(
     private fun checkAuth(): Boolean {
         val authorized = isAuthorized(DOMAIN_UNAUTHORIZED)
         if (authorized) {
-            if (!isAuthorized(DOMAIN_AUTHORIZED)) {
+            if (!isAuthorized(DOMAIN_AUTHORIZED, exhentaiAuthCookies)) {
                 context.cookieJar.copyCookies(
                     DOMAIN_UNAUTHORIZED,
                     DOMAIN_AUTHORIZED,
-                    authCookies,
+                    exhentaiAuthCookies,
                 )
                 context.cookieJar.insertCookies(DOMAIN_AUTHORIZED, "yay=louder")
             }
