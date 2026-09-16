@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+<id>https://www.gutenberg.org/ebooks/search.opds/?query=hobbes</id>
+<title>Books: hobbes - Project Gutenberg</title>
+<opensearch:itemsPerPage>25</opensearch:itemsPerPage>
+<opensearch:startIndex>1</opensearch:startIndex>
+<entry>
+<id>https://www.gutenberg.org/ebooks/authors/search.opds/?query=hobbes</id>
+<title>Authors</title>
+<content type="text">One author name matches your search.</content>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/authors/search.opds/?query=hobbes"/>
+</entry>
+<entry>
+<id>https://www.gutenberg.org/ebooks/3207.opds</id>
+<title>Leviathan</title>
+<content type="text">Hobbes, Thomas</content>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/3207.opds"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="/cache/epub/3207/pg3207.cover.small.jpg"/>
+</entry>
+<entry>
+<id>https://www.gutenberg.org/ebooks/27997.opds</id>
+<title>Robert Orange</title>
+<content type="text">Gros RE, John</content>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/27997.opds"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="/cache/epub/27997/pg27997.cover.small.jpg"/>
+</entry>
+<entry>
+<id>https://www.gutenberg.org/ebooks/27997.opds</id>
+<title>Duplicate entry</title>
+<link type="application/atom+xml;profile=opds-catalog" rel="subsection" href="/ebooks/27997.opds"/>
+</entry>
+</feed>

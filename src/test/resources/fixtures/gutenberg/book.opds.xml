@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:dcterms="http://purl.org/dc/terms/">
+<id>https://www.gutenberg.org/ebooks/47311.opds</id>
+<title>Wanderungen durch die Mark Brandenburg, Dritter Teil by Theodor Fontane</title>
+<link rel="self" title="This Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks/47311.opds"/>
+<link rel="alternate" type="text/html" title="HTML Page" href="/ebooks/47311"/>
+<entry>
+<updated>2026-09-16T02:40:17Z</updated>
+<id>urn:gutenberg:47311:2</id>
+<title>Wanderungen durch die Mark Brandenburg, Dritter Teil</title>
+<author><name>Fontane, Theodor</name></author>
+<language>de</language>
+<dcterms:language>de</dcterms:language>
+<dcterms:hasVersion>https://www.gutenberg.org/ebooks/47312</dcterms:hasVersion>
+<category scheme="http://purl.org/dc/terms/LCSH" term="Brandenburg (Germany) -- Description and travel"/>
+<category scheme="http://purl.org/dc/terms/LCSH" term="Brandenburg (Germany) -- History"/>
+<category scheme="http://purl.org/dc/terms/LCC" term="DD" label="History: General and Eastern Hemisphere: Germany"/>
+<content type="xhtml">
+<div xmlns="http://www.w3.org/1999/xhtml">
+<p>This edition had all images removed.</p>
+<p>Title: Wanderungen durch die Mark Brandenburg, Dritter Teil</p>
+</div>
+</content>
+<link type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB (no images, older E-readers)" length="491136" href="https://www.gutenberg.org/ebooks/47311.epub.noimages"/>
+<link type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB 3" length="511895" href="https://www.gutenberg.org/ebooks/47311.epub3.images"/>
+<link type="application/x-mobipocket-ebook" rel="http://opds-spec.org/acquisition" title="Kindle (no images)" length="713533" href="https://www.gutenberg.org/ebooks/47311.kindle.noimages"/>
+<link type="text/html" rel="http://opds-spec.org/acquisition/open-access" title="Read Now!" href="https://www.gutenberg.org/cache/epub/47311/pg47311-images.html"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image" href="https://www.gutenberg.org/cache/epub/47311/pg47311.cover.medium.jpg"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="https://www.gutenberg.org/cache/epub/47311/pg47311.cover.small.jpg"/>
+</entry>
+</feed>
