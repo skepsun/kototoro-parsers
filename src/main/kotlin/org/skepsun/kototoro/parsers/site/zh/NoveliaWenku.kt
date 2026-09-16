@@ -87,7 +87,7 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
             .add("Accept", "application/json")
         
         // 优先使用内存中的API登录token
-        val token = authTokenMemory ?: getTokenFromCookies()
+        val token = normalizeToken(authTokenMemory ?: getTokenFromCookies())
         
         if (token != null) {
             builder.add("Authorization", "Bearer $token")
@@ -95,12 +95,27 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
         
         return builder.build()
     }
+
+    /**
+     * 清理token：去掉可能存在的 "Bearer " 前缀和引号
+     */
+    private fun normalizeToken(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        var token = raw.trim().removePrefix("Bearer ").removePrefix("bearer ").trim()
+        token = token.trim('"')
+        return token.ifBlank { null }
+    }
     
     /**
      * 从Cookie中获取token（兼容旧的WebView登录方式）
+     * 登录发生在独立的认证域名 auth.novelia.cc，因此需要同时检查主域名和认证域名
      */
     private fun getTokenFromCookies(): String? {
-        val cookies = context.cookieJar.getCookies(domain)
+        val cookies = mutableListOf<okhttp3.Cookie>()
+        cookies += context.cookieJar.getCookies(domain)
+        if (authDomain != domain) {
+            cookies += context.cookieJar.getCookies(authDomain)
+        }
         return cookies.firstOrNull { 
             it.name.lowercase().contains("token") || 
             it.name.lowercase().contains("jwt") ||
@@ -117,8 +132,7 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
      * 检查是否已登录
      */
     override suspend fun isAuthorized(): Boolean {
-        val token = authTokenMemory ?: getTokenFromCookies()
-        return token?.isNotBlank() == true
+        return normalizeToken(authTokenMemory ?: getTokenFromCookies()) != null
     }
 
     /**
@@ -126,10 +140,8 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
      * 从JWT token的payload中解析用户名
      */
     override suspend fun getUsername(): String {
-        val token = authTokenMemory ?: getTokenFromCookies()
-        if (token.isNullOrBlank()) {
-            throw AuthRequiredException(source)
-        }
+        val token = normalizeToken(authTokenMemory ?: getTokenFromCookies())
+            ?: throw AuthRequiredException(source)
         
         // 解析JWT token获取用户名
         return try {
@@ -215,11 +227,8 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
             }
             
             // 响应直接是JWT token字符串（不是JSON）
-            val token = responseBody.trim()
-            
-            if (token.isBlank()) {
-                throw ParseException("Login response is empty", loginUrl)
-            }
+            val token = normalizeToken(responseBody.trim())
+                ?: throw ParseException("Login response is empty", loginUrl)
             
             // 验证token格式（JWT应该有3个部分）
             if (token.split(".").size != 3) {
@@ -229,9 +238,9 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
             // 保存token到内存
             authTokenMemory = token
             
-            // 同时保存到Cookie（用于持久化）
-            context.cookieJar.insertCookies(domain, "authorization=$token")
-            context.cookieJar.insertCookies(domain, "token=$token")
+            // 同时保存到Cookie（用于持久化），主域名和认证域名都保存
+            context.cookieJar.insertCookies(domain, "authorization=$token", "token=$token")
+            context.cookieJar.insertCookies(authDomain, "authorization=$token", "token=$token")
             
             return true
             
