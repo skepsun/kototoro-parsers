@@ -1,503 +1,426 @@
-package org.skepsun.kototoro.parsers.site.en
+package org.skepsun.kototoro.parsers.site.all
 
+import androidx.annotation.VisibleForTesting
 import okhttp3.Headers
-import org.json.JSONObject
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentParserAuthProvider
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.AuthRequiredException
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
 /**
- * Z-Library - 全球最大的电子书图书馆
- * 
+ * Z-Library - 大型电子书图书馆（出版物为主）
+ *
  * 网站: https://z-library.sk/
- * 
- * 功能特点:
- * - 支持多语言搜索（所有语言）
- * - 支持 EPUB、PDF、MOBI 等多种格式
- * - 需要登录才能访问和下载
- * - 支持按年份、语言、格式筛选
- * 
- * API 端点:
- * - 搜索: /s/{query}?page={page}
- * - 详情: /book/{id}
- * - 下载: /dl/{id} (需要登录)
- * 
+ * 最后验证: 2026-09（页面结构以 2025 年 Wayback 快照比对；线上有 DiamWall JS 盾）
+ *
+ * 站点协议（匿名可读、下载需登录）:
+ * - 搜索: `/s/{query}?page=N`，可加 `selected_content_types[]=book`、`extensions[]=EPUB`、`languages[]=english`、`order=popular|date|year`
+ * - 分类: `/category/{id}/s/?page=N`（id 为站方分类树编号，如 Mathematics=23, Physics=27, Philosophy 在 36 下）
+ * - 结果卡片: `<z-bookcard id href download year language extension filesize rating ...>`，服务端渲染，无需登录
+ * - 详情: `/book/{id}/...html`，下载按钮 `a.addDownloadedBook[href=/dl/{id}/{hash}]`，未登录时被重定向到 `/login`
+ *
  * 认证:
- * - 需要 SingleLogin 账号
- * - 登录后获取 remix_userid 和 remix_userkey cookies
- * 
- * 实现状态:
- * - ✅ 搜索功能
- * - ✅ 书籍详情
- * - ✅ EPUB 下载链接
- * - ✅ 登录认证
- * - ✅ 多语言支持
- * - ✅ 格式筛选
+ * - 浏览搜索匿名可用；下载需要 remix_userid + remix_userkey cookie（WebView 登录）
+ * - 站方 DiamWall 会向非浏览器客户端下发 307+`__diamwall` cookie 挑战，通过后同样返回 200；
+ *   若持续得到 517 或登录重定向则说明会话不可用
+ *
+ * 限制:
+ * - 下载有每日配额；本解析器不处理验证码与账号付费逻辑
  */
 @ContentSourceParser("ZLIBRARY", "Z-Library", type = ContentType.NOVEL)
 internal class ZLibrary(context: ContentLoaderContext) :
-    PagedContentParser(context, ContentParserSource.ZLIBRARY, pageSize = 50),
-    ContentParserAuthProvider {
+	PagedContentParser(context, ContentParserSource.ZLIBRARY, pageSize = 50),
+	ContentParserAuthProvider {
 
-    override val configKeyDomain = ConfigKey.Domain("zh.z-library.sk")
+	override val configKeyDomain = ConfigKey.Domain("z-library.sk", "zh.z-library.sk")
 
-    override val authUrl: String
-        get() = "https://$domain/"
+	override val authUrl: String
+		get() = "https://$domain/"
 
-    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-        SortOrder.RELEVANCE,
-        SortOrder.NEWEST,
-        SortOrder.UPDATED,
-        SortOrder.POPULARITY,
-    )
+	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+		SortOrder.RELEVANCE,
+		SortOrder.POPULARITY,
+		SortOrder.NEWEST,
+		SortOrder.UPDATED,
+	)
 
-    override val filterCapabilities: ContentListFilterCapabilities
-        get() = ContentListFilterCapabilities(
-            isSearchSupported = true,
-            isSearchWithFiltersSupported = true,
-            isMultipleTagsSupported = true,
-            isTagsExclusionSupported = false,
-        )
+	override val filterCapabilities: ContentListFilterCapabilities
+		get() = ContentListFilterCapabilities(
+			isSearchSupported = true,
+			isSearchWithFiltersSupported = true,
+			isMultipleTagsSupported = true,
+			isTagsExclusionSupported = false,
+		)
 
-    override fun getRequestHeaders(): Headers {
-        return super.getRequestHeaders().newBuilder()
-            .add("Referer", "https://$domain/")
-            .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .build()
-    }
+	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		.add("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8")
+		.build()
 
-    override suspend fun isAuthorized(): Boolean {
-        val cookies = context.cookieJar.getCookies(domain)
-        return cookies.any { it.name == "remix_userid" } && 
-               cookies.any { it.name == "remix_userkey" }
-    }
+	override suspend fun isAuthorized(): Boolean {
+		val cookies = context.cookieJar.getCookies(domain)
+		return cookies.any { it.name == "remix_userid" } && cookies.any { it.name == "remix_userkey" }
+	}
 
-    override suspend fun getUsername(): String {
-        val cookies = context.cookieJar.getCookies(domain)
-        val userId = cookies.firstOrNull { it.name == "remix_userid" }?.value
-        return if (userId != null) "User #$userId" else "Unknown"
-    }
+	override suspend fun getUsername(): String {
+		val cookies = context.cookieJar.getCookies(domain)
+		val userId = cookies.firstOrNull { it.name == "remix_userid" }?.value
+		return if (userId != null) "User #$userId" else "Unknown"
+	}
 
-    override suspend fun getFilterOptions(): ContentListFilterOptions {
-        return ContentListFilterOptions(
-            availableTags = buildCategoryTags() + buildLanguageTags(),
-            availableContentTypes = EnumSet.of(ContentType.NOVEL),
-        )
-    }
+	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
+		availableTags = buildCategoryTags() + buildContentTypeTags() + buildExtensionTags() + buildLanguageTags(),
+		availableContentTypes = EnumSet.of(ContentType.NOVEL),
+	)
 
-    private fun buildCategoryTags(): Set<ContentTag> {
-        val tags = LinkedHashSet<ContentTag>()
-        
-        // 主要分类
-        tags += ContentTag("� 最Computer Science (计算机)", "cat:173", source)
-        tags += ContentTag("📚 Biology (生物学)", "cat:94", source)
-        tags += ContentTag("📖 Literature (文学)", "cat:191", source)
-        tags += ContentTag("� Sciengce (科学)", "cat:199", source)
-        tags += ContentTag("� Histotry (历史)", "cat:201", source)
-        tags += ContentTag("🧠 Psychology (心理学)", "cat:203", source)
-        tags += ContentTag("� Butsiness (商业)", "cat:205", source)
-        tags += ContentTag("⚖️ Law (法律)", "cat:207", source)
-        tags += ContentTag("🏥 Medicine (医学)", "cat:209", source)
-        tags += ContentTag("🎨 Art (艺术)", "cat:189", source)
-        
-        return tags
-    }
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+		val response = webClient.httpGet(buildListUrl(page, order, filter), getRequestHeaders())
+		checkAuth(response)
+		return parseBookList(response.parseHtml())
+	}
 
-    private fun buildLanguageTags(): Set<ContentTag> {
-        val tags = LinkedHashSet<ContentTag>()
-        
-        // 主要语言
-        tags += ContentTag("English", "lang:english", source)
-        tags += ContentTag("中文", "lang:chinese", source)
-        tags += ContentTag("日本語", "lang:japanese", source)
-        tags += ContentTag("한국어", "lang:korean", source)
-        tags += ContentTag("Русский", "lang:russian", source)
-        tags += ContentTag("Español", "lang:spanish", source)
-        tags += ContentTag("Français", "lang:french", source)
-        tags += ContentTag("Deutsch", "lang:german", source)
-        tags += ContentTag("Italiano", "lang:italian", source)
-        tags += ContentTag("Português", "lang:portuguese", source)
-        tags += ContentTag("العربية", "lang:arabic", source)
-        tags += ContentTag("Türkçe", "lang:turkish", source)
-        tags += ContentTag("Polski", "lang:polish", source)
-        tags += ContentTag("Nederlands", "lang:dutch", source)
-        tags += ContentTag("Tiếng Việt", "lang:vietnamese", source)
-        
-        return tags
-    }
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+		val categoryTag = filter.tags.firstOrNull { it.key.startsWith("cat:") }
+		val languages = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("lang:") }?.substringAfter("lang:") }
+		val extensions = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("fmt:") }?.substringAfter("fmt:") }
+		val contentTypes = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("type:") }?.substringAfter("type:") }
+		return buildString {
+			append("https://").append(domain)
+			if (categoryTag != null) {
+				// 分类浏览，如 /category/23/s/ 为 Mathematics
+				append("/category/").append(categoryTag.key.substringAfter("cat:")).append("/s/")
+			} else {
+				append("/s/")
+				val query = filter.query
+				if (!query.isNullOrBlank()) {
+					append(query.urlEncoded())
+				}
+			}
+			append('?')
+			if (languages.isNotEmpty()) {
+				for (lang in languages) {
+					append("languages%5B%5D=").append(lang.urlEncoded()).append('&')
+				}
+			}
+			if (extensions.isNotEmpty()) {
+				for (ext in extensions) {
+					append("extensions%5B%5D=").append(ext.urlEncoded()).append('&')
+				}
+			}
+			if (contentTypes.isNotEmpty()) {
+				for (type in contentTypes) {
+					append("selected_content_types%5B%5D=").append(type.urlEncoded()).append('&')
+				}
+			} else {
+				append("selected_content_types%5B%5D=book&")
+			}
+			when (order) {
+				SortOrder.POPULARITY -> append("order=popular&")
+				SortOrder.NEWEST -> append("order=year&")
+				SortOrder.UPDATED -> append("order=date&")
+				else -> {} // RELEVANCE 即站点默认
+			}
+			if (page > 1) {
+				append("page=").append(page)
+			}
+		}.trimEnd('&', '?')
+	}
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        // 支持搜索和浏览两种模式
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseBookList(doc: Document): List<Content> {
+		val items = ArrayList<Content>()
+		val seen = LinkedHashSet<String>()
+		for (item in doc.select("z-bookcard")) {
+			val bookId = item.attrOrNull("id") ?: continue
+			if (!seen.add(bookId)) {
+				continue
+			}
+			val bookUrl = item.attrOrNull("href") ?: continue
+			val title = item.selectFirst("div[slot=title]")?.textOrNull() ?: continue
+			val authors = item.selectFirst("div[slot=author]")?.textOrNull()?.let { parseAuthors(it) }.orEmpty()
+			val year = item.attr("year")
+			val language = item.attr("language")
+			val extension = item.attr("extension")
+			val filesize = item.attr("filesize")
+			val publisher = item.attr("publisher")
+			val rating = parseRating(item.attr("rating"))
 
-        val url = buildSearchUrl(page, order, filter)
-        val response = webClient.httpGet(url, getRequestHeaders())
-        val doc = response.parseHtml()
-        
-        return parseBookList(doc)
-    }
+			val descParts = ArrayList<String>(6)
+			if (publisher.isNotBlank()) descParts.add("Publisher: $publisher")
+			if (year.isNotBlank()) descParts.add("Year: $year")
+			if (language.isNotBlank()) descParts.add("Language: $language")
+			if (extension.isNotBlank()) descParts.add("Format: $extension")
+			if (filesize.isNotBlank()) descParts.add("Size: $filesize")
+			if (rating != RATING_UNKNOWN) descParts.add("Rating: ${formatRating(rating)}")
 
-    private fun buildSearchUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
-        val base = StringBuilder("https://").append(domain)
-        
-        // 检查是否有分类标签
-        val categoryTag = filter.tags.firstOrNull { it.key.startsWith("cat:") }
-        
-        if (categoryTag != null) {
-            // 分类浏览模式
-            val catKey = categoryTag.key.substringAfter("cat:")
-            base.append("/category/").append(catKey)
-            
-            // 添加页码
-            if (page > 1) {
-                base.append("?page=").append(page)
-            }
-        } else if (!filter.query.isNullOrBlank()) {
-            // 搜索模式
-            base.append("/s/").append(filter.query.urlEncoded())
-            base.append("?")
-            
-            // 添加语言筛选
-            val languages = filter.tags.filter { it.key.startsWith("lang:") }
-            for (lang in languages) {
-                val langCode = lang.key.substringAfter("lang:")
-                base.append("languages%5B%5D=").append(langCode).append("&")
-            }
-            
-            // 自动添加 EPUB 格式筛选
-            base.append("extensions%5B%5D=EPUB&")
-            
-            // 添加排序
-            when (order) {
-                SortOrder.NEWEST -> base.append("order=year&")
-                SortOrder.UPDATED -> base.append("order=date&")
-                SortOrder.POPULARITY -> base.append("order=popular&")
-                else -> {} // RELEVANCE 是默认排序
-            }
-            
-            // 添加页码
-            if (page > 1) {
-                base.append("page=").append(page)
-            }
-        } else {
-            // 默认显示计算机科学分类
-            base.append("/category/173")
-            if (page > 1) {
-                base.append("?page=").append(page)
-            }
-        }
-        
-        return base.toString().trimEnd('&', '?')
-    }
 
-    private fun parseBookList(doc: Document): List<Content> {
-        val items = ArrayList<Content>()
-        val seen = LinkedHashSet<String>()
-        
-        // 选择器: z-bookcard 元素
-        val bookItems = doc.select("z-bookcard")
-        
-        for (item in bookItems) {
-            val bookId = item.attr("id")
-            if (bookId.isBlank() || !seen.add(bookId)) continue
-            
-            val bookUrl = item.attr("href")
-            if (bookUrl.isBlank()) continue
-            
-            val title = item.selectFirst("div[slot=title]")?.text()?.trim() ?: continue
-            
-            val coverImg = item.selectFirst("img")
-            val coverUrl = coverImg?.attr("data-src") ?: coverImg?.attr("src") ?: ""
-            
-            // 处理作者 - 过滤非作者信息
-            val authorText = item.selectFirst("div[slot=author]")?.text()?.trim() ?: ""
-            val authors = if (authorText.isNotEmpty()) {
-                filterAuthors(authorText)
-            } else {
-                emptySet()
-            }
-            
-            val year = item.attr("year")
-            val language = item.attr("language")
-            val extension = item.attr("extension")
-            val filesize = item.attr("filesize")
-            val rating = item.attr("rating")
-            val publisher = item.attr("publisher")
-            
-            // 构建描述
-            val descParts = mutableListOf<String>()
-            if (authors.isNotEmpty()) descParts.add("Author: ${authors.joinToString(", ")}")
-            if (publisher.isNotBlank()) descParts.add("Publisher: $publisher")
-            if (year.isNotBlank()) descParts.add("Year: $year")
-            if (language.isNotBlank()) descParts.add("Language: $language")
-            if (extension.isNotBlank()) descParts.add("Format: $extension")
-            if (filesize.isNotBlank()) descParts.add("Size: $filesize")
-            if (rating.isNotBlank() && rating != "0.0") descParts.add("Rating: $rating")
-            
-            // 处理封面 URL - 如果是占位图，使用空字符串
-            val finalCoverUrl = if (coverUrl.contains("cover-not-exists")) "" else coverUrl
-            
-            items.add(
-                Content(
-                    id = generateUid(bookId),
-                    url = bookUrl,
-                    publicUrl = "https://$domain$bookUrl",
-                    title = title,
-                    coverUrl = finalCoverUrl,
-                    altTitles = emptySet(),
-                    rating = parseRating(rating),
-                    contentRating = ContentRating.SAFE,
-                    tags = emptySet(),
-                    state = null,
-                    authors = authors,  // 已经是Set<String>
-                    largeCoverUrl = null,
-                    description = descParts.joinToString("\n"),
-                    chapters = null,
-                    source = source,
-                ),
-            )
-        }
-        
-        return items
-    }
+			items.add(
+				Content(
+					id = generateUid(bookId),
+					title = title,
+					altTitles = emptySet(),
+					url = bookUrl,
+					publicUrl = bookUrl.toAbsoluteUrl(domain),
+					rating = rating,
+					contentRating = ContentRating.SAFE,
+					coverUrl = parseCoverUrl(item),
+					tags = emptySet(),
+					state = null,
+					authors = authors,
+					largeCoverUrl = null,
+					description = descParts.joinToString("\n"),
+					chapters = null,
+					source = source,
+				),
+			)
+		}
+		return items
+	}
 
-    private fun parseRating(ratingStr: String): Float {
-        if (ratingStr.isBlank()) return RATING_UNKNOWN
-        
-        // 格式: "5.0/5.0" 或 "4.5/5"
-        val parts = ratingStr.split("/")
-        if (parts.size != 2) return RATING_UNKNOWN
-        
-        return try {
-            val rating = parts[0].trim().toFloat()
-            val max = parts[1].trim().toFloat()
-            
-            // 检查是否有效
-            if (max <= 0f || rating < 0f || !rating.isFinite() || !max.isFinite()) {
-                return RATING_UNKNOWN
-            }
-            
-            // 归一化到 0-5
-            val normalized = (rating / max) * 5f
-            
-            // 确保结果有效
-            if (!normalized.isFinite()) {
-                return RATING_UNKNOWN
-            }
-            
-            normalized
-        } catch (e: Exception) {
-            RATING_UNKNOWN
-        }
-    }
+	override suspend fun getDetails(manga: Content): Content {
+		val response = webClient.httpGet(manga.url.toAbsoluteUrl(domain), getRequestHeaders())
+		checkAuth(response)
+		return parseDetails(response.parseHtml(), manga)
+	}
 
-    override suspend fun getDetails(manga: Content): Content {
-        val detailUrl = "https://$domain${manga.url}"
-        val response = webClient.httpGet(detailUrl, getRequestHeaders())
-        val doc = response.parseHtml()
-        
-        // 提取详细信息
-        val zcover = doc.selectFirst("z-cover")
-        val title = zcover?.attr("title") ?: manga.title
-        
-        val coverImg = zcover?.selectFirst("img.image")
-        val coverUrl = coverImg?.attr("src") ?: manga.coverUrl
-        
-        // 提取描述
-        val descBox = doc.selectFirst("div#bookDescriptionBox")
-        val description = descBox?.text()?.trim() ?: manga.description
-        
-        // 提取详细属性
-        val detailsBox = doc.selectFirst("div.bookDetailsBox")
-        val properties = mutableMapOf<String, String>()
-        
-        detailsBox?.select("div[class^=property_]")?.forEach { prop ->
-            val label = prop.selectFirst("div.property_label")?.text()?.trim()?.removeSuffix(":")
-            val value = prop.selectFirst("div.property_value")?.text()?.trim()
-            if (label != null && value != null) {
-                properties[label] = value
-            }
-        }
-        
-        // 提取作者 - 从z-cover的author属性获取，并过滤非作者信息
-        val authorAttr = zcover?.attr("author") ?: ""
-        val authors = if (authorAttr.isNotEmpty()) {
-            filterAuthors(authorAttr)
-        } else {
-            manga.authors
-        }
-        
-        // 提取标签/分类
-        val categoryDiv = detailsBox?.selectFirst("div.property_categories div.property_value")
-        val tags = if (categoryDiv != null) {
-            val categoryText = categoryDiv.text().trim()
-            setOf(ContentTag(categoryText, categoryText, source))
-        } else {
-            emptySet()
-        }
-        
-        // 提取文件信息
-        val fileDiv = detailsBox?.selectFirst("div.property__file")
-        val fileInfo = fileDiv?.text()?.trim()?.split(",")
-        val extension = fileInfo?.getOrNull(0)?.split("\n")?.getOrNull(1)?.trim()
-        val filesize = fileInfo?.getOrNull(1)?.trim()
-        
-        // 提取评分
-        val ratingDiv = doc.selectFirst("div.book-rating")
-        val ratingText = ratingDiv?.text()?.replace("\n", "")?.replace(" ", "") ?: ""
-        val rating = parseRating(ratingText)
-        
-        // 构建完整描述
-        val fullDesc = buildString {
-            if (!description.isNullOrBlank()) {
-                append(description)
-                append("\n\n")
-            }
-            append("--- 书籍信息 ---\n")
-            properties.forEach { (key, value) ->
-                append("$key: $value\n")
-            }
-            if (extension != null) append("格式: $extension\n")
-            if (filesize != null) append("大小: $filesize\n")
-        }
-        
-        // 提取下载链接
-        val downloadBtn = doc.selectFirst("a.btn.addDownloadedBook")
-        val downloadUrl = if (downloadBtn != null && !downloadBtn.text().contains("unavailable", ignoreCase = true)) {
-            downloadBtn.attr("href")
-        } else {
-            null
-        }
-        
-        // 创建单个章节（下载链接）
-        val chapter = if (downloadUrl != null) {
-            ContentChapter(
-                id = generateUid("${manga.url}|download"),
-                url = downloadUrl,
-                title = "Download ${extension ?: "EPUB"}",
-                number = 1f,
-                uploadDate = 0L,
-                volume = 0,
-                branch = null,
-                scanlator = null,
-                source = source,
-            )
-        } else {
-            null
-        }
-        
-        return manga.copy(
-            title = title,
-            coverUrl = coverUrl,
-            largeCoverUrl = coverUrl,
-            description = fullDesc,
-            authors = authors,
-            tags = tags,
-            rating = rating,
-            chapters = if (chapter != null) listOf(chapter) else null,
-        )
-    }
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseDetails(doc: Document, manga: Content): Content {
+		val zcover = doc.selectFirst("z-cover")
+		val detailsBox = doc.selectFirst("div.bookDetailsBox")
 
-    override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        // 检查是否是本地EPUB章节（已下载的）- NEW ARCHITECTURE
-        // 新架构使用epub://协议：epub://{manga_id}/chapter/{index}
-        if (chapter.url.startsWith("epub://")) {
-            // 本地EPUB章节由NovelContentLoader处理
-            // 返回空列表，避免使用漫画阅读器
-            return emptyList()
-        }
-        
-        // 向后兼容：检查旧格式的本地EPUB章节
-        if (chapter.url.startsWith("file://") && chapter.url.contains("#chapter/")) {
-            // 旧格式不再支持，返回空列表
-            return emptyList()
-        }
-        
-        // 检查是否已登录
-        if (!isAuthorized()) {
-            // 未登录时抛出认证异常
-            throw org.skepsun.kototoro.parsers.exception.AuthRequiredException(source)
-        }
-        
-        // Z-Library 的下载是直接文件下载，不是分页内容
-        // 返回下载 URL 作为单个"页面"，标记为EPUB
-        val downloadUrl = "https://$domain${chapter.url}"
-        
-        return listOf(
-            ContentPage(
-                id = generateUid(downloadUrl),
-                url = downloadUrl,
-                preview = "EPUB",  // 标记为EPUB，用于下载处理
-                source = source,
-            ),
-        )
-    }
-    
-    override suspend fun getPageUrl(page: ContentPage): String {
-        // 直接返回EPUB下载URL
-        // Cookie会自动从CookieJar发送
-        return page.url
-    }
-    
-    /**
-     * 过滤作者字段中的非作者信息
-     * 
-     * 移除以下类型的内容：
-     * - 评论数（如"30 comments"）
-     * - 在线书店（Amazon, Barnes & Noble, Bookshop.org）
-     * - 邮箱地址（如support@z-lib.fm）
-     * - 分类信息（如"Computers - Computer Science"）
-     * - 出版社信息（如果与作者重复）
-     */
-    private fun filterAuthors(authorText: String): Set<String> {
-        // 先移除已知的非作者短语（在分割之前）
-        var cleaned = authorText
-        val nonAuthorPatterns = listOf(
-            Regex("Barnes\\s*&\\s*Noble", RegexOption.IGNORE_CASE),
-            Regex("Bookshop\\.org", RegexOption.IGNORE_CASE),
-            Regex("\\d+\\s*comments?", RegexOption.IGNORE_CASE),
-            Regex("[\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,}", RegexOption.IGNORE_CASE),  // 邮箱
-        )
-        
-        for (pattern in nonAuthorPatterns) {
-            cleaned = pattern.replace(cleaned, "")
-        }
-        
-        // 分割作者（可能用分号、&、逗号分隔）
-        val parts = cleaned.split(Regex("[;&,]"))
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        
-        val filtered = parts.filter { author ->
-            val lowerAuthor = author.lowercase()
-            
-            // 过滤规则
-            when {
-                // 在线书店
-                lowerAuthor.contains("amazon") -> false
-                lowerAuthor.contains("barnes") -> false
-                lowerAuthor.contains("noble") -> false
-                lowerAuthor.contains("bookshop") -> false
-                
-                // 分类信息（包含" - "的通常是分类）
-                author.contains(" - ") -> false
-                
-                // 太短的名字（可能是缩写或无效数据）
-                author.length < 2 -> false
-                
-                // 纯数字
-                author.all { it.isDigit() || it.isWhitespace() } -> false
-                
-                // 通过所有过滤规则
-                else -> true
-            }
-        }
-        
-        return filtered.toSet()
-    }
+		val properties = LinkedHashMap<String, String>()
+		detailsBox?.select("div.bookProperty")?.forEach { prop ->
+			val label = prop.selectFirst("div.property_label")?.text()?.trim()?.removeSuffix(":")
+			val value = prop.selectFirst("div.property_value")?.textOrNull()
+			if (label != null && value != null) {
+				properties[label] = value
+			}
+		}
+
+		val description = doc.selectFirst("div#bookDescriptionBox")?.textOrNull()
+
+		// 分类以链接路径呈现，如 "Biography & Autobiography - Historical"
+		val tags = detailsBox
+			?.select("div.property_categories div.property_value a")
+			?.mapNotNull { el ->
+				el.textOrNull()?.split(" - ")?.mapNotNull { seg -> seg.trim().nullIfEmpty() }
+			}
+			?.flatten()
+			?.distinct()
+			?.map { ContentTag(it, "cat:text/${it.urlEncoded()}", source) }
+			?.toSet()
+			.orEmpty()
+
+		val downloadUrl = doc.selectFirst("a.btn.addDownloadedBook")
+			?.takeUnless { it.text().contains("unavailable", ignoreCase = true) }
+			?.attrOrNull("href")
+
+		val chapters = downloadUrl?.let {
+			listOf(
+				ContentChapter(
+					id = generateUid("${manga.url}|download"),
+					url = it,
+					title = "Download",
+					number = 1f,
+					volume = 0,
+					scanlator = null,
+					uploadDate = 0L,
+					branch = null,
+					source = source,
+				),
+			)
+		}
+
+		val fullDesc = buildString {
+			if (description != null) {
+				append(description)
+				append("\n\n")
+			}
+			append("--- 书籍信息 ---\n")
+			for ((key, value) in properties) {
+				append(key).append(": ").append(value).append('\n')
+			}
+		}
+
+		return manga.copy(
+			title = zcover?.attrOrNull("title") ?: manga.title,
+			coverUrl = doc.selectFirst("z-cover img.image")?.attrOrNull("src") ?: manga.coverUrl,
+			largeCoverUrl = null,
+			description = fullDesc.trimEnd('\n'),
+			authors = zcover?.attrOrNull("author")?.let { parseAuthors(it) } ?: manga.authors,
+			tags = tags,
+			chapters = chapters ?: manga.chapters,
+		)
+	}
+
+	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
+		// 本地已下载的 EPUB 章节由宿主（epub:// 协议）处理，不走网络阅读器
+		if (chapter.url.startsWith("epub://") || (chapter.url.startsWith("file://") && chapter.url.contains("#chapter/"))) {
+			return emptyList()
+		}
+		if (!isAuthorized()) {
+			throw AuthRequiredException(source)
+		}
+		val downloadUrl = chapter.url.toAbsoluteUrl(domain)
+		return listOf(
+			ContentPage(
+				id = generateUid(downloadUrl),
+				url = downloadUrl,
+				preview = PREVIEW_FILE_FORMAT,
+				source = source,
+			),
+		)
+	}
+
+	override suspend fun getPageUrl(page: ContentPage): String = page.url
+
+	private fun checkAuth(response: Response) {
+		if (response.code == HTTP_ANTIBOT) {
+			throw ParseException(
+				"Z-Library 反爬墙 (HTTP $HTTP_ANTIBOT)，请在应用内重新打开站点并登录",
+				response.request.url.toString(),
+			)
+		}
+		if (response.request.url.encodedPath.startsWith("/login") || response.request.url.queryParameter("redirectUrl") != null) {
+			throw AuthRequiredException(source)
+		}
+	}
+
+	private fun parseCoverUrl(item: org.jsoup.nodes.Element): String? {
+		val img = item.selectFirst("img") ?: return null
+		val url = img.attrOrNull("data-src") ?: img.attrOrNull("src") ?: return null
+		return if (url.contains("cover-not-exists")) null else url
+	}
+
+	/**
+	 * 卡片上的 rating 是 0..5 的纯数字（如 "4.2"），详情页可能出现 "x/y" 形式；统一折算为 0..1
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseRating(raw: String?): Float {
+		if (raw.isNullOrBlank()) {
+			return RATING_UNKNOWN
+		}
+		val parts = raw.split('/')
+		val value = parts[0].trim().toFloatOrNull() ?: return RATING_UNKNOWN
+		val max = if (parts.size > 1) parts[1].trim().toFloatOrNull() ?: return RATING_UNKNOWN else MAX_RATING
+		if (value <= 0f || max <= 0f || !value.isFinite() || !max.isFinite()) {
+			return RATING_UNKNOWN
+		}
+		val normalized = value / max
+		return if (normalized.isFinite() && normalized > 0f) normalized else RATING_UNKNOWN
+	}
+
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun formatRating(rating: Float): String = String.format("%.1f/5", rating * MAX_RATING)
+
+	/**
+	 * 作者串可能混入书店推广、评论数、邮箱、分类路径等噪音（分号/逗号/& 分隔），先清洗再拆分
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseAuthors(raw: String): Set<String> {
+		var cleaned = raw
+		for (pattern in NON_AUTHOR_PATTERNS) {
+			cleaned = pattern.replace(cleaned, "")
+		}
+		return cleaned.split(AUTHOR_SEPARATOR)
+			.map { it.trim() }
+			.filter { it.length >= 2 && !NON_AUTHOR_WORDS.any { w -> it.contains(w, ignoreCase = true) } && !it.contains(" - ") && !it.all { c -> c.isDigit() || c.isWhitespace() } }
+			.toSet()
+	}
+
+	private fun buildCategoryTags(): Set<ContentTag> {
+		val tags = LinkedHashSet<ContentTag>()
+		// 顶层分类取自站方 /categories 页（2025 快照），此处收录适合"出版物"的主要类目
+		for ((id, name) in CATEGORIES) {
+			tags.add(ContentTag(name, "cat:$id", source))
+		}
+		return tags
+	}
+
+	private fun buildContentTypeTags(): Set<ContentTag> = setOf(
+		ContentTag("Books", "type:book", source),
+		ContentTag("Comics", "type:comics", source),
+		ContentTag("Articles", "type:article", source),
+	)
+
+	private fun buildExtensionTags(): Set<ContentTag> = setOf(
+		ContentTag("EPUB", "fmt:EPUB", source),
+		ContentTag("PDF", "fmt:PDF", source),
+		ContentTag("MOBI", "fmt:MOBI", source),
+		ContentTag("AZW3", "fmt:AZW3", source),
+		ContentTag("DJVU", "fmt:DJVU", source),
+	)
+
+	private fun buildLanguageTags(): Set<ContentTag> = setOf(
+		ContentTag("English", "lang:english", source),
+		ContentTag("中文", "lang:chinese", source),
+		ContentTag("日本語", "lang:japanese", source),
+		ContentTag("한국어", "lang:korean", source),
+		ContentTag("Русский", "lang:russian", source),
+		ContentTag("Español", "lang:spanish", source),
+		ContentTag("Français", "lang:french", source),
+		ContentTag("Deutsch", "lang:german", source),
+		ContentTag("Italiano", "lang:italian", source),
+		ContentTag("Português", "lang:portuguese", source),
+		ContentTag("العربية", "lang:arabic", source),
+		ContentTag("Türkçe", "lang:turkish", source),
+		ContentTag("Polski", "lang:polish", source),
+		ContentTag("Nederlands", "lang:dutch", source),
+		ContentTag("Tiếng Việt", "lang:vietnamese", source),
+	)
+
+	private companion object {
+		const val HTTP_ANTIBOT = 517
+		const val MAX_RATING = 5f
+		const val PREVIEW_FILE_FORMAT = "EPUB"
+		val AUTHOR_SEPARATOR = Regex("[;&,]、")
+		val NON_AUTHOR_PATTERNS = listOf(
+			Regex("Barnes\\s*&\\s*Noble", RegexOption.IGNORE_CASE),
+			Regex("Bookshop\\.org", RegexOption.IGNORE_CASE),
+			Regex("\\d+\\s*comments?", RegexOption.IGNORE_CASE),
+			Regex("[\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,}", RegexOption.IGNORE_CASE),
+		)
+		val NON_AUTHOR_WORDS = listOf("amazon", "barnes", "noble", "bookshop")
+
+		// z-library /categories 顶层分类 id -> 名称（2025 快照核对）
+		val CATEGORIES = listOf(
+			1 to "Arts",
+			3 to "Biography & Autobiography",
+			5 to "Business & Economics",
+			6 to "Chemistry",
+			8 to "Comics & Graphic Novels",
+			10 to "Computers",
+			11 to "Crime, Thrillers & Mystery",
+			13 to "Engineering",
+			14 to "Fiction",
+			17 to "History",
+			21 to "Languages",
+			22 to "Linguistics",
+			23 to "Mathematics",
+			24 to "Medicine",
+			27 to "Physics",
+			28 to "Poetry",
+			29 to "Psychology",
+			30 to "Reference",
+			31 to "Religion & Spirituality",
+			32 to "Romance",
+			33 to "Science (General)",
+			34 to "Science Fiction",
+			36 to "Society, Politics & Philosophy",
+			39 to "Travel",
+			609 to "Ancient & Medieval Philosophy",
+			610 to "Asian Philosophy",
+			613 to "European & American Philosophy",
+			621 to "Renaissance & Modern Philosophy",
+		)
+	}
 }
