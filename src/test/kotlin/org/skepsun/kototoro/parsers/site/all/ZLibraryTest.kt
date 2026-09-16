@@ -56,8 +56,8 @@ class ZLibraryTest {
 		assertTrue(result.description!!.contains("Year: 1998"))
 		assertEquals(setOf("Biography & Autobiography", "Historical"), result.tags.map { it.title }.toSet())
 		val chapter = result.chapters!!.single()
-		assertEquals("/dl/1000073/ebe77d", chapter.url)
-		assertEquals("Download", chapter.title)
+		assertEquals("/dl/1000073/ebe77d?extension=epub&signature=d3mo5i78c#ext=epub", chapter.url)
+		assertEquals("Download (EPUB)", chapter.title)
 	}
 
 	@Test

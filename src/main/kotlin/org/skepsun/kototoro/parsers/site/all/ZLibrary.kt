@@ -12,6 +12,7 @@ import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
@@ -29,8 +30,9 @@ import java.util.EnumSet
  *
  * 认证:
  * - 浏览搜索匿名可用；下载需要 remix_userid + remix_userkey cookie（WebView 登录）
- * - 站方 DiamWall 会向非浏览器客户端下发 307+`__diamwall` cookie 挑战，通过后同样返回 200；
- *   若持续得到 517 或登录重定向则说明会话不可用
+ * - 站方 DiamWall 按 UA/IP/TLS 指纹打分：正常浏览器先发 307 下发 `__diamwall` cookie 并由 JS 计算后续；
+ *   非浏览器客户端会得到 503 "verifying your browser"（验证页）或 517 "unusual"（直接拒绝），
+ *   两者都在这里转换成带指引的 ParseException。应用内 WebView 登录可完成 JS 验证并携带会话 cookie
  *
  * 限制:
  * - 下载有每日配额；本解析器不处理验证码与账号付费逻辑
@@ -40,7 +42,24 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	PagedContentParser(context, ContentParserSource.ZLIBRARY, pageSize = 50),
 	ContentParserAuthProvider {
 
-	override val configKeyDomain = ConfigKey.Domain("z-library.sk", "zh.z-library.sk")
+	/**
+	 * 均为 2026-09 实测在线的官方边缘节点（DiamWall 特征一致）：
+	 * 主站 + 语言子域 + 短域名轮换。克隆站（z-lib.cc / z-lib.id 等自有 support email）不收录
+	 */
+	override val configKeyDomain = ConfigKey.Domain(
+		"z-library.sk",
+		"z-lib.sk",
+		"z-lib.fm",
+		"z-lib.bz",
+		"zh.z-library.sk",
+		"en.z-library.sk",
+	)
+
+	/**
+	 * DiamWall 按 UA/指纹打分，默认 `Kototoro/x.x` UA 会直接被判异常，
+	 * 这里以桌面 Chrome 作为可配置默认值（站点设置里的 UserAgent 项可覆盖）
+	 */
+	override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
 
 	override val authUrl: String
 		get() = "https://$domain/"
@@ -61,8 +80,15 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		)
 
 	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
-		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
 		.add("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8")
+		.add("sec-ch-ua", "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\", \"Google Chrome\";v=\"126\"")
+		.add("sec-ch-ua-mobile", "?0")
+		.add("sec-ch-ua-platform", "\"Windows\"")
+		.add("Sec-Fetch-Dest", "document")
+		.add("Sec-Fetch-Mode", "navigate")
+		.add("Sec-Fetch-Site", "same-origin")
+		.add("Upgrade-Insecure-Requests", "1")
 		.build()
 
 	override suspend fun isAuthorized(): Boolean {
@@ -82,9 +108,28 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		val response = webClient.httpGet(buildListUrl(page, order, filter), getRequestHeaders())
+		return parseBookList(fetchDocument(buildListUrl(page, order, filter)))
+	}
+
+	/**
+	 * DiamWall 命中时 [org.skepsun.kototoro.parsers.network.WebClient.httpGet] 会先抛
+	 * HttpStatusException（503 verifying / 517 denied），这里换成可操作的错误提示
+	 */
+	private suspend fun fetchDocument(url: String): Document {
+		val response = try {
+			webClient.httpGet(url, getRequestHeaders())
+		} catch (e: org.jsoup.HttpStatusException) {
+			if (e.statusCode == HTTP_ANTIBOT || e.statusCode == HTTP_ANTIBOT_VERIFY) {
+				throw ParseException(
+					"Z-Library DiamWall 反爬校验 (HTTP ${e.statusCode})：请在应用内打开本源并完成登录" +
+						"（WebView 会执行浏览器验证并带上会话 Cookie）；若持续失败请改用 Library Genesis 等源",
+					e.url ?: url,
+				)
+			}
+			throw e
+		}
 		checkAuth(response)
-		return parseBookList(response.parseHtml())
+		return response.parseHtml()
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -187,9 +232,8 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	override suspend fun getDetails(manga: Content): Content {
-		val response = webClient.httpGet(manga.url.toAbsoluteUrl(domain), getRequestHeaders())
-		checkAuth(response)
-		return parseDetails(response.parseHtml(), manga)
+		val doc = fetchDocument(manga.url.toAbsoluteUrl(domain))
+		return parseDetails(doc, manga)
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -224,12 +268,17 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			?.takeUnless { it.text().contains("unavailable", ignoreCase = true) }
 			?.attrOrNull("href")
 
-		val chapters = downloadUrl?.let {
+		// 文件格式：优先下载链接的 extension 参数，退回列表行 "Format: xxx"；经 #ext 片段带给 getPages
+		val format = downloadUrl?.let { EXT_PARAM_FIND.find(it)?.groupValues?.get(1) }
+			?: manga.description?.let { FORMAT_LINE_FIND.find(it)?.groupValues?.get(1) }
+		val chapterUrl = downloadUrl?.plus(format?.let { "#ext=${it.lowercase()}" } ?: "")
+
+		val chapters = chapterUrl?.let { url ->
 			listOf(
 				ContentChapter(
 					id = generateUid("${manga.url}|download"),
-					url = it,
-					title = "Download",
+					url = url,
+					title = "Download" + (format?.let { " (${it.uppercase()})" } ?: ""),
 					number = 1f,
 					volume = 0,
 					scanlator = null,
@@ -270,12 +319,14 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		if (!isAuthorized()) {
 			throw AuthRequiredException(source)
 		}
-		val downloadUrl = chapter.url.toAbsoluteUrl(domain)
+		val ext = chapter.url.substringAfter("#ext=", "").uppercase().takeIf { it.isNotEmpty() }
+		val downloadUrl = chapter.url.substringBefore('#').toAbsoluteUrl(domain)
 		return listOf(
 			ContentPage(
 				id = generateUid(downloadUrl),
 				url = downloadUrl,
-				preview = PREVIEW_FILE_FORMAT,
+				// 真实文件格式（EPUB/PDF/MOBI/...）；未知时沿用历史标记
+				preview = ext ?: PREVIEW_FILE_FORMAT,
 				source = source,
 			),
 		)
@@ -380,6 +431,9 @@ internal class ZLibrary(context: ContentLoaderContext) :
 
 	private companion object {
 		const val HTTP_ANTIBOT = 517
+		const val HTTP_ANTIBOT_VERIFY = 503
+		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")
+		val FORMAT_LINE_FIND = Regex("Format:\\s*([a-zA-Z0-9]+)")
 		const val MAX_RATING = 5f
 		const val PREVIEW_FILE_FORMAT = "EPUB"
 		val AUTHOR_SEPARATOR = Regex("[;&,]、")
