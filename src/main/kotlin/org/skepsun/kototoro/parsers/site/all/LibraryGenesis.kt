@@ -26,7 +26,9 @@ import java.util.EnumSet
  * - `get.php` 302 跳转到 CDN（cdn*.booksdl.lc），key 在跳转中透传
  *
  * 说明:
- * - 站点无官方 API、无登录；列表行不区分虚构/科技库，靠关键词自然分流
+ * - 搜索表单带 `topics[]` 分库过滤（站内称 topics：Libgen/Comics/Fiction/Scientific Articles/
+ *   Magazines/Fiction RUS/Standards），可多选，映射为本源标签
+ * - 站点无官方 API、无登录；不带 topics 时为全库混合结果
  * - 页面有较多广告脚本，只解析需要的静态节点，不请求广告域
  */
 @ContentSourceParser("LIBRARYGENESIS", "Library Genesis", type = ContentType.NOVEL)
@@ -45,12 +47,13 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 	override val filterCapabilities: ContentListFilterCapabilities
 		get() = ContentListFilterCapabilities(
 			isSearchSupported = true,
-			isSearchWithFiltersSupported = false,
-			isMultipleTagsSupported = false,
+			isSearchWithFiltersSupported = true,
+			isMultipleTagsSupported = true,
 			isTagsExclusionSupported = false,
 		)
 
 	override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
+		availableTags = TOPICS.map { (letter, name) -> ContentTag(name, "topic:$letter", source) }.toSet(),
 		availableContentTypes = EnumSet.of(ContentType.NOVEL),
 	)
 
@@ -70,6 +73,11 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 				append("fmode%3Alast") // 无关键词时浏览最新收录
 			}
 			append("&res=").append(pageSize)
+			for (tag in filter.tags) {
+				if (tag.key.startsWith("topic:")) {
+					append("&topics%5B%5D=").append(tag.key.substringAfter("topic:"))
+				}
+			}
 			when (order) {
 				SortOrder.NEWEST -> append("&order=time_added&ordermode=desc")
 				SortOrder.NEWEST_ASC -> append("&order=time_added&ordermode=asc")
@@ -184,13 +192,19 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 			?.attrOrNull("href")
 			?.toAbsoluteUrl(domain)
 
+		// 实际文件格式（pdf/epub/djvu/fb2/...），随章节 URL 的 #ext 片段带给 getPages
+		val format = (
+			properties["Format"]
+				?: properties["Type"]
+				?: FORMAT_LINE_FIND.find(manga.description.orEmpty())?.groupValues?.get(1)
+			)?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it.length <= 6 }
 		val chapters = listOf(
 			ContentChapter(
 				id = generateUid("${manga.url}|download"),
-				title = "Download",
+				title = "Download" + (format?.let { " (${it.uppercase()})" } ?: ""),
 				number = 1f,
 				volume = 0,
-				url = manga.url, // 详情页含一次性下载 key，读取时重新获取
+				url = manga.url + (format?.let { "#ext=$it" } ?: ""), // 详情页含一次性下载 key，读取时重新获取
 				scanlator = null,
 				uploadDate = 0L,
 				branch = null,
@@ -221,12 +235,13 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-		val detailUrl = chapter.url.toAbsoluteUrl(domain)
+		val ext = chapter.url.substringAfter("#ext=", "").uppercase().takeIf { it.isNotEmpty() }
+		val detailUrl = chapter.url.substringBefore('#').toAbsoluteUrl(domain)
 		return listOf(
 			ContentPage(
 				id = generateUid(detailUrl),
 				url = detailUrl,
-				preview = null,
+				preview = ext, // 真实文件格式（PDF/EPUB/DJVU/...），宿主据此选择下载/阅读方式
 				source = source,
 			),
 		)
@@ -274,6 +289,20 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 	}
 
 	private companion object {
+		// 站方 topics[] 分库（顺序与站点搜索表单一致）
+		val TOPICS = listOf(
+			"l" to "Libgen",
+			"c" to "Comics",
+			"f" to "Fiction",
+			"a" to "Scientific Articles",
+			"m" to "Magazines",
+			"r" to "Fiction RUS",
+			"s" to "Standards",
+		)
+
+		// 列表行 description 中的 "Format: pdf" 兜底
+		val FORMAT_LINE_FIND = Regex("Format:\\s*(\\w+)")
+
 		// ads.php 元数据块出现的标签；白名单避免把页内广告脚本当成字段
 		val METADATA_LABELS = setOf(
 			"Title", "Series", "Author(s)", "Publisher", "Year", "Pages", "Language",

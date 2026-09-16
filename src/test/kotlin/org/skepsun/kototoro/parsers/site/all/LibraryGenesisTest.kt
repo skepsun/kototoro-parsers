@@ -10,6 +10,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
 
@@ -50,8 +51,10 @@ class LibraryGenesisTest {
 		)
 		assertTrue(result.description!!.contains("Publisher: Consejo Nacional De Ciencia"))
 		assertTrue(result.description!!.contains("ISBN: 9789688231180; 9688231185"))
-		// 章节指向详情页（含一次性下载 key，读取时重新获取）
-		assertEquals(content.url, result.chapters!!.single().url)
+		// 章节指向详情页（含一次性下载 key，读取时重新获取），并用 #ext 片段携带真实格式
+		val chapter = result.chapters!!.single()
+		assertEquals("${content.url}#ext=pdf", chapter.url)
+		assertEquals("Download (PDF)", chapter.title)
 	}
 
 	@Test
@@ -82,6 +85,12 @@ class LibraryGenesisTest {
 				.contains("order=time_added&ordermode=desc"),
 		)
 		assertTrue(parser.buildListUrl(2, SortOrder.RELEVANCE, search).endsWith("&page=2"))
+
+		val fiction = ContentTag("Fiction", "topic:f", parser.source)
+		val comics = ContentTag("Comics", "topic:c", parser.source)
+		val topicUrl = parser.buildListUrl(1, SortOrder.RELEVANCE, ContentListFilter(query = "batman", tags = setOf(fiction, comics)))
+		assertTrue(topicUrl.contains("topics%5B%5D=f"))
+		assertTrue(topicUrl.contains("topics%5B%5D=c"))
 	}
 
 	@Test
