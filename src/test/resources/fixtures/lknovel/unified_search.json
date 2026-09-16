@@ -1,0 +1,39 @@
+{
+	"code": 0,
+	"data": {
+		"scene": "apk_search_result",
+		"total": 2,
+		"pagination": {"page": 2, "page_size": 20, "total": 2, "page_count": 1},
+		"list": [
+			{
+				"book_id": 17007,
+				"title": "Sword Art Online刀剑神域9 Alicization Beginning",
+				"author_name": "川原礫",
+				"source_series_id": 14121,
+				"default_chapter_id": 243275,
+				"visible_tags": ["奇幻"],
+				"tags": ["奇幻"],
+				"rating_score_10": 8,
+				"rating_status": "ok",
+				"cover_url": "https://res.lightnovel.fun/images/240108/cover1.jpg",
+				"status": 1,
+				"word_count": 92262,
+				"work_type": {"code": "lightnovel", "text": "轻小说"},
+				"updated_at": "2026-07-18 18:44:21"
+			},
+			{
+				"book_id": 555001,
+				"title": "某EPUB作品",
+				"author_name": "",
+				"source_series_id": 0,
+				"visible_tags": [],
+				"tags": [],
+				"rating_score_10": 0,
+				"cover_url": "",
+				"status": 2,
+				"work_type": {"code": "epub", "text": "EPUB"},
+				"updated_at": "2026-06-01 00:00:00"
+			}
+		]
+	}
+}

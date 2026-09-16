@@ -7,6 +7,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.model.NovelChapterContent
 import org.skepsun.kototoro.parsers.network.UserAgents
@@ -17,7 +18,17 @@ import java.util.EnumSet
 import java.util.Locale
 
 /**
- * 轻之国度 - 基于 APP API
+ * 轻之国度
+ *
+ * 站点 2026 改版后存在两套 API：
+ * - 旧版 `/proxy/api/category…`、`/proxy/api/search…`：Envelope 请求体 `{is_encrypted,platform,client,sign,gz,d}`；
+ *   分类浏览（gid=106 最新）仍可用，旧搜索接口已废弃（code 5）
+ * - 新版 BFF `/proxy/api/bff/apk-search-*-v1`：免签名的统一搜索/分面接口。
+ *   `apk-search-taxonomy-v1` 提供标签分类（tag_id/中文名/分组）与频道；
+ *   `apk-search-result-v1` 以 `primary_tag`=标签中文名过滤、`channel_code`/`work_type` 选频道、
+ *   `status_bucket`=completed|serializing、sort=relevance|new，page 1 基、参数 pageSize 为驼峰。
+ *   搜索或带标签/状态过滤时走它；纯浏览仍走旧版分类接口（v1 无 q 时须绑定频道）。
+ * - 正文/详情接口需前端 HMAC 签名（密钥不下发），章节能力受限，见 getDetails 注释
  */
 @ContentSourceParser("LKNOVEL_US", "轻之国度", "zh", type = ContentType.NOVEL)
 internal class LKNovelUs(context: ContentLoaderContext) :
@@ -53,60 +64,141 @@ internal class LKNovelUs(context: ContentLoaderContext) :
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
+        SortOrder.RELEVANCE,
     )
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
             isSearchSupported = true,
+            isSearchWithFiltersSupported = true,
+            isMultipleTagsSupported = true,
         )
 
-    override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions()
+    /**
+     * 标签/频道来自 `apk-search-taxonomy-v1`（免签名）。
+     * 频道互斥（work_type 单值），标签单选（primary_tag 单值）
+     */
+    override suspend fun getFilterOptions(): ContentListFilterOptions {
+        val response = postJson(
+            "https://$domain/proxy/api/bff/apk-search-taxonomy-v1",
+            createBaseBody(JSONObject()),
+        ).parseJson()
+        val data = response.optJSONObject("data")
+            ?: throw ParseException(
+                "LKNOVEL_US: taxonomy 响应缺少 data 字段",
+                "https://$domain/proxy/api/bff/apk-search-taxonomy-v1",
+            )
+        return parseTaxonomy(data)
+    }
+
+    internal fun parseTaxonomy(data: JSONObject): ContentListFilterOptions {
+        val groups = LinkedHashMap<String, MutableSet<ContentTag>>()
+        data.optJSONArray("tags")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val tag = arr.optJSONObject(i) ?: continue
+                val name = tag.optString("name").trim()
+                if (name.isEmpty()) continue
+                val group = TAG_GROUP_TITLES[tag.optString("display_group")] ?: TAG_GROUP_FALLBACK_TITLE
+                groups.getOrPut(group) { LinkedHashSet() } += ContentTag(name, TAG_KEY_PREFIX + name, source)
+            }
+        }
+        data.optJSONArray("channels")?.let { arr ->
+            val channels = LinkedHashSet<ContentTag>()
+            for (i in 0 until arr.length()) {
+                val channel = arr.optJSONObject(i) ?: continue
+                val code = channel.optString("code")
+                val label = channel.optString("label").ifBlank { code }
+                if (code.isEmpty()) continue
+                channels += ContentTag(label, CHANNEL_KEY_PREFIX + code, source)
+            }
+            if (channels.isNotEmpty()) {
+                groups[CHANNEL_GROUP_TITLE] = channels
+            }
+        }
+        return ContentListFilterOptions(
+            availableTags = groups.values.flatten().toSet(),
+            tagGroups = groups.map { (title, tags) ->
+                ContentTagGroup(title, tags, isExclusive = title == CHANNEL_GROUP_TITLE || title == TAG_GROUP_TITLES["hot"])
+            },
+            availableStates = EnumSet.of(ContentState.ONGOING, ContentState.FINISHED),
+            availableContentTypes = EnumSet.of(ContentType.NOVEL),
+        )
+    }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        return if (!filter.query.isNullOrBlank()) {
-            search(page, filter.query!!)
+        // 旧版分类浏览不支持标签/状态过滤；一旦有查询或过滤条件就切到 v1 统一搜索
+        val needsUnifiedSearch = !filter.query.isNullOrBlank() ||
+            filter.tags.isNotEmpty() ||
+            filter.states.isNotEmpty()
+        return if (needsUnifiedSearch) {
+            val response = postJson(
+                "https://$domain/proxy/api/bff/apk-search-result-v1",
+                createBaseBody(buildUnifiedSearchData(page, order, filter)),
+            ).parseJson()
+            parseUnifiedSearchResult(response)
         } else {
             explore(page)
         }
     }
 
-    private suspend fun search(page: Int, query: String): List<Content> {
-        val url = "https://$domain/proxy/api/search/search-result"
-        val data = JSONObject().apply {
+    internal fun buildUnifiedSearchData(page: Int, order: SortOrder, filter: ContentListFilter): JSONObject {
+        val query = filter.query?.trim().orEmpty()
+        val primaryTag = filter.tags.firstOrNull { it.key.startsWith(TAG_KEY_PREFIX) }?.key?.removePrefix(TAG_KEY_PREFIX)
+        val channel = filter.tags.firstOrNull { it.key.startsWith(CHANNEL_KEY_PREFIX) }?.key?.removePrefix(CHANNEL_KEY_PREFIX)
+            ?.takeIf { channelFilter -> CHANNEL_CODES.contains(channelFilter) }
+        val status = when (filter.states.firstOrNull()) {
+            ContentState.FINISHED -> "completed"
+            ContentState.ONGOING -> "serializing"
+            null, ContentState.ABANDONED, ContentState.PAUSED, ContentState.UPCOMING, ContentState.RESTRICTED -> "all"
+        }
+        return JSONObject().apply {
             put("q", query)
-            put("type", 0)
             put("page", page)
-            put("page_size", pageSize)
+            put("pageSize", pageSize)
+            put("sort", if (order == SortOrder.RELEVANCE && query.isNotEmpty()) "relevance" else "new")
+            if (primaryTag != null) put("primary_tag", primaryTag)
+            // 无关键词浏览时 v1 必须绑定频道；缺省用站点默认频道（轻小说）
+            val effectiveChannel = channel ?: if (query.isEmpty()) DEFAULT_CHANNEL_CODE else null
+            if (effectiveChannel != null) put("channel_code", effectiveChannel)
+            if (status != "all") put("status_bucket", status)
         }
-        // 尝试 Web 端参数；失败时回退到 App 端参数
-        val webBody = createBaseBody(data)
-        val webResp = postJson(url, webBody)
-        val webCode = webResp.code
-        val webPreview = runCatching { webResp.peekBody(2048).string() }.getOrDefault("")
-        val webJson = webResp.parseJson()
-        var list = parseContentList(webJson)
-        println("LKNovel search: url=$url code=$webCode page=$page query=\"$query\" body=$webBody preview=${webPreview.take(512)} results=${list.size}")
-
-        if (list.isEmpty() || webJson.optInt("code", -1) != 0) {
-            val appBody = createAppBody(data)
-            val appResp = postJson(url, appBody)
-            val appCode = appResp.code
-            val appPreview = runCatching { appResp.peekBody(2048).string() }.getOrDefault("")
-            val appJson = appResp.parseJson()
-            list = parseContentList(appJson)
-            println("LKNovel search fallback(app): code=$appCode page=$page query=\"$query\" body=$appBody preview=${appPreview.take(512)} results=${list.size}")
-        }
-        return list
     }
 
-    private fun createAppBody(data: JSONObject): JSONObject = JSONObject().apply {
-        put("platform", "android")
-        put("client", "app")
-        put("sign", "")
-        put("ver_name", "0.11.50")
-        put("ver_code", 190)
-        put("d", data as Any)
-        put("gz", 0)
+    internal fun parseUnifiedSearchResult(response: JSONObject): List<Content> {
+        val data = response.optJSONObject("data") ?: return emptyList()
+        val arr = data.optJSONArray("list") ?: return emptyList()
+        val result = ArrayList<Content>(arr.length())
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            val bookId = item.optLong("book_id", 0L)
+            if (bookId == 0L) continue
+            // source_series_id 是旧版合集 sid，优先复用使浏览/搜索得到同一实体
+            val seriesId = item.optInt("source_series_id", 0)
+            val url = if (seriesId > 0) "/series/$seriesId" else "/book/$bookId"
+            val tags = item.optJSONArray("visible_tags")?.let { arrTags ->
+                (0 until arrTags.length()).mapNotNull { idx ->
+                    arrTags.optString(idx).trim().takeIf { it.isNotEmpty() }?.let { ContentTag(it, TAG_KEY_PREFIX + it, source) }
+                }.toSet()
+            }.orEmpty()
+            val author = item.optString("author_name").trim()
+            val ratingScore10 = item.optInt("rating_score_10", 0)
+            result += Content(
+                id = generateUid(url),
+                title = item.optString("title"),
+                altTitles = emptySet(),
+                url = url,
+                publicUrl = "https://$domain$url",
+                rating = if (ratingScore10 > 0) ratingScore10 / 10f else RATING_UNKNOWN,
+                contentRating = null,
+                coverUrl = item.optString("cover_url").nullIfEmpty(),
+                largeCoverUrl = null,
+                state = null,
+                tags = tags,
+                authors = if (author.isNotEmpty()) setOf(author) else emptySet(),
+                source = source,
+            )
+        }
+        return result
     }
 
     private suspend fun explore(page: Int): List<Content> {
@@ -129,43 +221,50 @@ internal class LKNovelUs(context: ContentLoaderContext) :
         return parseContentList(response)
     }
 
-    private fun parseContentList(response: JSONObject): List<Content> {
+    internal fun parseContentList(response: JSONObject): List<Content> {
         val list = mutableListOf<Content>()
         val dataObj = response.optJSONObject("data") ?: return list
         
         // collections (合集/系列)
         dataObj.optJSONArray("collections")?.let { arr ->
             for (i in 0 until arr.length()) {
-                list.add(parseContentItem(arr.getJSONObject(i), isSeries = true))
+                parseContentItem(arr.getJSONObject(i), isSeries = true)?.let(list::add)
             }
         }
-        
+
         // articles (单篇)
         dataObj.optJSONArray("articles")?.let { arr ->
             for (i in 0 until arr.length()) {
-                list.add(parseContentItem(arr.getJSONObject(i), isSeries = false))
+                parseContentItem(arr.getJSONObject(i), isSeries = false)?.let(list::add)
             }
         }
-        
+
         // list (探索返回的列表)
         dataObj.optJSONArray("list")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val item = arr.getJSONObject(i)
                 val sid = item.optInt("sid", 0)
-                list.add(parseContentItem(item, isSeries = sid != 0))
+                parseContentItem(item, isSeries = sid != 0)?.let(list::add)
             }
         }
         
         return list
     }
 
-    private fun parseContentItem(item: JSONObject, isSeries: Boolean): Content {
-        val idVal = if (isSeries) item.optString("sid") else item.optString("aid")
+    private fun parseContentItem(item: JSONObject, isSeries: Boolean): Content? {
+        // id 缺失（含占位 "0"）时退回另一套 id；仍缺失则丢弃该条，避免退化 URL 造成实体互并
+        val idVal = sequenceOf(
+            if (isSeries) item.optString("sid") else item.optString("aid"),
+            if (isSeries) item.optString("aid") else item.optString("sid"),
+        ).firstOrNull { it.isNotBlank() && it != "0" } ?: return null
         val url = if (isSeries) "/series/$idVal" else "/article/$idVal"
         val seriesName = item.optString("series_name")
+        // 站方未挂集的合集统一占位为“未知合集”，退回文章标题以区分不同作品
         val title = when {
-            isSeries && seriesName.isNotBlank() -> seriesName
-            else -> item.optString("name", item.optString("title"))
+            isSeries && seriesName.isNotBlank() && seriesName != PLACEHOLDER_SERIES_NAME -> seriesName
+            else -> item.optString("title").ifBlank {
+                item.optString("name").ifBlank { seriesName.ifBlank { PLACEHOLDER_SERIES_NAME } }
+            }
         }
         val coverRaw = item.optString("cover")
         val banner = item.optString("banner")
@@ -183,7 +282,7 @@ internal class LKNovelUs(context: ContentLoaderContext) :
             altTitles = emptySet(),
             url = url,
             publicUrl = "https://$domain$url",
-            rating = 0f,
+            rating = RATING_UNKNOWN,
             contentRating = null,
             coverUrl = cover?.takeIf { it.isNotBlank() },
             tags = buildSet {
@@ -197,10 +296,11 @@ internal class LKNovelUs(context: ContentLoaderContext) :
 
     override suspend fun getDetails(manga: Content): Content {
         val novelId = manga.url.substringAfterLast("/")
-        return if (manga.url.startsWith("/series/")) {
-            getSeriesDetails(manga, novelId)
-        } else {
-            getArticleDetails(manga, novelId)
+        return when {
+            manga.url.startsWith("/series/") -> getSeriesDetails(manga, novelId)
+            // v1 独有作品（无旧版 sid）：详情/章节接口未免签开放，仅展示已有元数据
+            manga.url.startsWith("/book/") -> manga.copy(chapters = emptyList())
+            else -> getArticleDetails(manga, novelId)
         }
     }
 
@@ -404,4 +504,24 @@ internal class LKNovelUs(context: ContentLoaderContext) :
                 .add("Accept-Encoding", "identity")
                 .build()
         )
+
+    private companion object {
+        const val TAG_KEY_PREFIX = "tag:"
+        const val CHANNEL_KEY_PREFIX = "channel:"
+        const val CHANNEL_GROUP_TITLE = "频道"
+        const val TAG_GROUP_FALLBACK_TITLE = "其他"
+        const val DEFAULT_CHANNEL_CODE = "lightnovel"
+        const val PLACEHOLDER_SERIES_NAME = "未知合集"
+
+        // taxonomy channels 实测：lightnovel/original/fanfic/epub
+        val CHANNEL_CODES = setOf("lightnovel", "original", "fanfic", "epub")
+
+        // display_group 实测：hot/theme/role/plot
+        val TAG_GROUP_TITLES = mapOf(
+            "hot" to "热门题材",
+            "theme" to "主题",
+            "role" to "角色",
+            "plot" to "情节",
+        )
+    }
 }

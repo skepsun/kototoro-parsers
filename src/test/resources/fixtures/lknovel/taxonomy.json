@@ -1,0 +1,20 @@
+{
+	"code": 0,
+	"data": {
+		"scene": "apk_search_taxonomy",
+		"channels": [
+			{"code": "lightnovel", "label": "轻小说", "kind": "work_type", "jump_type": "channel"},
+			{"code": "original", "label": "原创", "kind": "work_type", "jump_type": "channel"},
+			{"code": "fanfic", "label": "同人", "kind": "work_type", "jump_type": "channel"},
+			{"code": "epub", "label": "EPUB", "kind": "work_type", "jump_type": "channel"}
+		],
+		"tags": [
+			{"tag_id": 235, "name": "异世界", "display_group": "hot", "tag_kind": "classification"},
+			{"tag_id": 238, "name": "恋爱", "display_group": "hot", "tag_kind": "mixed"},
+			{"tag_id": 4454, "name": "学园", "display_group": "theme", "tag_kind": "classification"},
+			{"tag_id": 711, "name": "青梅竹马", "display_group": "role", "tag_kind": "classification"},
+			{"tag_id": 444, "name": "复仇", "display_group": "plot", "tag_kind": "classification"},
+			{"tag_id": 999, "name": "无分组", "tag_kind": "classification"}
+		]
+	}
+}

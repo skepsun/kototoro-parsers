@@ -1,0 +1,45 @@
+{
+	"code": 0,
+	"data": {
+		"list": [
+			{
+				"sid": "27625",
+				"aid": "1442015",
+				"series_name": "未知合集",
+				"title": "某人汉化 第一卷",
+				"author": "kidcs1214",
+				"group_name": "最新",
+				"last_time": "2026-09-14 10:00:00",
+				"cover": "",
+				"gid": "106"
+			},
+			{
+				"sid": "123",
+				"aid": "900",
+				"series_name": "已知合集名",
+				"title": "章节x",
+				"author": "作者A",
+				"group_name": "轻小说",
+				"last_time": "2026-09-13 09:00:00",
+				"cover": "https://res.lightnovel.fun/images/series1.jpg"
+			},
+			{
+				"sid": "0",
+				"aid": "777",
+				"series_name": "",
+				"title": "单篇文章",
+				"author": "作者B",
+				"group_name": "最新",
+				"last_time": "2026-09-12 08:00:00"
+			},
+			{
+				"sid": "0",
+				"aid": "",
+				"series_name": "",
+				"title": "缺 id 应被丢弃",
+				"author": "作者C"
+			}
+		],
+		"page_info": {"total": 4}
+	}
+}
