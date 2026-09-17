@@ -272,10 +272,6 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		val format = downloadUrl?.let { EXT_PARAM_FIND.find(it)?.groupValues?.get(1) }
 			?: manga.description?.let { FORMAT_LINE_FIND.find(it)?.groupValues?.get(1) }
 		val chapterUrl = downloadUrl?.plus(format?.let { "#ext=${it.lowercase()}" } ?: "")
-		// 规范化格式候选；Z-Library 详情页通常单一格式
-		val ebookFormats = format?.let {
-			EbookFormat.fromMarker(it).takeUnless { fmt -> fmt == EbookFormat.UNKNOWN }?.let { fmt -> listOf(fmt) }
-		} ?: emptyList()
 
 		val chapters = chapterUrl?.let { url ->
 			listOf(
@@ -289,7 +285,6 @@ internal class ZLibrary(context: ContentLoaderContext) :
 					uploadDate = 0L,
 					branch = null,
 					source = source,
-					ebookFormats = ebookFormats,
 				),
 			)
 		}

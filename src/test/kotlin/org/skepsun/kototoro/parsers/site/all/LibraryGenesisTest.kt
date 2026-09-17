@@ -14,6 +14,7 @@ import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.EbookFormat
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
+import kotlinx.coroutines.runBlocking
 
 class LibraryGenesisTest {
 
@@ -56,8 +57,10 @@ class LibraryGenesisTest {
 		val chapter = result.chapters!!.single()
 		assertEquals("${content.url}#ext=pdf", chapter.url)
 		assertEquals("Download (PDF)", chapter.title)
-		// 规范化格式候选：详情页 Format: pdf → EbookFormat.PDF（页面模态）
-		assertEquals(listOf(EbookFormat.PDF), chapter.ebookFormats)
+		// 格式走 ContentPage.preview 通道（getPages 本地解析 #ext 片段）；宿主据此判定文本/页面模态
+		val page = runBlocking { parser.getPages(chapter) }.single()
+		val pdf = page.preview?.let { EbookFormat.fromMarker(it) }
+		assertEquals(EbookFormat.PDF, pdf)
 	}
 
 	@Test

@@ -429,7 +429,6 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
                     uploadDate = 0,
                     branch = null,  // 默认分支，不显示branch标签
                     source = source,
-                    ebookFormats = listOf(EbookFormat.EPUB),
                 )
             }
         }
@@ -473,7 +472,6 @@ internal class NoveliaWenku(context: ContentLoaderContext) :
                     uploadDate = 0,
                     branch = "中日对照",  // 使用branch区分
                     source = source,
-                    ebookFormats = listOf(EbookFormat.EPUB),
                 )
             }
         }

@@ -3,9 +3,9 @@ package org.skepsun.kototoro.parsers.model
 /**
  * 电子书文件格式（下载型书源的可选下载载体）。
  *
- * 同一个内容条目可能提供多种格式文件（如 Z-Library / archive.org 的
- * epub+pdf+djvu 齐备），由 [ContentChapter.ebookFormats] 以候选列表表达；
- * libgen 类源每条记录固定一种格式，列表即单元素。
+ * 格式信息经 `ContentPage.preview` 传递（如 libgen/Z-Library 的 `getPages`
+ * 返回单页，preview = "PDF"/"EPUB"/"FB2"/...）；宿主用 [fromMarker] 解析后
+ * 选择阅读模态。同一内容条目若有多种格式，由章节 URL 的 `#ext=` 片段区分。
  *
  * 宿主按格式选择阅读模态：
  * - 文本模态（EPUB/FB2/TXT）：下载后解析正文，展开为内部文本章节

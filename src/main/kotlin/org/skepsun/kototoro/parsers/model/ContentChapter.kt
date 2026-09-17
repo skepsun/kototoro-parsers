@@ -40,12 +40,6 @@ public data class ContentChapter(
 	 */
 	@JvmField public val branch: String?,
 	@JvmField public val source: ContentSource,
-	/**
-	 * 该章节可下载的电子书格式候选。空 = 普通在线章节（图片/文本页）。
-	 * 下载型书源（libgen/Z-Library/archive.org...）填充此字段，宿主按格式
-	 * 选择阅读模态（文本模态 EPUB/FB2/TXT 展开内部章节；页面模态 PDF/DJVU 按页渲染）。
-	 */
-	@JvmField public val ebookFormats: List<EbookFormat> = emptyList(),
 ) {
 
 	@Deprecated("Use title instead of name", ReplaceWith("ContentChapter(id, title, number, volume, url, scanlator, uploadDate, branch, source)"))
