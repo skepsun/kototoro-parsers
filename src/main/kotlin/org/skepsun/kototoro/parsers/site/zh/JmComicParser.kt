@@ -84,6 +84,15 @@ internal class JmParser(
 
     private val weeklyTag = "每週必看" to ""
 
+    /**
+     * 每周必看标签按时间倒序（最新一期在前）。
+     *
+     * 站点 id 是期数序号（越大越新），可作为时间排序键；接口返回顺序不稳定，
+     * 这里显式排序而不是依赖服务器返回顺序。非数值 id 排到最后。
+     */
+    internal fun List<ContentTag>.sortedWeeklyByTimeDesc(): List<ContentTag> =
+        sortedByDescending { it.key.removePrefix("w:").toLongOrNull() ?: 0L }
+
     private val groupedSearchTags: List<Pair<String, List<String>>> = listOf(
         "主題A漫" to listOf(
             "無修正", "劇情向", "青年漫", "校服", "純愛", "人妻", "教師", "百合", "Yaoi", "性轉", "NTR",
@@ -108,10 +117,11 @@ internal class JmParser(
 
     // API 域名，基于 fallbackServers 同步
     private var apiDomains: List<String> = listOf(
-        "www.cdnsha.org",
-        "www.cdnaspa.cc",
-        "www.cdnntr.cc",
-        "www.cdntwice.org",
+        "www.cdnhjk.net",
+        "www.cdngwc.cc",
+        "www.cdngwc.net",
+        "www.cdngwc.club",
+        "www.cdnutc.me",
     )
     private var activeDomain: String = apiDomains.first()
     private var imageHost: String = "https://cdn-msp.jmapinodeudzn.net"
@@ -223,14 +233,17 @@ internal class JmParser(
             ensureDomains()
             val json = JSONObject(apiGet("/week"))
             val categories = json.optJSONArray("categories") ?: return@runCatching
-            for (i in 0 until categories.length()) {
-                val obj = categories.optJSONObject(i) ?: continue
-                val id = obj.optString("id")
-                val time = obj.optString("time")
-                if (id.isNotBlank() && time.isNotBlank()) {
-                    tags += ContentTag(time, "w:$id", source)
+            val weekTags = buildList {
+                for (i in 0 until categories.length()) {
+                    val obj = categories.optJSONObject(i) ?: continue
+                    val id = obj.optString("id")
+                    val time = obj.optString("time")
+                    if (id.isNotBlank() && time.isNotBlank()) {
+                        add(ContentTag(time, "w:$id", source))
+                    }
                 }
-            }
+            }.sortedWeeklyByTimeDesc()
+            tags += weekTags
         }.onFailure {
             println("JmParser: weekly tags load failed: ${it.message}")
         }
