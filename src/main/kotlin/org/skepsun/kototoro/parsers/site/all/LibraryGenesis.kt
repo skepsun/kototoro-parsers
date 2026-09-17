@@ -198,6 +198,7 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 				?: properties["Type"]
 				?: FORMAT_LINE_FIND.find(manga.description.orEmpty())?.groupValues?.get(1)
 			)?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it.length <= 6 }
+		val ebookFormat = format?.let { EbookFormat.fromMarker(it).takeUnless { it == EbookFormat.UNKNOWN } }
 		val chapters = listOf(
 			ContentChapter(
 				id = generateUid("${manga.url}|download"),
@@ -209,6 +210,8 @@ internal class LibraryGenesis(context: ContentLoaderContext) :
 				uploadDate = 0L,
 				branch = null,
 				source = source,
+				// 规范化格式候选：宿主据此选择文本模态（EPUB/FB2/TXT）还是页面模态（PDF/DJVU）
+				ebookFormats = listOfNotNull(ebookFormat),
 			),
 		)
 
