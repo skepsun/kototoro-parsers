@@ -23,11 +23,8 @@ import org.skepsun.kototoro.parsers.util.attrOrNull
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseJson
-import org.skepsun.kototoro.parsers.util.parseJsonArray
-import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.toRelativeUrl
-import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.LinkedHashSet
 import java.util.EnumSet
 import okhttp3.Headers
@@ -42,8 +39,7 @@ internal class Hanime(context: ContentLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("hanime.tv")
 
-    private val apiBase = "https://cached.freeanimehentai.net/api/v10/search_hvs"
-    private val manifestsBase = "https://cached.freeanimehentai.net/api/v8/guest/videos"
+    private val apiBase = "https://guest.freeanimehentai.net/api/v11/search_hvs"
     private val disallowedStreamHosts = setOf("adtng.com", "adnxs.com", "doubleclick.net")
     private var allVideosCache: List<JSONObject>? = null
 
@@ -58,7 +54,13 @@ internal class Hanime(context: ContentLoaderContext) :
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
-        val tags = runCatching { fetchTagsFromBrowse() }.getOrDefault(defaultTags())
+        val tags = fetchAllVideos().flatMap { video ->
+            val values = video.optJSONArray("tags") ?: JSONArray()
+            (0 until values.length()).mapNotNull { i ->
+                values.optString(i).takeIf { it.isNotBlank() }
+                    ?.let { ContentTag(it.replaceFirstChar(Char::uppercase), it, source) }
+            }
+        }.toSet()
         return ContentListFilterOptions(
             availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
             availableTags = tags,
@@ -66,29 +68,13 @@ internal class Hanime(context: ContentLoaderContext) :
     }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val apiItems = runCatching { fetchListByApi(page, order, filter) }.getOrNull()
-        if (!apiItems.isNullOrEmpty()) return apiItems
-
-        val url = buildBrowseUrl(page, filter)
-        val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
-        val htmlItems = parseList(doc)
-        if (htmlItems.isNotEmpty()) return htmlItems
-
-        if (filter.tags.isEmpty() && filter.query.isNullOrBlank()) {
-            val trendingDoc = webClient.httpGet(
-                "https://$domain/browse/trending", getRequestHeaders(),
-            ).parseHtml()
-            val trendingItems = parseList(trendingDoc)
-            if (trendingItems.isNotEmpty()) return trendingItems
-        }
-
-        return emptyList()
+        return fetchListByApi(page, order, filter)
     }
 
     override suspend fun getDetails(manga: Content): Content {
-        val slug = manga.publicUrl.substringAfterLast('/').ifBlank { manga.url.substringAfterLast('/') }
+        val slug = manga.url.substringBefore('?').trimEnd('/').substringAfterLast('/')
 
-        val apiData = runCatching { fetchVideoDetail(slug) }.getOrNull()
+        val apiData = fetchVideoDetail(slug)
         if (apiData != null) {
             return manga.copy(
                 title = apiData.title ?: manga.title,
@@ -109,7 +95,7 @@ internal class Hanime(context: ContentLoaderContext) :
             )
         }
 
-        val doc = webClient.httpGet(manga.publicUrl, getRequestHeaders()).parseHtml()
+        val doc = webClient.httpGet(watchUrl(manga.url), getRequestHeaders()).parseHtml()
         val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
             ?: manga.title
         val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
@@ -123,7 +109,7 @@ internal class Hanime(context: ContentLoaderContext) :
 
         return manga.copy(
             title = title, description = description,
-            coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover ?: cover,
+            coverUrl = cover ?: manga.coverUrl, largeCoverUrl = cover ?: manga.largeCoverUrl,
             tags = if (tags.isNotEmpty()) tags else manga.tags,
             contentRating = ContentRating.ADULT,
             chapters = listOf(
@@ -138,25 +124,16 @@ internal class Hanime(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val watchUrl = chapter.url.toAbsoluteUrl(domain)
+        val watchUrl = watchUrl(chapter.url)
         val doc = webClient.httpGet(watchUrl, getRequestHeaders()).parseHtml()
-
-        val videoId = parseVideoIdFromNux(doc)
-        if (videoId != null) {
-            val manifestUrl = "$manifestsBase/$videoId/manifest"
-            val manifest = runCatching {
-                webClient.httpGet(manifestUrl, getRequestHeaders()).parseJson()
-            }.getOrNull()
-            if (manifest != null) {
-                val pages = parsePagesFromManifest(manifest)
-                if (pages.isNotEmpty()) return pages
-            }
-        }
 
         val fromVideoTag = extractFromVideoTag(doc)
         val fromLdJson = extractFromLdJson(doc)
-        val fromRegex = extractByRegex(doc)
-        val streams = (fromVideoTag + fromLdJson + fromRegex).distinct()
+        val fromRegex = if (fromVideoTag.isEmpty() && fromLdJson.isEmpty()) extractByRegex(doc) else emptyList()
+        val streams = (fromVideoTag + fromLdJson + fromRegex)
+            .mapNotNull { it.toAbsoluteUrlOrNull(domain) }
+            .filter { url -> disallowedStreamHosts.none(url::contains) }
+            .distinct()
         if (streams.isNotEmpty()) {
             val poster = doc.selectFirst("video[poster]")?.attrOrNull("poster")
                 ?: doc.selectFirst("meta[property=og:image]")?.attrOrNull("content")
@@ -165,86 +142,13 @@ internal class Hanime(context: ContentLoaderContext) :
                     id = generateUid(s.toRelativeUrl(domain)),
                     url = s,
                     preview = poster,
+                    headers = mapOf("Referer" to watchUrl, "User-Agent" to context.getDefaultUserAgent()),
                     source = source,
                 )
             }
         }
 
         context.requestBrowserAction(this, watchUrl)
-        return emptyList()
-    }
-
-    private fun parseVideoIdFromNux(doc: Document): Int? {
-        val html = doc.outerHtml()
-        val nuxRegex = Regex("""window\.__NUXT__=\(function\(([^)]*)\)\{return (.+?)\}\((.*?)\)\)""")
-        val match = nuxRegex.find(html) ?: return null
-        val paramNames = match.groupValues[1].split(",").map { it.trim() }
-        val body = match.groupValues[2]
-        val argsStr = match.groupValues[3]
-
-        val idStart = body.indexOf("hentai_video:{id:")
-        if (idStart < 0) return null
-        val afterId = body.substring(idStart + "hentai_video:{id:".length)
-        val varName = afterId.takeWhile { it.isLetter() }
-        if (varName.isEmpty()) return afterId.takeWhile { it.isDigit() }.toIntOrNull()
-
-        val args = parseNuxArgs(argsStr)
-        val idx = paramNames.indexOf(varName)
-        return if (idx >= 0 && idx < args.size) args[idx].toIntOrNull() else null
-    }
-
-    private fun parseNuxArgs(argsStr: String): List<String> {
-        val args = mutableListOf<String>()
-        var depth = 0
-        val current = StringBuilder()
-        var inString = false
-        var stringChar: Char? = null
-        for (ch in argsStr) {
-            if (inString) {
-                current.append(ch)
-                if (ch == stringChar && (current.length < 2 || current[current.length - 2] != '\\')) {
-                    inString = false
-                }
-                continue
-            }
-            when {
-                ch == '"' || ch == '\'' -> {
-                    inString = true; stringChar = ch; current.append(ch)
-                }
-                ch == '[' || ch == '{' || ch == '(' -> {
-                    depth++; current.append(ch)
-                }
-                ch == ']' || ch == '}' || ch == ')' -> {
-                    depth--; current.append(ch)
-                }
-                ch == ',' && depth == 0 -> {
-                    args.add(current.toString().trim()); current.clear()
-                }
-                else -> current.append(ch)
-            }
-        }
-        if (current.isNotEmpty()) args.add(current.toString().trim())
-        return args
-    }
-
-    private fun parsePagesFromManifest(json: JSONObject): List<ContentPage> {
-        val result = mutableListOf<ContentPage>()
-        val manifest = json.optJSONObject("videos_manifest") ?: return result
-        val servers = manifest.optJSONArray("servers") ?: return result
-        for (si in 0 until servers.length()) {
-            val server = servers.optJSONObject(si) ?: continue
-            val streams = server.optJSONArray("streams") ?: continue
-            for (ti in 0 until streams.length()) {
-                val stream = streams.optJSONObject(ti) ?: continue
-                val url = stream.optString("url").takeIf { it.isNotBlank() } ?: continue
-                if (disallowedStreamHosts.none { url.contains(it) }) {
-                    val quality = stream.optString("height").takeIf { it.isNotBlank() }
-                    val label = if (quality != null) "${quality}p" else null
-                    result.add(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
-                }
-            }
-        }
-        return result
     }
 
     private fun extractFromVideoTag(doc: Document): List<String> {
@@ -292,82 +196,11 @@ internal class Hanime(context: ContentLoaderContext) :
     private fun extractByRegex(doc: Document): List<String> {
         val res = ArrayList<String>()
         val html = doc.outerHtml()
-        val hls = Regex("https?://[^\"'\\s>]+\\.m3u8", RegexOption.IGNORE_CASE)
-        val mp4 = Regex("https?://[^\"'\\s>]+\\.mp4", RegexOption.IGNORE_CASE)
-        hls.findAll(html).forEach { m -> res.add(m.value) }
-        mp4.findAll(html).forEach { m -> res.add(m.value) }
+        val hls = Regex("https?://[^\"'\\s>]+\\.m3u8(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
+        val mp4 = Regex("https?://[^\"'\\s>]+\\.mp4(?:\\?[^\"'\\s<>]*)?", RegexOption.IGNORE_CASE)
+        hls.findAll(html).forEach { m -> res.add(org.jsoup.parser.Parser.unescapeEntities(m.value, false)) }
+        mp4.findAll(html).forEach { m -> res.add(org.jsoup.parser.Parser.unescapeEntities(m.value, false)) }
         return res
-    }
-
-    private fun parseListFromNux(doc: Document): List<Content> {
-        val html = doc.outerHtml()
-        val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
-        val match = nuxRegex.find(html) ?: return emptyList()
-        val body = match.groupValues[1]
-
-        val vidStart = body.indexOf("hentai_videos:[")
-        if (vidStart < 0) return emptyList()
-
-        val arrayStart = body.indexOf('[', vidStart)
-        if (arrayStart < 0) return emptyList()
-        val arrayEnd = findMatchingBracket(body, arrayStart) ?: return emptyList()
-        val arrayStr = body.substring(arrayStart, arrayEnd + 1)
-            .replace("\\u002F", "/")
-
-        val items = ArrayList<Content>()
-        var pos = 1
-        while (pos < arrayStr.length) {
-            val objStart = arrayStr.indexOf("{id:", pos)
-            if (objStart < 0) break
-            val objEnd = findMatchingBrace(arrayStr, objStart) ?: break
-            val objStr = arrayStr.substring(objStart, objEnd + 1)
-
-            val slug = Regex("""slug:"([^"]*)"""").find(objStr)?.groupValues?.get(1) ?: run {
-                pos = objEnd + 1; continue
-            }
-            val name = Regex("""name:"([^"]*)"""").find(objStr)?.groupValues?.get(1) ?: "Untitled"
-            val cover = Regex("""(?:cover_url|poster_url):"([^"]*)"""").find(objStr)?.groupValues?.get(1)
-
-            items.add(Content(
-                id = generateUid(slug),
-                url = "/hentai-videos/$slug",
-                publicUrl = "https://$domain/hentai-videos/$slug",
-                title = name, altTitles = emptySet(),
-                coverUrl = cover, largeCoverUrl = cover,
-                authors = emptySet(), tags = emptySet(), state = null, description = null,
-                contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
-            ))
-            pos = objEnd + 1
-        }
-        return items
-    }
-
-    private fun findMatchingBracket(s: String, start: Int): Int? {
-        var depth = 0
-        for (i in start until s.length) {
-            when (s[i]) {
-                '[' -> depth++
-                ']' -> {
-                    depth--
-                    if (depth == 0) return i
-                }
-            }
-        }
-        return null
-    }
-
-    private fun findMatchingBrace(s: String, start: Int): Int? {
-        var depth = 0
-        for (i in start until s.length) {
-            when (s[i]) {
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) return i
-                }
-            }
-        }
-        return null
     }
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
@@ -378,9 +211,7 @@ internal class Hanime(context: ContentLoaderContext) :
 
     private suspend fun fetchAllVideos(): List<JSONObject> {
         allVideosCache?.let { return it }
-        val hits = runCatching {
-            webClient.httpGet(apiBase, getRequestHeaders()).parseJsonArray()
-        }.getOrElse { JSONArray() }
+        val hits = webClient.httpGet(apiBase, getRequestHeaders()).parseJson().getJSONArray("data")
         val list = ArrayList<JSONObject>(hits.length())
         for (i in 0 until hits.length()) {
             hits.optJSONObject(i)?.let { list.add(it) }
@@ -402,8 +233,8 @@ internal class Hanime(context: ContentLoaderContext) :
         }
         return Content(
             id = generateUid(slug),
-            url = "/hentai-videos/$slug",
-            publicUrl = "https://$domain/hentai-videos/$slug",
+            url = "/videos/hentai/$slug",
+            publicUrl = "https://$domain/videos/hentai/$slug",
             title = title, altTitles = emptySet(),
             coverUrl = cover, largeCoverUrl = cover,
             authors = emptySet(), tags = tagSet, state = null,
@@ -442,7 +273,7 @@ internal class Hanime(context: ContentLoaderContext) :
         val comparator = when (order) {
             SortOrder.POPULARITY -> compareByDescending<JSONObject> { it.optInt("views", 0) }
             SortOrder.RATING -> compareByDescending { it.optInt("likes", 0) }
-            SortOrder.UPDATED -> compareByDescending { it.optLong("released_at_unix", 0) }
+            SortOrder.NEWEST -> compareByDescending { it.optLong("released_at_unix", 0) }
             else -> compareByDescending { it.optLong("created_at_unix", 0) }
         }
         filtered = filtered.sortedWith(comparator)
@@ -458,6 +289,9 @@ internal class Hanime(context: ContentLoaderContext) :
         val poster: String?, val tags: Set<ContentTag>,
     )
 
+    private fun watchUrl(url: String): String = "https://$domain/videos/hentai/${url.substringBefore('?')
+        .trimEnd('/').substringAfterLast('/')}"
+
     private suspend fun fetchVideoDetail(slug: String): VideoDetailData? {
         val all = fetchAllVideos()
         val o = all.find { it.optString("slug") == slug } ?: return null
@@ -472,93 +306,5 @@ internal class Hanime(context: ContentLoaderContext) :
             tagSet.add(ContentTag(tag.replaceFirstChar { it.uppercase() }, tag, source))
         }
         return VideoDetailData(title, desc, cover, poster, tagSet)
-    }
-
-    private suspend fun fetchTagsFromBrowse(): Set<ContentTag> {
-        val doc = webClient.httpGet("https://$domain/browse", getRequestHeaders()).parseHtml()
-        val nuxTags = parseTagsFromNux(doc)
-        if (nuxTags.isNotEmpty()) return nuxTags
-        return doc.select("a[href*=/browse/tags/]").mapNotNull { a ->
-            val text = a.text().trim().replaceFirstChar { it.uppercase() }
-            val key = a.attr("href").substringAfterLast('/').trim()
-            if (text.isNotBlank() && key.isNotBlank()) ContentTag(text, key, source) else null
-        }.toSet()
-    }
-
-    private fun parseTagsFromNux(doc: Document): Set<ContentTag> {
-        val html = doc.outerHtml()
-        val nuxRegex = Regex("""window\.__NUXT__=\(function\([^)]*\)\{return (.+?)\}\([^)]*\)\)""")
-        val match = nuxRegex.find(html) ?: return emptySet()
-        val body = match.groupValues[1]
-
-        val tagsStart = body.indexOf("hentai_tags:[")
-        if (tagsStart < 0) return emptySet()
-
-        val arrayStart = body.indexOf('[', tagsStart)
-        if (arrayStart < 0) return emptySet()
-        val arrayEnd = findMatchingBracket(body, arrayStart) ?: return emptySet()
-        val arrayStr = body.substring(arrayStart, arrayEnd + 1)
-
-        val result = LinkedHashSet<ContentTag>()
-        val tagRegex = Regex("""\{id:\d+,text:"([^"]*)"""")
-        tagRegex.findAll(arrayStr).forEach { m ->
-            val text = m.groupValues[1]
-            result.add(ContentTag(text.replaceFirstChar { it.uppercase() }, text, source))
-        }
-        return result
-    }
-
-    private fun defaultTags(): Set<ContentTag> = linkedSetOf(
-        ContentTag("3D", "3d", source), ContentTag("Ahegao", "ahegao", source),
-        ContentTag("Anal", "anal", source), ContentTag("BDSM", "bdsm", source),
-        ContentTag("Big Boobs", "big boobs", source), ContentTag("Blow Job", "blow job", source),
-        ContentTag("Bondage", "bondage", source), ContentTag("Censored", "censored", source),
-        ContentTag("Cosplay", "cosplay", source), ContentTag("Creampie", "creampie", source),
-        ContentTag("Futanari", "futanari", source), ContentTag("Gangbang", "gangbang", source),
-        ContentTag("Harem", "harem", source), ContentTag("Incest", "incest", source),
-        ContentTag("Loli", "loli", source), ContentTag("MILF", "milf", source),
-        ContentTag("NTR", "ntr", source), ContentTag("School Girl", "school girl", source),
-        ContentTag("Tentacle", "tentacle", source), ContentTag("Threesome", "threesome", source),
-        ContentTag("Uncensored", "uncensored", source), ContentTag("Virgin", "virgin", source),
-        ContentTag("Yuri", "yuri", source),
-    )
-
-    private fun buildBrowseUrl(page: Int, filter: ContentListFilter): String {
-        val tag = filter.tags.firstOrNull()?.key
-        return if (tag != null) {
-            "https://$domain/browse/tags/$tag?page=$page"
-        } else if (!filter.query.isNullOrBlank()) {
-            "https://$domain/search?search_text=${filter.query.urlEncoded()}&page=$page"
-        } else {
-            "https://$domain/browse?page=$page"
-        }
-    }
-
-    private fun parseList(doc: Document): List<Content> {
-        val items = ArrayList<Content>()
-        val seen = LinkedHashSet<String>()
-        val cards = doc.select("a[href*=/hentai-videos/]")
-        for (link in cards) {
-            val href = link.attr("href").takeIf { it.isNotBlank() } ?: continue
-            if (href == "/hentai-videos/") continue
-            val absoluteUrl = href.toAbsoluteUrl(domain).substringBefore("?")
-            if (!seen.add(absoluteUrl)) continue
-            val title = link.selectFirst("img[alt]")?.attr("alt")?.trim()
-                ?: link.attr("title").takeIf { it.isNotBlank() }
-                ?: link.text().trim().ifEmpty { "Untitled" }
-            val thumb = link.selectFirst("img[src]")?.let {
-                (it.attr("data-src").ifBlank { it.attr("src") }).toAbsoluteUrlOrNull(domain)
-            }
-            items.add(Content(
-                id = generateUid(absoluteUrl),
-                url = absoluteUrl.removePrefix("https://$domain"),
-                publicUrl = absoluteUrl, title = title, altTitles = emptySet(),
-                coverUrl = thumb, largeCoverUrl = thumb,
-                authors = emptySet(), tags = emptySet(), state = null, description = null,
-                contentRating = ContentRating.ADULT, source = source, rating = RATING_UNKNOWN,
-            ))
-        }
-        if (items.isNotEmpty()) return items
-        return parseListFromNux(doc)
     }
 }

@@ -84,6 +84,9 @@ internal abstract class WebSelectorParser(
     protected open val selectFilterNames: String = ""
     protected open val selectFilterLinks: String = ""
 
+    /** Site-specific detail cover selector, scoped to the current subject. */
+    protected open val selectDetailCover: String = ""
+
     /** Prefer shorter title when multiple candidates exist. */
     protected open val preferShorterName: Boolean = false
 
@@ -197,8 +200,8 @@ internal abstract class WebSelectorParser(
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
             isSearchSupported = true,
-            isSearchWithFiltersSupported = categoryTags.isNotEmpty(),
-            isMultipleTagsSupported = categoryTags.isNotEmpty(),
+            isSearchWithFiltersSupported = false,
+            isMultipleTagsSupported = false,
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
@@ -232,7 +235,7 @@ internal abstract class WebSelectorParser(
     // Search / List
     // ========================================================================
 
-    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+    internal open fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         var keyword = filter.query?.trim().orEmpty()
 
         if (keyword.isNotEmpty() && searchUseOnlyFirstWord) {
@@ -279,12 +282,16 @@ internal abstract class WebSelectorParser(
             }
         }
 
-        val doc = webClient.httpGet(searchUrl, getRequestHeaders()).parseHtml()
+        return searchUrl.replace(Regex("^https?://[^/]+"), "https://$domain")
+    }
+
+    override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+        val doc = webClient.httpGet(buildListUrl(page, order, filter), getRequestHeaders()).parseHtml()
         val items = ArrayList<Content>(pageSize)
         val seen = LinkedHashSet<String>()
 
         // Use filter-specific selectors when browsing (no keyword), fall back to search selectors
-        val isBrowseMode = !hasKeyword && hasTags
+        val isBrowseMode = filter.query.isNullOrBlank()
         val results = when (subjectFormatId) {
             "indexed" -> {
                 if (isBrowseMode && selectFilterNames.isNotBlank()) {
@@ -446,8 +453,12 @@ internal abstract class WebSelectorParser(
     }
 
     private fun extractDetailCover(doc: Document): String? {
+        if (selectDetailCover.isNotBlank()) {
+            val cover = doc.selectFirst(selectDetailCover)?.src()
+            return cover?.takeUnless(::isPlaceholderUrl)
+        }
         // Try og:image meta first
-        doc.selectFirst("meta[property=og:image]")?.attr("content")
+        doc.selectFirst("meta[property=og:image]")?.attrAsAbsoluteUrlOrNull("content")
             ?.takeIf { it.isNotBlank() && !isPlaceholderUrl(it) }?.let { return it }
 
         for (sel in listOf(
@@ -464,14 +475,6 @@ internal abstract class WebSelectorParser(
                     ?: img.attrAsAbsoluteUrlOrNull("data-img")
                     ?: img.attrAsAbsoluteUrlOrNull("src")
                 if (cover != null && !isPlaceholderUrl(cover)) return cover
-            }
-        }
-
-        // Fallback: any img with data-src or data-original that looks like a cover
-        for (attr in listOf("data-original", "data-src", "data-img")) {
-            val img = doc.selectFirst("img[$attr]")
-            img?.attrAsAbsoluteUrlOrNull(attr)?.let { url ->
-                if (!isPlaceholderUrl(url) && !url.contains("logo") && !url.contains("icon")) return url
             }
         }
 
@@ -614,29 +617,32 @@ internal abstract class WebSelectorParser(
 
         // Strategy 1: extract player_aaaa JSON config (mxproCMS pattern)
         extractPlayerConfig(html)?.let { url ->
-            return listOf(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+            return listOf(videoPage(url))
         }
 
         // Strategy 2: AJAX play endpoint (e.g. /_senfun_plays/ID/ep)
         extractFromAjaxPlayEndpoint(doc, html)?.let { url ->
-            return listOf(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+            return listOf(videoPage(url))
         }
 
         // Strategy 3: static regex / nested URL extraction
         extractVideoUrl(doc)?.let { url ->
-            return listOf(ContentPage(id = generateUid(url), url = url, preview = null, source = source))
+            return listOf(videoPage(url))
         }
 
-        // Strategy 4: iframe src
-        val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")
-        if (iframeSrc != null && iframeSrc.startsWith("http")) {
-            return listOf(ContentPage(id = generateUid(iframeSrc), url = iframeSrc, preview = null, source = source))
-        }
-
-        // Strategy 5: browser/WebView for JS-rendered video URLs
+        // An arbitrary iframe may be an advertisement, not a playable stream.
         context.requestBrowserAction(this, fullUrl)
-        return emptyList()
     }
+
+    private fun videoPage(url: String): ContentPage = ContentPage(
+        id = generateUid(url),
+        url = url,
+        preview = null,
+        source = source,
+        headers = addHeadersToVideo.mapKeys { (key, _) ->
+            if (key.equals("userAgent", ignoreCase = true)) "User-Agent" else key
+        }.takeIf { it.isNotEmpty() },
+    )
 
     /**
      * Extract video URL from `player_aaaa` config object embedded in the page.
@@ -670,11 +676,15 @@ internal abstract class WebSelectorParser(
 
         val configJson = html.substring(openBrace, closeBrace + 1)
 
-        // Parse the "url" field from the JSON
-        val urlRegex = Regex(""""url"\s*:\s*"([^"]+)"""")
-        val urlMatch = urlRegex.find(configJson) ?: return null
-        val url = urlMatch.groupValues[1]
-            .replace("\\/", "/") // unescape JSON slashes
+        val config = org.json.JSONObject(configJson)
+        val value = config.optString("url")
+        val url = when (config.optInt("encrypt")) {
+            1 -> java.net.URLDecoder.decode(value, "UTF-8")
+            2 -> java.net.URLDecoder.decode(
+                context.decodeBase64(value).toString(Charsets.UTF_8), "UTF-8",
+            )
+            else -> value
+        }
         return if (url.contains(".m3u8") || url.contains(".mp4")) url else null
     }
 
@@ -776,7 +786,7 @@ internal abstract class WebSelectorParser(
 
         val urlPattern = Regex("""https?://[^\s"'<>]+""")
         for (match in urlPattern.findAll(html)) {
-            val url = match.value
+            val url = org.jsoup.parser.Parser.unescapeEntities(match.value, false)
             if (regex.containsMatchIn(url)) return url
         }
         return null
@@ -795,7 +805,7 @@ internal abstract class WebSelectorParser(
         }
 
         for (match in urlPattern.findAll(html)) {
-            val url = match.value
+            val url = org.jsoup.parser.Parser.unescapeEntities(match.value, false)
             val vm = videoRegex.find(url) ?: continue
             val captured = tryOrNull { vm.groups["v"]?.value }
             return captured ?: vm.value

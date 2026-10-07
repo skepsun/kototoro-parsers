@@ -4,7 +4,9 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.ContentType
+import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.SortOrder
+import org.skepsun.kototoro.parsers.util.urlEncoded
 
 /**
  * UZVOD — 直连，来自UZVOD优质影院，导航：https://uzvod.com/
@@ -26,10 +28,10 @@ internal class Uzvod(
     override val selectLists = ".video-info-header>h3>a"
     override val preferShorterName = true
     override val selectChannelNames = ".tab-item"
-    override val matchChannelName = "^(?<ch>.+?)(\\\\d+)?\$"
+    override val matchChannelName = """^(?<ch>.+?)(\d+)?$"""
     override val selectEpisodeLists = ".module-blocklist>.scroll-content"
     override val enableNestedUrl = true
-    override val matchVideoUrl = "(^http(s)?:\\\\/\\\\/(?!.*http).+\\\\.(mp4|m3u8|flv|mkv))|(url=(?<v>http(s)?:\\\\/\\\\/.+\\\\.(mp4|m3u8|flv|mkv)))|(^http(s)?:\\\\/\\\\/(?!.*http).+(sign\\\\.bytetos|sign\\\\.byteimg|mcloud\\\\.139|cloudflarestorage|tos-cn)\\\\.com(?!.*\\\\.ts).+(-expires|-signature))|((bilivideo|akamaized|szbdyd)\\\\.com(?!.*\\\\.ts))|(\\\\/video\\\\/tos\\\\/alisg\\\\/)|(\\\\/video\\\\/.*mime_type=video)"
+    override val matchVideoUrl = """https?://[^\s"<>]+\.(?:mp4|m3u8|flv|mkv)(?:\?[^\s"<>]*)?"""
     override val cookies = "quality=1080"
     override val addHeadersToVideo = mapOf("referer" to "")
 
@@ -46,5 +48,22 @@ internal class Uzvod(
         SortOrder.POPULARITY to "hits",
     )
 
-    override val selectFilterLists = "a.module-poster-item"
+    override val selectFilterLists =
+        ".module-list:not(.module-lines-list) .module-item-title[href], a.module-poster-item"
+
+    override fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+        val query = filter.query?.trim().orEmpty()
+        if (query.isNotEmpty()) {
+            val fields = MutableList(14) { "" }
+            fields[0] = query.urlEncoded().replace("+", "%20")
+            fields[10] = page.toString()
+            return "https://$domain/vodsearch/${fields.joinToString("-")}.html"
+        }
+        val fields = MutableList(12) { "" }
+        fields[0] = filter.tags.firstOrNull()?.key?.substringAfter("type:")
+            ?.takeIf { key -> categoryTags.any { it.first == key } } ?: "dongman"
+        fields[2] = sortOrderMapping.getValue(order)
+        fields[8] = page.toString()
+        return "https://$domain/vodshow/${fields.joinToString("-")}.html"
+    }
 }

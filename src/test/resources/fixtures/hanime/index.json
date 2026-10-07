@@ -1,0 +1,7 @@
+{
+  "data": [
+    {"id":1,"slug":"first-1","name":"First 1","search_titles":"作品一","description":"First description","cover_url":"https://img.example/first.jpg","poster_url":"https://img.example/first-poster.jpg","tags":["hd","uncensored"],"created_at_unix":200,"released_at_unix":100,"views":10,"likes":20},
+    {"id":2,"slug":"second-1","name":"Second 1","search_titles":"作品二","cover_url":"https://img.example/second.jpg","tags":["hd"],"created_at_unix":100,"released_at_unix":200,"views":20,"likes":10}
+  ],
+  "ads": [{"url":"https://ads.example/advert.mp4"}]
+}
