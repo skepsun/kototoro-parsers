@@ -1,0 +1,1 @@
+{"code":200,"data":{"list":[{"id":"1001","bookName":"Test Novel","authorName":"Test Author","novelSlug":"test-novel","primaryGenreId":"9","genres":[{"genreId":"1","genreName":"Action"},{"genreId":"9","genreName":"Fantasy"}],"picUrl":"https://images.example/cover.webp","bookDesc":"Test description"}]}}

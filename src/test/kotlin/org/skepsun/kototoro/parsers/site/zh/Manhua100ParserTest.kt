@@ -1,10 +1,16 @@
 package org.skepsun.kototoro.parsers.site.zh
 
+import okhttp3.Request
+import okhttp3.ResponseBody
+import okio.ForwardingSource
+import okio.buffer
 import org.jsoup.Jsoup
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
+import org.skepsun.kototoro.parsers.OfflineContentLoaderContext
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.ContentRating
@@ -16,7 +22,7 @@ import java.util.Base64
 
 class Manhua100ParserTest {
 
-	private val parser = Manhua100Parser(ContentLoaderContextMock)
+	private val parser = Manhua100Parser(OfflineContentLoaderContext())
 
 	@Test
 	fun `build combined category paths in server order`() {
@@ -109,6 +115,75 @@ class Manhua100ParserTest {
 	@Test
 	fun `reject invalid reader params`() {
 		assertEquals(null, Manhua100ImageDecoder.decode("not-base64"))
+	}
+
+	@ParameterizedTest
+	@ValueSource(ints = [200, 403, 404])
+	fun `fall back to origin only when the image proxy returns 404`(status: Int) {
+		val origin = "https://origin.example/1.jpg"
+		val proxyUrl = "https://two.mhpic.net/" + Base64.getEncoder().encodeToString(origin.toByteArray())
+		val ctx = OfflineContentLoaderContext(
+			fixtures = mapOf(proxyUrl to "manhua100/proxy-error.txt", origin to "manhua100/image-body.txt"),
+			responseCodes = mapOf(proxyUrl to status),
+			responseTypes = mapOf(origin to "image/webp"),
+		) { request, body ->
+			assertEquals(null, request.header("X-Kototoro-Manhua100-Origin"))
+			body
+		}
+		val subject = Manhua100Parser(ctx)
+		val document = Jsoup.parse("""<script>var params = '$ENCRYPTED_PARAMS';</script>""")
+		val page = Manhua100Parser(ctx).parsePages(document, "https://www.manhua100.com/123/1.html").first()
+		var proxyBodyClosed = false
+		val client = ctx.httpClient.newBuilder().apply {
+			interceptors().add(0, subject)
+			interceptors().add(1) { chain ->
+				if (chain.request().url.toString() == origin) assertTrue(proxyBodyClosed)
+				val response = chain.proceed(chain.request())
+				if (chain.request().url.toString() != proxyUrl) return@add response
+				val body = response.body
+				response.newBuilder().body(object : ResponseBody() {
+					private val trackedSource = object : ForwardingSource(body.source()) {
+						override fun close() {
+							proxyBodyClosed = true
+							super.close()
+						}
+					}.buffer()
+					override fun contentType() = body.contentType()
+					override fun contentLength() = body.contentLength()
+					override fun source() = trackedSource
+				}).build()
+			}
+		}.build()
+		val request = Request.Builder().url(proxyUrl).apply {
+			page.headers.orEmpty().forEach { (key, value) -> header(key, value) }
+		}.build()
+		client.newCall(request).execute().use { response ->
+			assertEquals(if (status == 404) origin else proxyUrl, response.request.url.toString())
+			assertEquals(if (status == 404) 200 else status, response.code)
+		}
+		assertEquals(if (status == 404) listOf(proxyUrl, origin) else listOf(proxyUrl), ctx.requests)
+	}
+
+	@ParameterizedTest
+	@ValueSource(ints = [200, 404])
+	fun `preserve proxy error when the original response is not an image`(status: Int) {
+		val origin = "https://origin.example/1.jpg"
+		val proxyUrl = "https://two.mhpic.net/" + Base64.getEncoder().encodeToString(origin.toByteArray())
+		val ctx = OfflineContentLoaderContext(
+			fixtures = mapOf(proxyUrl to "manhua100/proxy-error.txt", origin to "manhua100/proxy-error.txt"),
+			responseCodes = mapOf(proxyUrl to 404, origin to status),
+		)
+		val subject = Manhua100Parser(ctx)
+		val document = Jsoup.parse("""<script>var params = '$ENCRYPTED_PARAMS';</script>""")
+		val page = Manhua100Parser(ctx).parsePages(document, "https://www.manhua100.com/123/1.html").first()
+		val client = ctx.httpClient.newBuilder().apply { interceptors().add(0, subject) }.build()
+		val request = Request.Builder().url(proxyUrl).apply {
+			page.headers.orEmpty().forEach { (key, value) -> header(key, value) }
+		}.build()
+		client.newCall(request).execute().use { response ->
+			assertEquals(404, response.code)
+			assertEquals("error: 404", response.body.string().trim())
+		}
 	}
 
 	private fun content() = Content(

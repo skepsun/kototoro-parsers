@@ -3,6 +3,10 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -227,7 +231,11 @@ internal class Manhua100Parser(context: ContentLoaderContext) :
 						id = generateUid("${chapterUrl.substringAfter(domain)}:$index"),
 						url = imageUrl,
 						preview = imageUrl,
-						headers = imageHeaders,
+						headers = if (encodePaths && imageDomain.isNotEmpty()) {
+							imageHeaders + (IMAGE_ORIGIN_HEADER to original)
+						} else {
+							imageHeaders
+						},
 						source = source,
 					),
 				)
@@ -236,6 +244,30 @@ internal class Manhua100Parser(context: ContentLoaderContext) :
 	}
 
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
+
+	override fun intercept(chain: Interceptor.Chain): Response {
+		val origin = chain.request().header(IMAGE_ORIGIN_HEADER)?.toHttpUrlOrNull()?.takeIf { it.isHttps }
+		val request = chain.request().newBuilder().removeHeader(IMAGE_ORIGIN_HEADER).build()
+		val response = chain.proceed(request)
+		if (response.code != 404 || origin == null || origin.host == request.url.host) return response
+		// 部分旧章节的图片代理返回 404，但 Base64 中的原始图片仍可公开访问。
+		// 发起下一次请求前释放连接，同时保留原错误正文供回退失败时返回。
+		val errorBody = response.use { it.body.bytes().toResponseBody(it.body.contentType()) }
+		val errorResponse = response.newBuilder().body(errorBody).build()
+		try {
+			val direct = chain.proceed(request.newBuilder().url(origin).build())
+			return if (direct.isSuccessful && direct.header("Content-Type").orEmpty().startsWith("image/", true)) {
+				errorResponse.close()
+				direct
+			} else {
+				direct.close()
+				errorResponse
+			}
+		} catch (e: Exception) {
+			errorResponse.close()
+			throw e
+		}
+	}
 
 	private fun parseTag(anchor: Element): ContentTag? {
 		val title = anchor.text().trim().takeIf(String::isNotEmpty) ?: return null
@@ -258,6 +290,7 @@ internal class Manhua100Parser(context: ContentLoaderContext) :
 	private fun baseUrl(): String = "https://$domain"
 
 	internal companion object {
+		private const val IMAGE_ORIGIN_HEADER = "X-Kototoro-Manhua100-Origin"
 		private const val AREA_PREFIX = "area/"
 		private const val THEME_PREFIX = "theme/"
 		private val DETAIL_PATH = Regex("""/\d+/?""")

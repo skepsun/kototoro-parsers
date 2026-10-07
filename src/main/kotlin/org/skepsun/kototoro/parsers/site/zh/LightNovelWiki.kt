@@ -244,6 +244,8 @@ internal class LightNovelWiki(context: ContentLoaderContext) :
         )
     }
 
+    override suspend fun getPageUrl(page: ContentPage): String = page.url
+
     override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         val url = chapter.url.toAbsoluteUrl(domain)
         val doc = webClient.httpGet(url).parseHtml()
