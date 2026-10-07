@@ -7,6 +7,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentChapter
 import org.skepsun.kototoro.parsers.model.ContentListFilter
@@ -148,7 +149,9 @@ internal class Hanime(context: ContentLoaderContext) :
             }
         }
 
-        context.requestBrowserAction(this, watchUrl)
+        // Browser actions only resolve challenges/authentication, not the player handshake.
+        // Returning from the browser would retry this same page and open it again.
+        throw ParseException("Hanime: playable video stream missing; native playback is currently unavailable", watchUrl)
     }
 
     private fun extractFromVideoTag(doc: Document): List<String> {

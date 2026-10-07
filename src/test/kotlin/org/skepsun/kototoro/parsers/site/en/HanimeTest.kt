@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.skepsun.kototoro.parsers.OfflineContentLoaderContext
 import org.skepsun.kototoro.parsers.SourceConfigMock
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.SortOrder
@@ -92,18 +93,44 @@ class HanimeTest {
     }
 
     @Test
-    fun `Astro handshake page requires browser instead of returning an ad or fake stream`() {
+    fun `Astro handshake page fails without opening browser even when retried`() = runBlocking {
         val context = OfflineContentLoaderContext(mapOf(
             apiUrl to "hanime/index.json",
             "https://hanime.tv/videos/hentai/first-1" to "hanime/handshake.html",
         ))
         val parser = Hanime(context)
-        assertThrows(UnsupportedOperationException::class.java) {
-            runBlocking {
-                val detail = parser.getDetails(parser.getList(0, SortOrder.UPDATED, ContentListFilter.EMPTY).first())
-                parser.getPages(requireNotNull(detail.chapters).single())
+        val detail = parser.getDetails(parser.getList(0, SortOrder.UPDATED, ContentListFilter.EMPTY).first())
+        val chapter = requireNotNull(detail.chapters).single()
+        repeat(2) {
+            val error = assertThrows(ParseException::class.java) {
+                runBlocking { parser.getPages(chapter) }
             }
+            assertEquals("https://hanime.tv/videos/hentai/first-1", error.url)
+            assertTrue(error.shortMessage.orEmpty().contains("Hanime: playable video stream missing"))
         }
-        assertTrue(context.requests.none { it.contains("cached.freeanimehentai.net") })
+        assertEquals(listOf(
+            apiUrl,
+            "https://hanime.tv/videos/hentai/first-1",
+            "https://hanime.tv/videos/hentai/first-1",
+        ), context.requests)
+    }
+
+    @Test
+    fun `missing player fails without treating an arbitrary page as a browser challenge`() = runBlocking {
+        val context = OfflineContentLoaderContext(
+            fixtures = mapOf(
+                apiUrl to "hanime/index.json",
+                "https://hanime.tv/videos/hentai/first-1" to "hanime/handshake.html",
+            ),
+            transformBody = { request, body ->
+                if (request.url.toString() == apiUrl) body else "<!doctype html><title>Unavailable</title>"
+            },
+        )
+        val parser = Hanime(context)
+        val detail = parser.getDetails(parser.getList(0, SortOrder.UPDATED, ContentListFilter.EMPTY).first())
+        assertThrows(ParseException::class.java) {
+            runBlocking { parser.getPages(requireNotNull(detail.chapters).single()) }
+        }
+        assertEquals(2, context.requests.size)
     }
 }

@@ -18,7 +18,12 @@
   现在使用该索引恢复列表、搜索、标签及详情，播放路径迁移到 `/videos/hentai/`，同时兼容旧收藏章节路径。
   API 请求失败会抛出异常并允许重试，不再缓存为永久空列表；正常空搜索也不再回退到无关热门作品。
 - Hanime 当前播放页没有直接流地址，而由浏览器播放器通过 `/api/v11/handshake` 获取播放数据。
-  本次没有实现该新播放器流程，**原生播放仍未恢复**。浏览器动作请求不代表已取得可播放流。
+  本次没有实现该新播放器流程，**原生播放仍未恢复**。
+  无流时现在抛出包含 Hanime 和播放页地址的 `ParseException`，不再请求浏览器交互。
+  `requestBrowserAction` 的契约用于验证码或授权，不能返回播放器握手结果。
+  应用的 `BrowserActivity` 在没有成功 Cookie 条件时关闭即返回成功，
+  `VideoPlayerActivity.resolvePlaybackException` 随后重试同一解析，导致反复打开浏览器。
+  本次从源头切断该流程，未修改应用通用的验证码或授权处理。
 
 ## 为什么旧测试没有发现
 
@@ -30,6 +35,9 @@
 4. 直接调用 `getListPage(1)`，绕过了应用真实的 offset 分页和 Hanime 的零起始页。
 5. 通用 `ContentSources` 参数化测试仅配置了 `WNACG`、`COPYMANGA`，没有覆盖这三个源。
 6. 缺少可重复的离线夹具，在线波动与解析回归混在一起。
+7. Hanime 的握手页回归测试原先把浏览器动作异常当作预期成功；
+   它只验证没有返回广告流，没有验证应用收到异常后如何跳转及重试。
+   现在改为断言明确的解析异常，并验证重复调用和缺失播放器页面都不会请求浏览器。
 
 ## 验证
 
@@ -61,3 +69,18 @@ cmd /c "gradlew.bat test --tests org.skepsun.kototoro.parsers.site.zh.WebSelecto
 
 在线结果反映本次网络和站点状态，不能据此保证长期可用。没有绕过验证码、登录或付费限制。
 已将相关集成测试改为按源门控，错误会真实失败；默认运行不会访问这些站点。
+
+## Hanime 浏览器跳转补充排查
+
+设备连接检查发现一台在线设备。只读检查近期错误日志和 `adb shell dumpsys activity lastanr`，
+系统报告本次开机后没有 ANR，近期日志也未找到 Hanime 相关崩溃记录。
+因此已确认并修复的是无流触发浏览器及返回后重复跳转的路径；
+尚不能根据现有设备证据判定用户报告的卡死属于主线程 ANR、WebView 无响应或反复跳转。
+没有部署新解析器，也没有完成设备上的播放复测。
+
+补充修复验证：`HanimeTest` 的 8 个用例与 `WebSelectorParserTest` 的 10 个用例全部通过，
+`git diff --check` 通过；未新增依赖，复用现有 `ParseException` 错误契约。
+
+```powershell
+cmd /c "gradlew.bat test --tests org.skepsun.kototoro.parsers.site.en.HanimeTest --tests org.skepsun.kototoro.parsers.site.zh.WebSelectorParserTest --no-daemon -Porg.gradle.java.installations.paths=D:/Java/jdk8"
+```
