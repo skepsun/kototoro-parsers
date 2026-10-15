@@ -1,6 +1,7 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Cookie
+import okhttp3.Headers
 import okhttp3.Response
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.Jsoup
@@ -13,6 +14,7 @@ import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import org.skepsun.kototoro.parsers.util.*
 import java.nio.charset.StandardCharsets
 import java.util.ArrayList
@@ -24,6 +26,22 @@ internal class Wenku8(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.WENKU8, pageSize = 20), ContentParserAuthProvider {
 
     override val configKeyDomain = ConfigKey.Domain("www.wenku8.net")
+
+    // 站点由 Cloudflare 托管，平淡的非浏览器 UA 会被直接在 403 challenge 拦下；
+    // 用与内置浏览器一致的新版 Chrome UA + Sec-CH-UA 客户端提示，优先让请求直接通过
+    override fun getRequestHeaders(): Headers = Headers.Builder()
+        .add("User-Agent", BROWSER_UA)
+        .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
+        .add("Accept-Language", "zh-CN,zh;q=0.9")
+        .add("Sec-CH-UA", "\"Chromium\";v=\"155\", \"Not_A Brand\";v=\"24\"")
+        .add("Sec-CH-UA-Mobile", "?0")
+        .add("Sec-CH-UA-Platform", "\"Windows\"")
+        .add("Sec-Fetch-Dest", "document")
+        .add("Sec-Fetch-Mode", "navigate")
+        .add("Sec-Fetch-Site", "none")
+        .add("Sec-Fetch-User", "?1")
+        .add("Upgrade-Insecure-Requests", "1")
+        .build()
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
         SortOrder.UPDATED,
@@ -66,7 +84,8 @@ internal class Wenku8(context: ContentLoaderContext) :
         .any { it.isLoginCookie() }
 
     override suspend fun getUsername(): String {
-        val doc = webClient.httpGet("https://$domain/index.php").parseHtmlGBK("https://$domain/index.php").ensureAuthorized()
+        val url = "https://$domain/index.php"
+        val doc = webClient.httpGet(url, getRequestHeaders()).ensureNoCloudFlare(url).parseHtmlGBK(url).ensureAuthorized()
         val welcome = doc.selectFirst(".m_top .fl")?.text().orEmpty()
         val username = welcome.substringAfter("欢迎您", "").substringBefore('[').trim()
         if (username.isEmpty()) {
@@ -84,13 +103,18 @@ internal class Wenku8(context: ContentLoaderContext) :
             !filter.query.isNullOrBlank() -> buildSearchUrl(filter.query!!, page)
             else -> buildCatalogUrl(filter, page)
         }
-        val doc = webClient.httpGet(url).parseHtmlGBK(url).ensureAuthorized()
+        val doc = webClient.httpGet(url, getRequestHeaders()).ensureNoCloudFlare(url).parseHtmlGBK(url).ensureAuthorized()
         return parseCatalog(doc)
     }
 
     override suspend fun getDetails(manga: Content): Content {
         val url = manga.url.toAbsoluteUrl(domain)
-        val doc = runCatching { webClient.httpGet(url).parseHtmlGBK(url) }.getOrElse {
+        val response = runCatching { webClient.httpGet(url, getRequestHeaders()) }.getOrElse {
+            return manga
+        }
+        // Cloudflare 验证页会在 requestBrowserAction 中中断，不能被 runCatching 吞掉
+        response.ensureNoCloudFlare(url)
+        val doc = runCatching { response.parseHtmlGBK(url) }.getOrElse {
             return manga
         }
 
@@ -165,16 +189,35 @@ internal class Wenku8(context: ContentLoaderContext) :
 
     override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
         val url = chapter.url.toAbsoluteUrl(domain)
+        val response = try {
+            webClient.httpGet(url, getRequestHeaders())
+        } catch (e: Exception) {
+            return NovelChapterContent(
+                html = buildErrorHtml("加载章节失败：${e.message ?: "未知错误"}"),
+                images = emptyList()
+            )
+        }
+        // Cloudflare 验证页通过 ensureNoCloudFlare 触发 requestBrowserAction 中断（返回 Nothing），
+        // 必须放在 catch 之外交给框架处理，不能被下面的 try/catch 吞掉
+        response.ensureNoCloudFlare(url)
+        val doc = try {
+            response.parseHtmlGBK(url)
+        } catch (e: Exception) {
+            return NovelChapterContent(
+                html = buildErrorHtml("加载章节失败：${e.message ?: "未知错误"}"),
+                images = emptyList()
+            )
+        }
+
         return runCatching {
-            val doc = webClient.httpGet(url).parseHtmlGBK(url)
             if (doc.selectFirst("form[name=frmlogin]") != null) {
-                return NovelChapterContent(
+                return@runCatching NovelChapterContent(
                     html = buildErrorHtml("需要先登录后才能阅读本章节"),
                     images = emptyList()
                 )
             }
             
-            val content = doc.selectFirst("#content") ?: return null
+            val content = doc.selectFirst("#content") ?: return@runCatching null
             content.selectFirst("ul#contentdp")?.remove()
             content.select("script,style,iframe").remove()
             
@@ -289,7 +332,7 @@ internal class Wenku8(context: ContentLoaderContext) :
     }
 
     private suspend fun fetchChapters(indexUrl: String): List<ContentChapter> {
-        val doc = webClient.httpGet(indexUrl).parseHtmlGBK(indexUrl).ensureAuthorized()
+        val doc = webClient.httpGet(indexUrl, getRequestHeaders()).ensureNoCloudFlare(indexUrl).parseHtmlGBK(indexUrl).ensureAuthorized()
         val chapters = ArrayList<ContentChapter>()
         var currentVolume: String? = null
         var volumeIndex = 0
@@ -396,6 +439,18 @@ internal class Wenku8(context: ContentLoaderContext) :
         return stream.use { Jsoup.parse(it, "GBK", url) }
     }
 
+    /**
+     * 站点现在由 Cloudflare 托管（403 + cf-mitigated: challenge 的 "Just a moment..." 验证页）。
+     * 检测到验证时触发 requestBrowserAction 打开内置浏览器，用户通过后 cf_clearance 等
+     * Cookie 会写入 cookieJar，后续请求即可直接读取。
+     */
+    private fun Response.ensureNoCloudFlare(url: String): Response {
+        if (CloudFlareHelper.checkResponseForProtection(this) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+            context.requestBrowserAction(this@Wenku8, url)
+        }
+        return this
+    }
+
     private fun Element.extractValue(prefix: String): String? {
         return select("td").firstOrNull { it.text().contains(prefix) }
             ?.text()
@@ -496,6 +551,9 @@ internal class Wenku8(context: ContentLoaderContext) :
     }
 
     private companion object {
+        private const val BROWSER_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+
         private val LETTERS = ('A'..'Z').map { it.toString() } + listOf("0-9")
         private val CATEGORIES = listOf(
             "角川文库" to "1",
