@@ -15,7 +15,6 @@ import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import kotlinx.coroutines.*
@@ -56,9 +55,9 @@ internal class Bilinovel(context: ContentLoaderContext) :
         "bilinovel.live",
     )
 
-    // 预设 UA：列表页使用移动端，详情/章节使用桌面端 Chrome 131
-    private val mobileUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.203 Mobile Safari/537.36"
-    private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    // 预设 UA：列表页使用移动端，详情/章节使用桌面端 Chrome 155（站点会按新版 Chrome 判定，旧 UA 会截断章节内容）
+    private val mobileUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36"
+    private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
     
     // 不暴露 userAgentKey 给用户配置，内部默认使用移动端 UA
     override val userAgentKey = ConfigKey.UserAgent(mobileUserAgent)
@@ -171,7 +170,7 @@ internal class Bilinovel(context: ContentLoaderContext) :
         .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .build()
 
-    // 详情/章节页面使用桌面端 Chrome 131 UA（避免截断和 Chrome 浏览器提示）
+    // 详情/章节页面使用桌面端 Chrome 155 UA（避免截断和 Chrome 浏览器提示）
     private fun getDesktopHeaders() = Headers.Builder()
         .add("User-Agent", desktopUserAgent)
         .add("Referer", "https://$domain/")
