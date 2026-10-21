@@ -39,6 +39,19 @@ internal class Bilinovel(context: ContentLoaderContext) :
     companion object {
         // 简易 LRU 缓存：减少同一图片的重复下载与编码
         private const val IMAGE_CACHE_MAX = 50
+
+        // 单章节最多翻页数，防止站点分页链接异常时死循环
+        private const val MAX_CHAPTER_PAGES = 40
+
+        // 移动站「下一页」按钮只有 onclick，真实地址写在 ReadParams.url_next 里
+        private val READ_PARAMS_NEXT_REGEX = Regex("""url_next:'([^']+)'""")
+
+        // 分页文件名形如 43627_2.html
+        private val PAGE_SUFFIX_REGEX = Regex("""_\d+$""")
+
+        // 站点在移动端截断处的提示，可能带全角或半角括号
+        private val TRUNCATION_NOTICE_REGEX = Regex("""[（(][^（）()]{0,40}(?:更換瀏覽器|更换浏览器)[）)]""")
+
         private val imageCache = object : LinkedHashMap<String, String>(IMAGE_CACHE_MAX, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
                 return size > IMAGE_CACHE_MAX
@@ -58,6 +71,11 @@ internal class Bilinovel(context: ContentLoaderContext) :
     // 预设 UA：列表页使用移动端，详情/章节使用桌面端 Chrome 155（站点会按新版 Chrome 判定，旧 UA 会截断章节内容）
     private val mobileUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36"
     private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+
+    // 移动站 bilinovel.com 的章节页会被站点按固定长度截断，并在断点处插入
+    // 「（內容加載失敗！請刷新或更換瀏覽器）」，同一章节在 PC 站 linovelib.com 有完整的分页正文。
+    // 列表/搜索仍留在配置域名（PC 站列表页会直接 Cloudflare challenge），正文固定从 PC 站取。
+    private val contentDomain = "https://www.linovelib.com"
 
     // 默认移动端 UA；用户可在来源设置里改写，改写后列表与详情/章节都使用该 UA
     override val userAgentKey = ConfigKey.UserAgent(mobileUserAgent)
@@ -177,9 +195,15 @@ internal class Bilinovel(context: ContentLoaderContext) :
         return if (configured == mobileUserAgent) desktopUserAgent else configured
     }
 
-    private fun getDesktopHeaders() = Headers.Builder()
-        .add("User-Agent", detailsUserAgent())
-        .add("Referer", "https://$domain/")
+    // PC 站会把移动端 UA 302 到 m.bilinovel.com（正文被截断的移动站），正文请求必须带桌面端 UA
+    private fun contentUserAgent(): String {
+        val configured = config[userAgentKey]
+        return if (configured.contains("Mobile", ignoreCase = true)) desktopUserAgent else configured
+    }
+
+    private fun getDesktopHeaders(host: String = "https://$domain") = Headers.Builder()
+        .add("User-Agent", if (host == contentDomain) contentUserAgent() else detailsUserAgent())
+        .add("Referer", "$host/")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .build()
@@ -548,40 +572,69 @@ internal class Bilinovel(context: ContentLoaderContext) :
     }
 
     override suspend fun getChapterContent(chapter: ContentChapter): NovelChapterContent? {
-        val initialUrl = chapter.url.let { if (it.startsWith("http")) it else "https://$domain$it" }
+        val path = chapter.url.toRelativePath()
+        // PC 站正文完整；移动站只有截断页，因此先取 PC 站，失败再退回配置域名
+        val collected = collectChapterPages("$contentDomain$path", getDesktopHeaders(contentDomain))
+            ?: collectChapterPages("https://$domain$path", getDesktopHeaders())
+            ?: return null
+
+        val html = buildString {
+            append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>")
+            append("<style>body{font-family:\"Noto Serif SC\",\"PingFang SC\",sans-serif;padding:16px;padding-bottom:50px;margin:0;line-height:1.9;font-size:1.05rem;}img{max-width:100%;height:auto;}p{margin:0 0 1rem;}p:last-child{margin-bottom:0;}h1{font-size:1.3rem;margin-bottom:1rem;}</style>")
+            append("</head><body>")
+            if (!chapter.title.isNullOrBlank()) {
+                append("<h1>").append(chapter.title).append("</h1>")
+            }
+            append(collected.html)
+            append("</body></html>")
+        }
+        println("Bilinovel: final HTML length=${html.length}, pages=${collected.pageCount}, images=${collected.images.size}")
+
+        return NovelChapterContent(html = html, images = collected.images)
+    }
+
+    private data class CollectedChapter(
+        val html: String,
+        val images: List<NovelChapterContent.NovelImage>,
+        val pageCount: Int,
+    )
+
+    /**
+     * 按 `_2.html`、`_3.html` … 顺序收集同一章节的所有分页。
+     * 章节最后一页的「下一页」指向下一章（路径不含 `_N`），据此判断终止。
+     */
+    private suspend fun collectChapterPages(startUrl: String, headers: Headers): CollectedChapter? {
+        val chapterBase = chapterBasePath(startUrl)
         val allHtml = StringBuilder()
         val allImages = mutableListOf<NovelChapterContent.NovelImage>()
         val seenPages = mutableSetOf<String>()
-        var currentUrl: String? = initialUrl
-        var pageCount = 0
+        var currentUrl: String? = startUrl
+        var pageCount = 1
 
-        // 章节内容使用桌面端 UA
-        val contentHeaders = getDesktopHeaders()
-
-        while (currentUrl != null && pageCount < 30) { // Safety limit: 30 pages per chapter
-            if (seenPages.contains(currentUrl)) break
-            seenPages.add(currentUrl)
+        while (currentUrl != null && pageCount <= MAX_CHAPTER_PAGES) {
+            if (!seenPages.add(currentUrl)) break
 
             val doc = runCatching {
-                webClient.httpGet(currentUrl!!, contentHeaders).parseHtml()
+                webClient.httpGet(currentUrl!!, headers).parseHtml()
             }.getOrNull() ?: break
 
-            val content = doc.selectFirst("#TextContent") ?: doc.selectFirst("#acontent") ?: doc.selectFirst("#article") ?: doc.selectFirst(".read-content")
+            val content = doc.selectFirst("#TextContent") ?: doc.selectFirst("#acontent")
+                ?: doc.selectFirst("#article") ?: doc.selectFirst(".read-content")
                 ?: doc.selectFirst(".content") ?: break
 
             // 移除广告/脚本/多余空行以及防爬虫提示
-            content.select("script, style, iframe, ins, .co, .google-auto-placed").remove()
+            content.select("script, style, iframe, ins, .co, .google-auto-placed, .dag, .adsbygoogle").remove()
             // 过滤“如需繼續閱讀請使用 [Chrome瀏覽器] 訪問”
             content.select("p").filter { p ->
                 val text = p.text()
-                text.contains("Chrome瀏覽器", ignoreCase = true) || 
-                text.contains("Chrome浏览器", ignoreCase = true) ||
-                text.contains("繼續閱讀請使用", ignoreCase = true)
+                text.contains("Chrome瀏覽器", ignoreCase = true) ||
+                    text.contains("Chrome浏览器", ignoreCase = true) ||
+                    text.contains("繼續閱讀請使用", ignoreCase = true)
             }.forEach { it.remove() }
 
             // 移除纯空行的段落 (但保留图片)
             content.select("p").filter { p ->
-                p.select("img").isEmpty() && p.text().trim().replace(" ", "").isEmpty()
+                p.select("img").isEmpty() && p.text().trim().replace(" ", "").isEmpty()
             }.forEach { it.remove() }
 
             // 移除段落前后的 br
@@ -622,22 +675,19 @@ internal class Bilinovel(context: ContentLoaderContext) :
 
             allHtml.append(content.html())
 
-            // 查找下一页链接
-            val nextLink = doc.select(".Readpage a, #footlink a, .page-ctrl a").find {
+            // 下一页：PC 站是带 href 的链接；移动站的按钮只有 JS 点击事件，真实地址在 ReadParams.url_next
+            val nextAnchor = doc.select(".mlfy_page a, .Readpage a, #footlink a, .page-ctrl a").firstOrNull {
                 val text = it.text()
                 text.contains("下一页") || text.contains("下一頁")
             }
-            
-            val nextHref = nextLink?.attr("href")
-            if (nextHref != null && (nextHref.contains("_") || nextHref.contains("-"))) {
-                val nextAbsolute = nextLink.attrAsAbsoluteUrlOrNull("href")
-                // 确保下一页仍在同一个章节路径下（避免跳到下一章）
-                if (nextAbsolute != null && isSameChapterUrl(initialUrl, nextAbsolute)) {
-                    currentUrl = nextAbsolute
-                    pageCount++
-                } else {
-                    currentUrl = null
-                }
+            val nextHref = nextAnchor?.attr("href").orEmpty()
+                .takeIf { it.isNotBlank() && !it.startsWith("javascript:", ignoreCase = true) }
+                ?: READ_PARAMS_NEXT_REGEX.find(doc.html())?.groupValues?.get(1)
+
+            val nextAbsolute = nextHref?.let { resolveUrl(it, currentUrl!!) }
+            if (nextAbsolute != null && chapterBasePath(nextAbsolute) == chapterBase) {
+                currentUrl = nextAbsolute
+                pageCount++
             } else {
                 currentUrl = null
             }
@@ -645,32 +695,41 @@ internal class Bilinovel(context: ContentLoaderContext) :
 
         if (allHtml.isEmpty()) return null
 
-        val bodyHtml = allHtml.toString().replace("\n", "").replace("\r", "")
-        val html = buildString {
-            append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>")
-            append("<style>body{font-family:\"Noto Serif SC\",\"PingFang SC\",sans-serif;padding:16px;padding-bottom:50px;margin:0;line-height:1.9;font-size:1.05rem;}img{max-width:100%;height:auto;}p{margin:0 0 1rem;}p:last-child{margin-bottom:0;}h1{font-size:1.3rem;margin-bottom:1rem;}</style>")
-            append("</head><body>")
-            if (!chapter.title.isNullOrBlank()) {
-                append("<h1>").append(chapter.title).append("</h1>")
-            }
-            append(bodyHtml)
-            append("</body></html>")
-        }
-        println("Bilinovel: final HTML length=${html.length}, pages=$pageCount, images=${allImages.size}")
-
-        return NovelChapterContent(html = html, images = allImages)
+        val bodyHtml = allHtml.toString()
+            .replace("\n", "")
+            .replace("\r", "")
+            .stripTruncationNotice()
+        return CollectedChapter(html = bodyHtml, images = allImages, pageCount = pageCount)
     }
 
-    private fun isSameChapterUrl(original: String, next: String): Boolean {
-        // 简单判断逻辑：移除后缀与分页标记后，基础路径应保持一致
-        fun getBase(url: String): String {
-            return url.substringBefore("_")
-                .substringBefore(".html")
-                .substringBefore("-")
-                .removeSuffix("/")
-        }
-        return getBase(original) == getBase(next)
+    private fun resolveUrl(href: String, baseUrl: String): String = when {
+        href.startsWith("http") -> href
+        href.startsWith("//") -> "https:$href"
+        href.startsWith("/") -> originOf(baseUrl) + href
+        else -> baseUrl.substringBeforeLast('/') + "/" + href
     }
+
+    private fun originOf(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        if (schemeEnd < 0) return "https://$domain"
+        val pathStart = url.indexOf('/', schemeEnd + 3)
+        return if (pathStart < 0) url else url.substring(0, pathStart)
+    }
+
+    /** `/novel/1082/43627_2.html` -> `/novel/1082/43627` */
+    private fun chapterBasePath(url: String): String {
+        val path = url.substringBefore('#').substringBefore('?')
+        val schemeEnd = path.indexOf("://")
+        val pathStart = if (schemeEnd >= 0) path.indexOf('/', schemeEnd + 3) else 0
+        val relative = if (pathStart >= 0) path.substring(pathStart) else path
+        return relative.removeSuffix(".html").replace(PAGE_SUFFIX_REGEX, "")
+    }
+
+    /** 移动站会在每页断点插入「（內容加載失敗！請刷新或更換瀏覽器）」，不能带进正文 */
+    private fun String.stripTruncationNotice(): String = this
+        .replace("（內容加載失敗！請刷新或更換瀏覽器）", "")
+        .replace("（内容加载失败！请刷新或更换浏览器）", "")
+        .replace(TRUNCATION_NOTICE_REGEX, "")
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
