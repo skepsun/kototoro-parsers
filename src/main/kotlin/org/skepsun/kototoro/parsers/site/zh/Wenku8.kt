@@ -27,15 +27,23 @@ internal class Wenku8(context: ContentLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("www.wenku8.net")
 
-    // 站点由 Cloudflare 托管，平淡的非浏览器 UA 会被直接在 403 challenge 拦下；
-    // 用与内置浏览器一致的新版 Chrome UA + Sec-CH-UA 客户端提示，优先让请求直接通过
-    override fun getRequestHeaders(): Headers = Headers.Builder()
-        .add("User-Agent", BROWSER_UA)
+    // 站点由 Cloudflare 托管，平淡的非浏览器 UA 会被直接在 403 challenge 拦下。
+    // 默认值与内置浏览器保持一致（新版 Chrome 桌面 UA），用户可在来源设置里改写；
+    // 客户端提示（Sec-CH-UA*）只在 UA 仍是 Chromium 内核时附加，避免 UA 与提示互相矛盾被判定为伪装
+    override val userAgentKey = ConfigKey.UserAgent(BROWSER_UA)
+
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(userAgentKey)
+    }
+
+    override fun getRequestHeaders(): Headers = buildHeaders(config[userAgentKey])
+
+    internal fun buildHeaders(userAgent: String): Headers = Headers.Builder()
+        .add("User-Agent", userAgent)
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
         .add("Accept-Language", "zh-CN,zh;q=0.9")
-        .add("Sec-CH-UA", "\"Chromium\";v=\"155\", \"Not_A Brand\";v=\"24\"")
-        .add("Sec-CH-UA-Mobile", "?0")
-        .add("Sec-CH-UA-Platform", "\"Windows\"")
+        .addBrowserClientHints(userAgent)
         .add("Sec-Fetch-Dest", "document")
         .add("Sec-Fetch-Mode", "navigate")
         .add("Sec-Fetch-Site", "none")
@@ -551,6 +559,7 @@ internal class Wenku8(context: ContentLoaderContext) :
     }
 
     private companion object {
+        // Cloudflare 通过的最低门槛：与内置浏览器一致的新版 Chrome 桌面 UA
         private const val BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
 

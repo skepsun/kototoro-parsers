@@ -58,8 +58,8 @@ internal class Bilinovel(context: ContentLoaderContext) :
     // 预设 UA：列表页使用移动端，详情/章节使用桌面端 Chrome 155（站点会按新版 Chrome 判定，旧 UA 会截断章节内容）
     private val mobileUserAgent = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36"
     private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
-    
-    // 不暴露 userAgentKey 给用户配置，内部默认使用移动端 UA
+
+    // 默认移动端 UA；用户可在来源设置里改写，改写后列表与详情/章节都使用该 UA
     override val userAgentKey = ConfigKey.UserAgent(mobileUserAgent)
 
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
@@ -161,18 +161,24 @@ internal class Bilinovel(context: ContentLoaderContext) :
         return groups
     }
 
-    // 列表页面使用移动端 UA（返回正确的 HTML 结构）
+    // 列表页面使用移动端 UA（返回正确的 HTML 结构），用户改写后以设置为准
     override fun getRequestHeaders() = Headers.Builder()
-        .add("User-Agent", mobileUserAgent)
+        .add("User-Agent", config[userAgentKey])
         .add("Referer", "https://$domain/")
         .add("Origin", "https://$domain")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
         .build()
 
-    // 详情/章节页面使用桌面端 Chrome 155 UA（避免截断和 Chrome 浏览器提示）
+    // 详情/章节页面使用桌面端 Chrome 155 UA（避免截断和 Chrome 浏览器提示）；
+    // 只有保持在默认值时才自动切换桌面端，用户自定义后不再覆盖其选择
+    private fun detailsUserAgent(): String {
+        val configured = config[userAgentKey]
+        return if (configured == mobileUserAgent) desktopUserAgent else configured
+    }
+
     private fun getDesktopHeaders() = Headers.Builder()
-        .add("User-Agent", desktopUserAgent)
+        .add("User-Agent", detailsUserAgent())
         .add("Referer", "https://$domain/")
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
         .add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
@@ -668,7 +674,7 @@ internal class Bilinovel(context: ContentLoaderContext) :
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
         super.onCreateConfig(keys)
-        // 不暴露 userAgentKey 给用户设置，内部已预设最优 UA 策略
+        keys.add(userAgentKey)
     }
 
     override suspend fun getPageUrl(page: ContentPage): String = page.url

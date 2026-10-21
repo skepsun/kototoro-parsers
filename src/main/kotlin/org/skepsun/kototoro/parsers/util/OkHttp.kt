@@ -53,3 +53,28 @@ public inline fun Response.map(mapper: (ResponseBody) -> ResponseBody): Response
 public fun Response.headersContentLength(
     defaultValue: Long = -1,
 ): Long = headers["Content-Length"]?.toLongOrDefault(defaultValue) ?: defaultValue
+
+private val chromeVersionRegex = Regex("""Chrome/(\d+)""")
+
+/**
+ * Append Sec-CH-UA client hints derived from [userAgent].
+ *
+ * Cloudflare-protected sites compare these hints with the UA; sending Chromium hints next to
+ * a non-Chromium UA is itself a bot signal, so nothing is added unless the UA looks like Chromium.
+ */
+public fun Headers.Builder.addBrowserClientHints(userAgent: String): Headers.Builder {
+    val version = chromeVersionRegex.find(userAgent)?.groupValues?.get(1) ?: return this
+    add("Sec-CH-UA", "\"Chromium\";v=\"$version\", \"Not_A Brand\";v=\"24\"")
+    add("Sec-CH-UA-Mobile", if (userAgent.contains("Mobile")) "?1" else "?0")
+    add(
+        "Sec-CH-UA-Platform",
+        when {
+            userAgent.contains("Android") -> "\"Android\""
+            userAgent.contains("iPhone") || userAgent.contains("iPad") -> "\"iOS\""
+            userAgent.contains("Mac OS X") -> "\"macOS\""
+            userAgent.contains("Linux") -> "\"Linux\""
+            else -> "\"Windows\""
+        },
+    )
+    return this
+}
