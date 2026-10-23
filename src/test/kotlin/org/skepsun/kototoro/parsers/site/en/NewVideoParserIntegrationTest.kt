@@ -45,7 +45,8 @@ class NewVideoParserIntegrationTest {
     @EnabledIfEnvironmentVariable(named = "PIMPBUNNY_INTEGRATION_TEST", matches = "1")
     fun testPimpBunny() = runBlocking {
         val parser = PimpBunny(ContentLoaderContextMock)
-        assertVideoParserCatalog(parser)
+        // 站点搜索只做相关度匹配，长标题查询不保证命中自身，因此不要求精确命中
+        assertVideoParserCatalog(parser, strictTitleSearch = false)
         assertVideoParserPlayback(parser)
     }
 

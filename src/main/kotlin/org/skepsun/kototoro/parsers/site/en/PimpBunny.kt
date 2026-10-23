@@ -2,10 +2,12 @@ package org.skepsun.kototoro.parsers.site.en
 
 import org.json.JSONObject
 import org.jsoup.nodes.Document
+import org.jsoup.parser.Parser
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentChapter
 import org.skepsun.kototoro.parsers.model.ContentListFilter
@@ -72,8 +74,10 @@ internal class PimpBunny(context: ContentLoaderContext) :
     override suspend fun getDetails(manga: Content): Content {
         logDebug("details url=${manga.publicUrl}")
         val response = webClient.httpGet(manga.publicUrl, getRequestHeaders())
-        val doc = response.parseHtml()
+        return parseDetails(response.parseHtml(), manga)
+    }
 
+    internal fun parseDetails(doc: Document, manga: Content): Content {
         val title = doc.selectFirst("meta[property=og:title]")?.attr("content")
             ?: doc.selectFirst("div.pages-view-video-video-title__9lYVyi")?.text()?.trim()
             ?: manga.title
@@ -85,11 +89,6 @@ internal class PimpBunny(context: ContentLoaderContext) :
             ?: doc.selectFirst("img.pages-view-video-thumb, img[data-original]")?.let {
                 (it.attr("data-original").ifBlank { it.attr("src") }).toAbsoluteUrlOrNull(domain)
             }
-
-        val ldJson = doc.selectFirst("script[type=\"application/ld+json\"]")?.data()
-        val contentUrl = ldJson?.let {
-            runCatching { JSONObject(it).optString("contentUrl", "") }.getOrElse { "" }
-        }.orEmpty()
 
         val videoId = doc.selectFirst("script:containsData(pageContext)")?.data()
             ?.let { Regex("videoId:\\s*'([^']+)'").find(it)?.groupValues?.get(1) }
@@ -138,8 +137,10 @@ internal class PimpBunny(context: ContentLoaderContext) :
 
         val chapter = ContentChapter(
             id = generateUid("${manga.url}|$videoId"),
-            url = contentUrl.ifBlank { manga.url },
-            title = if (contentUrl.isNotBlank()) "Video" else "Watch",
+            // 只保存详情页地址：流地址带 v-acctoken（约 2 小时过期），
+            // 由 getPages 播放前现取，避免缓存的章节地址过期后 403。
+            url = manga.url,
+            title = "Video",
             number = 1f,
             uploadDate = 0L,
             volume = 0,
@@ -161,55 +162,119 @@ internal class PimpBunny(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val videoUrl = chapter.url.takeIf { it.startsWith("http") }
-        if (videoUrl != null) {
-            return listOf(
-                ContentPage(
-                    id = generateUid("page:${chapter.id}"),
-                    url = videoUrl,
-                    preview = null,
-                    source = source,
-                )
-            )
+        // 兼容已有缓存章节：若地址本身就是媒体直链，直接播放（get_file 需要 Referer）。
+        val storedStream = chapter.url.takeIf { isStreamUrl(it) }
+        if (storedStream != null) {
+            return listOf(videoPage(chapter, storedStream.toAbsoluteUrl(domain)))
         }
 
-        logDebug("pages fallback to detail page url=${chapter.url}")
+        // v-acctoken 约 2 小时过期，因此每次播放都重新从详情页取流。
         val detailUrl = chapter.url.toAbsoluteUrl(domain)
+        logDebug("resolve stream url=$detailUrl")
         val response = webClient.httpGet(detailUrl, getRequestHeaders())
-        val doc = response.parseHtml()
-
-        val ldJson = doc.selectFirst("script[type=\"application/ld+json\"]")?.data()
-        val contentUrl = ldJson?.let {
-            runCatching { JSONObject(it).optString("contentUrl", "") }.getOrElse { "" }
-        }.orEmpty()
-
-        if (contentUrl.isBlank()) {
-            val videoSources = doc.select("video source[src], video[src]")
-            videoSources.forEach { el ->
-                val src = el.attr("src").ifBlank { el.attr("data-src") }
-                if (src.startsWith("http")) {
-                    return listOf(
-                        ContentPage(
-                            id = generateUid("page:${chapter.id}"),
-                            url = src,
-                            preview = null,
-                            source = source,
-                        )
-                    )
-                }
-            }
-            return emptyList()
-        }
-
-        return listOf(
-            ContentPage(
-                id = generateUid("page:${chapter.id}"),
-                url = contentUrl,
-                preview = null,
-                source = source,
-            )
-        )
+        val streamUrl = resolveStreamUrl(response.parseHtml())
+            ?: throw ParseException("PimpBunny: video stream not found on page", detailUrl)
+        return listOf(videoPage(chapter, streamUrl))
     }
+
+    /**
+     * 取可播放的流地址，按优先级：
+     * 1. 详情页 KVS 播放器配置（video_url / video_alt_url*，多档画质）
+     * 2. ld+json 的 contentUrl（部分视频只有它，最新页面上不总是存在）
+     * 3. `<video>` / `<source>` 标签
+     */
+    internal fun resolveStreamUrl(doc: Document): String? {
+        val html = doc.outerHtml()
+        return resolvePlayerStream(html) ?: resolveLdJsonStream(doc) ?: resolveVideoTagStream(doc)
+    }
+
+    /**
+     * 解析 KVS 播放器配置里的多档地址（`video_url: '...'` 一类），取最高可用画质。
+     * - `_redirect: 1` 的档位是付费跳转（如 4K 指向 `?upgrade=true`），必须跳过；
+     * - 以 `function/0/` 开头的地址是 license 混淆地址，用同页 license_code 解混淆。
+     */
+    private fun resolvePlayerStream(html: String): String? {
+        val licenseCode = LICENSE_CODE_REGEX.find(html)?.groupValues?.get(1)
+        val slots = PLAYER_URL_REGEX.findAll(html).mapNotNull { match ->
+            val key = match.groupValues[1]
+            if (isRedirectSlot(html, key)) {
+                return@mapNotNull null
+            }
+            val raw = Parser.unescapeEntities(match.groupValues[2].replace("\\/", "/"), false)
+                .replace("&amp;", "&")
+                .trim()
+            val url = when {
+                raw.startsWith("function/0/") -> licenseCode?.let { kvsDecodeUrl(raw, it) } ?: return@mapNotNull null
+                else -> raw
+            }
+            if (!isStreamUrl(url)) {
+                return@mapNotNull null
+            }
+            QualitySlot(qualityOf(html, key, url), url)
+        }.toList()
+
+        if (slots.isEmpty()) {
+            return null
+        }
+        val preferred = slots.filter { it.quality <= MAX_PREFERRED_QUALITY }
+        return (preferred.maxByOrNull { it.quality } ?: slots.maxByOrNull { it.quality })?.url
+    }
+
+    private fun isRedirectSlot(html: String, key: String): Boolean =
+        REDIRECT_REGEX_TEMPLATE.replace("{key}", Regex.escape(key)).toRegex()
+            .containsMatchIn(html)
+
+    private fun qualityOf(html: String, key: String, url: String): Int {
+        val label = TEXT_REGEX_TEMPLATE.replace("{key}", Regex.escape(key)).toRegex()
+            .find(html)?.groupValues?.get(1)
+        return label?.let { QUALITY_REGEX.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+            ?: QUALITY_REGEX.find(url.substringBefore('?').substringAfterLast('/'))
+                ?.groupValues?.get(1)?.toIntOrNull()
+            ?: 0
+    }
+
+    private fun resolveLdJsonStream(doc: Document): String? {
+        for (script in doc.select("script[type=application/ld+json]")) {
+            val raw = runCatching { JSONObject(script.data()).optString("contentUrl") }.getOrNull()
+            val url = raw?.replace("\\/", "/")?.trim().orEmpty()
+            if (isStreamUrl(url)) {
+                return Parser.unescapeEntities(url, false)
+            }
+        }
+        return null
+    }
+
+    private fun resolveVideoTagStream(doc: Document): String? {
+        for (el in doc.select("video source[src], video[src], video source[data-src], video[data-src]")) {
+            val src = el.attr("src").ifBlank { el.attr("data-src") }.trim()
+            if (src.isBlank()) continue
+            val absolute = src.toAbsoluteUrl(domain)
+            if (isStreamUrl(absolute)) {
+                return absolute
+            }
+        }
+        return null
+    }
+
+    private fun isStreamUrl(url: String): Boolean {
+        if (!url.startsWith("http", ignoreCase = true)) {
+            return false
+        }
+        val path = url.substringBefore('?').lowercase().trimEnd('/')
+        return path.contains("/get_file/") || MEDIA_EXTENSIONS.any(path::endsWith)
+    }
+
+    internal fun videoPage(chapter: ContentChapter, streamUrl: String): ContentPage = ContentPage(
+        id = generateUid("page:${chapter.id}"),
+        url = streamUrl,
+        preview = null,
+        // 站点的 get_file 端点校验来源，缺少 Referer 会直接 403。
+        headers = mapOf(
+            "Referer" to "https://$domain/",
+            "User-Agent" to context.getDefaultUserAgent(),
+        ),
+        source = source,
+    )
 
     override fun getRequestHeaders(): Headers = Headers.Builder()
         .add("Referer", "https://$domain/")
@@ -282,5 +347,27 @@ internal class PimpBunny(context: ContentLoaderContext) :
 
     private fun logDebug(message: String) {
         runCatching { println("[PimpBunny] $message") }
+    }
+
+    private data class QualitySlot(val quality: Int, val url: String)
+
+    private companion object {
+        /** KVS 播放器配置里的画质档位，如 `video_url: '...'`、`video_alt_url3: '...'`。 */
+        val PLAYER_URL_REGEX = Regex("""(video_alt_url\d*|video_url)\s*:\s*'([^']*)'""")
+
+        val LICENSE_CODE_REGEX = Regex("""license_code\s*:\s*'([^']*)'""")
+
+        /** 档位标记为跳转时为付费/升级指向（`{key}_redirect: 1`），不可播放。 */
+        const val REDIRECT_REGEX_TEMPLATE = """{key}_redirect\s*:\s*'?(?:1|true)'?"""
+
+        /** 档位画质文本（`{key}_text: '1080p'`）。 */
+        const val TEXT_REGEX_TEMPLATE = """{key}_text\s*:\s*'([^']*)'"""
+
+        val QUALITY_REGEX = Regex("""(\d{3,4})""")
+
+        val MEDIA_EXTENSIONS = listOf(".mp4", ".m3u8", ".webm")
+
+        /** 优先 1080p 及以下，避免移动端拉取 1440p/4K 大文件。 */
+        const val MAX_PREFERRED_QUALITY = 1080
     }
 }
