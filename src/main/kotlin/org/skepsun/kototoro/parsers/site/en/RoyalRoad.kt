@@ -68,7 +68,8 @@ internal class RoyalRoad(context: ContentLoaderContext) :
         val tag = filter.tags.firstOrNull()?.key ?: "latest-updates"
 
         val url = if (query.isNotBlank()) {
-            "https://$domain/fictions/search?page=$page&q=${query.urlEncoded()}"
+            // 站点搜索表单使用 title 参数；q 会被忽略，导致任意关键字都返回与浏览相同的列表
+            "https://$domain/fictions/search?page=$page&title=${query.urlEncoded()}"
         } else {
             "https://$domain/fictions/$tag?page=$page"
         }

@@ -24,6 +24,7 @@ import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.mapToSet
 import org.skepsun.kototoro.parsers.util.parseJsonObject
+import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.util.EnumSet
 
 /**
@@ -97,6 +98,20 @@ internal class LanraragiParser(context: ContentLoaderContext) :
     }
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+        val query = filter.query?.trim().orEmpty()
+        if (query.isNotEmpty()) {
+            // 服务端搜索：/api/search?filter=... 支持 Lanraragi 搜索语法，分页用 start/pageSize
+            val start = (page - 1) * pageSize
+            val url = "${baseUrl()}/api/search?filter=${query.urlEncoded()}&start=$start&pageSize=$pageSize"
+            val searchRes = webClient.httpGet(url, headers())
+            if (!searchRes.isSuccessful) return emptyList()
+            val root = runCatching { searchRes.parseJsonObject() }.getOrNull() ?: return emptyList()
+            val data = root.optJSONArray("data") ?: return emptyList()
+            return (0 until data.length()).mapNotNull { i ->
+                data.optJSONObject(i)?.let(::toContent)
+            }
+        }
+
         // All archives, client-side slice
         val res = webClient.httpGet("${baseUrl()}/api/archives", headers())
         if (!res.isSuccessful) return emptyList()

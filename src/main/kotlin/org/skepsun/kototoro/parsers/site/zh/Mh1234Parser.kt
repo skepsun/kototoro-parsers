@@ -89,7 +89,14 @@ internal class Mh1234Parser(context: ContentLoaderContext) :
         val url = "https://${domain}$path?key=${keyword.urlEncoded()}"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
-        return parseList(resp.parseHtml())
+        return parseSearchList(resp.parseHtml())
+    }
+
+    internal fun parseSearchList(doc: Document): List<Content> {
+        // 无匹配时站点只在「推荐漫画」区块 (section.comic-section) 渲染卡片：没有结果卡片，
+        // 直接解析会把固定推荐内容当成搜索结果。排除推荐区块即可得到真实结果。
+        doc.select("section.comic-section").forEach { it.remove() }
+        return parseList(doc)
     }
 
     private fun parseList(doc: Document): List<Content> {

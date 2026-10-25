@@ -135,7 +135,17 @@ internal class GodaParser(context: ContentLoaderContext) :
         val url = "https://${domain}/s/${keyword.urlEncoded()}?page=$page"
         val resp = webClient.httpGet(url, headers())
         if (!resp.isSuccessful) return emptyList()
-        return parseComicCards(resp.parseHtml())
+        val doc = resp.parseHtml()
+        // 无匹配时站点仍返回 200：正文是「暫無漫畫」空态 + 「您可能喜歡」推荐卡片。
+        // 直接解析会把推荐内容当成搜索结果（任意关键字都返回同一批作品），因此显式识别空态。
+        return if (isEmptySearchPage(doc)) emptyList() else parseComicCards(doc)
+    }
+
+    internal fun isEmptySearchPage(doc: Document): Boolean {
+        return doc.select("h1, h2, h3").any {
+            val text = it.text()
+            text.contains("暫無漫畫") || text.contains("暂无漫画")
+        }
     }
 
     private fun parseComicCards(doc: Document): List<Content> {

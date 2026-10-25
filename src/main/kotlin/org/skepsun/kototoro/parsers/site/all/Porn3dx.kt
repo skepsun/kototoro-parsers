@@ -145,9 +145,14 @@ internal abstract class Porn3dxBase(
 			SortOrder.RATING -> "likes"
 			else -> "date"
 		}
-		val query = filter.query?.takeIf { it.isNotBlank() }?.urlEncoded().orEmpty()
+		val query = filter.query?.trim().orEmpty()
+		// 站点的搜索是独立路由 /search?q=；首页的 searchQuery 参数会被忽略，
+		// 导致任意关键字都返回首页画廊（固定内容）。
+		if (query.isNotEmpty()) {
+			return "https://$domain/search?q=${query.urlEncoded()}&page=$page"
+		}
 		val path = tag?.let { "/tag/${it.key}" }.orEmpty()
-		return "https://$domain$path?sort_by=$sortBy&popularity_type=popular_all&order_by=desc&media_type=$mediaType&ai_filter=$aiFilter&search_type=all&searchQuery=$query&page=$page"
+		return "https://$domain$path?sort_by=$sortBy&popularity_type=popular_all&order_by=desc&media_type=$mediaType&ai_filter=$aiFilter&search_type=all&page=$page"
 	}
 
 	private fun parseCards(html: String): List<Content> {

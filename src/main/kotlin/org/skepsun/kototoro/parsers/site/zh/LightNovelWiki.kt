@@ -39,7 +39,10 @@ internal class LightNovelWiki(context: ContentLoaderContext) :
 
     override val filterCapabilities: ContentListFilterCapabilities
         get() = ContentListFilterCapabilities(
-            isSearchSupported = true,
+            // 站点 /books 页面对 q[name_cont] / q[genres_id_eq] 等查询参数一律忽略
+            // （换关键字、加缓存穿透参数后返回的都是同一份 72 本目录，无结果时甚至回 404 但正文仍是全量目录），
+            // 因此不能声明支持搜索，否则任意关键字都会返回固定的无关内容。
+            isSearchSupported = false,
             isSearchWithFiltersSupported = true,
         )
 
@@ -57,33 +60,17 @@ internal class LightNovelWiki(context: ContentLoaderContext) :
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
         val baseUrl = buildString {
-            if (!filter.query.isNullOrBlank()) {
-                append("https://$domain/books?page=$page&q%5Bname_cont%5D=${filter.query!!.urlEncoded()}")
-            } else {
-                val genre = filter.tags.firstOrNull { it.key.startsWith("genre:") }?.key?.substringAfter(":")
-                val status = filter.tags.firstOrNull { it.key.startsWith("status:") }?.key?.substringAfter(":")
-                append("https://$domain/books?page=$page")
-                if (genre != null) append("&q%5Bgenres_id_eq%5D=$genre")
-                if (status != null) append("&q%5Bstatus_eq%5D=$status")
-            }
+            val genre = filter.tags.firstOrNull { it.key.startsWith("genre:") }?.key?.substringAfter(":")
+            val status = filter.tags.firstOrNull { it.key.startsWith("status:") }?.key?.substringAfter(":")
+            append("https://$domain/books?page=$page")
+            if (genre != null) append("&q%5Bgenres_id_eq%5D=$genre")
+            if (status != null) append("&q%5Bstatus_eq%5D=$status")
         }
 
-        var response = webClient.httpGet(baseUrl)
-        var code = response.code
-        var doc = response.parseHtml()
-        var list = parseContentList(doc)
-        println("LightNovelWiki list/search: url=$baseUrl code=$code page=$page query=${filter.query.orEmpty()} results=${list.size}")
-
-        // 当带查询仍返回与无查询相同的数量时，尝试另一查询参数 name_or_other_names_cont
-        if (!filter.query.isNullOrBlank() && list.size >= 50) {
-            val altUrl = "https://$domain/books?page=$page&q%5Bname_or_other_names_cont%5D=${filter.query!!.urlEncoded()}"
-            response = webClient.httpGet(altUrl)
-            code = response.code
-            doc = response.parseHtml()
-            list = parseContentList(doc)
-            println("LightNovelWiki search fallback: url=$altUrl code=$code page=$page query=${filter.query.orEmpty()} results=${list.size}")
-        }
-        return list
+        val response = webClient.httpGet(baseUrl)
+        // 无匹配时站点返回 404，但正文仍渲染整份目录；不判状态码会把错误页当成书籍列表返回
+        if (!response.isSuccessful) return emptyList()
+        return parseContentList(response.parseHtml())
     }
 
     private fun parseContentList(doc: Document): List<Content> {
