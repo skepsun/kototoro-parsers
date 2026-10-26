@@ -328,8 +328,19 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-	internal fun buildBrowserFetchScript(url: String): String =
-		BROWSER_FETCH_SCRIPT.replace(BROWSER_FETCH_URL_SLOT, url.toJsStringLiteral())
+	internal fun buildBrowserFetchScript(url: String): String = BROWSER_FETCH_SCRIPT
+		.replace(BROWSER_FETCH_URL_SLOT, url.toJsStringLiteral())
+		.replace(BROWSER_FETCH_LANGUAGE_SLOT, languageCookieStatement())
+
+	/**
+	 * 浏览器通道里的 XHR 用的是 WebView 自己的 cookie 存储，jar 里写好的语种不一定同步过去，
+	 * 所以在发请求前用 document.cookie 再兜一次（origin 不是站点时这里会抛，忽略即可）
+	 */
+	private fun languageCookieStatement(): String {
+		val existing = context.cookieJar.getCookies(domain).firstOrNull { it.name == LANGUAGE_COOKIE }?.value
+		val value = languageCookieValue(existing) ?: return ""
+		return "try{document.cookie=${"$LANGUAGE_COOKIE=$value;path=/;".toJsStringLiteral()};}catch(e){}"
+	}
 
 	/**
 	 * 交给宿主浏览器验证。没有浏览器能力的环境（CLI、测试）里声明式接口会抛
@@ -800,9 +811,10 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		// 只有同步 XHR 才能把结果当场带回来，而同步请求不能设 x.timeout（Chromium 抛
 		// InvalidAccessError），所以卡住的情况交给宿主 evaluateJs 的 4s 看门狗
 		const val BROWSER_FETCH_SCRIPT =
-			"(function(){try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);x.send(null);" +
+			"(function(){%LANG%try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);x.send(null);" +
 				"return [x.status,x.responseText];}catch(e){return [-1,String(e)];}})()"
 		const val BROWSER_FETCH_URL_SLOT = "%URL%"
+		const val BROWSER_FETCH_LANGUAGE_SLOT = "%LANG%"
 		val BOOK_ID_REGEX = Regex("/book/([^/?#]+)/")
 
 		const val LANGUAGE_SYSTEM = "system"

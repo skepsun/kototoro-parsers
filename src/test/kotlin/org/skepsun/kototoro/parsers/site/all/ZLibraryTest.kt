@@ -249,6 +249,17 @@ class ZLibraryTest {
 		assertTrue(script.contains("""a\nb"""))
 	}
 
+	/** 浏览器通道的 XHR 会带上语种 cookie，避免 WebView 与 jar 不一致 */
+	@Test
+	fun `browser fetch script sets language cookie`() {
+		(parser.config as SourceConfigMock).set(parser.languageKey, "chinese")
+		val script = parser.buildBrowserFetchScript("https://z-library.sk/")
+		assertTrue(script.contains("""document.cookie="siteLanguage=zh;path=/;""""))
+
+		(parser.config as SourceConfigMock).set(parser.languageKey, "all")
+		assertFalse(parser.buildBrowserFetchScript("https://z-library.sk/").contains("document.cookie"))
+	}
+
 	/** 空列表诊断要能把"没有卡片"和"卡片结构变了"区分开 */
 	@Test
 	fun `describe empty list without cards`() {
