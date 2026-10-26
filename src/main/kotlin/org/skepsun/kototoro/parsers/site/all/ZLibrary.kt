@@ -3,7 +3,9 @@ package org.skepsun.kototoro.parsers.site.all
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import okhttp3.Cookie
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Response
 import org.json.JSONArray
 import org.jsoup.HttpStatusException
@@ -129,17 +131,8 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			return emptyList()
 		}
 		val url = buildListUrl(page, order, filter)
-		var doc = fetchDocument(url)
-		var items = if (homeFeed) parseHomeFeed(doc) else parseBookList(doc)
-		if (homeFeed && items.isEmpty() && configuredLanguage().isNotEmpty()) {
-			// 站点不认 languages[] 时退回不带语言参数的首页，避免指定语言反而把列表弄空
-			doc = fetchDocument(homeFeedUrl(""))
-			items = parseHomeFeed(doc)
-		}
-		if (homeFeed && configuredLanguage().isNotEmpty()) {
-			// 语言覆盖还没打通（站点不认 languages[]），先把站内开关的形态摊出来定位
-			throw ParseException(languageDiagnostic(doc), url)
-		}
+		val doc = fetchDocument(url)
+		val items = if (homeFeed) parseHomeFeed(doc) else parseBookList(doc)
 		if (items.isEmpty() && homeFeed) {
 			// 搜索为空是正常结果；推荐流为空基本是站点改版，抛出来才能定位
 			throw ParseException(describeEmptyList(doc), url)
@@ -166,6 +159,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		val head = "Z-Library 推荐流解析失败：cards=${cards.size} books=${bookLinks.size} " +
 			"imgs=${doc.select("img").size} jsons=${doc.select("script[type=application/json]").size} " +
 			"len=${doc.outerHtml().length} mode=${if (lastFetchUsedBrowser) "browser" else "http"} " +
+			"lang=${context.cookieJar.getCookies(domain).firstOrNull { it.name == LANGUAGE_COOKIE }?.value} " +
 			"title=${doc.title().take(36)}"
 		val first = (cards.getOrNull(0) ?: bookLinks.getOrNull(0))?.outerHtml()?.take(140)
 			?.replace('\n', ' ')
@@ -176,10 +170,11 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	/**
-	 * 首页推荐流跟着站点语言走：默认跟随系统（不额外加参数，交给浏览器自己带 Accept-Language），
-	 * 用户也可以在源设置里指定一种语言，这时在首页 URL 上附站点的 languages[] 过滤
+	 * 首页推荐流跟着站点语种走。语种存在 `siteLanguage` cookie 里，页面里没有语言控件，
+	 * 所以"跟随系统"就是把这个 cookie 写成系统语言，用户也可以直接指定一种语言
 	 */
-	private val languageKey = ConfigKey.PreferredLanguage(
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal val languageKey = ConfigKey.PreferredLanguage(
 		title = "推荐流语言",
 		presetValues = linkedMapOf(
 			LANGUAGE_SYSTEM to "跟随系统",
@@ -208,20 +203,55 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		keys.add(languageKey)
 	}
 
-	/** 用户在设置里指定的站点语言名；跟随系统/不限时为空串（不覆盖站点默认行为） */
+	/**
+	 * 站点语言名：跟随系统时由系统语言折算，不限时为空串。
+	 * 站点把语种存在 `siteLanguage` cookie 里（页面里没有语言控件，纯 JS 渲染），
+	 * 所以覆盖语言要做的是改写这个 cookie
+	 */
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-	internal fun configuredLanguage(): String = config[languageKey]
-		.takeIf { it != LANGUAGE_SYSTEM && it != LANGUAGE_ALL }
-		.orEmpty()
-
-	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-	internal fun homeFeedUrl(language: String): String = if (language.isEmpty()) {
-		"https://$domain/"
-	} else {
-		"https://$domain/?languages%5B%5D=" + language.urlEncoded()
+	internal fun siteLanguage(): String = when (val language = config[languageKey]) {
+		LANGUAGE_ALL -> ""
+		LANGUAGE_SYSTEM -> siteLanguageForLocales(context.getPreferredLocales())
+		else -> language
 	}
 
-	/** 系统语言 → 站点语言名，用于跟随系统时兜底（站点不认 languages[] 时不发参数） */
+	/**
+	 * @param existingValue 站点当前 `siteLanguage` 的值
+	 * @return 要写入的 cookie 值；null 表示不动（不限，或无法映射）
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun languageCookieValue(existingValue: String?): String? {
+		val siteLanguage = siteLanguage()
+		if (siteLanguage.isEmpty()) {
+			return null
+		}
+		val iso = LANGUAGE_ISO_BY_LANGUAGE_NAME[siteLanguage] ?: return null
+		// 站点现有写法是 ISO 码就写码，是语言名就写名
+		val usesIsoCode = existingValue == null || ISO_LANGUAGE_CODE_REGEX.matches(existingValue)
+		return if (usesIsoCode) iso else siteLanguage
+	}
+
+	private suspend fun applyLanguageCookie() {
+		val url = "https://$domain/".toHttpUrl()
+		val existing = context.cookieJar.getCookies(domain).firstOrNull { it.name == LANGUAGE_COOKIE }
+		val value = languageCookieValue(existing?.value) ?: return
+		if (existing?.value == value) {
+			return
+		}
+		context.cookieJar.saveFromResponse(
+			url,
+			listOf(
+				Cookie.Builder()
+					.domain(domain)
+					.path("/")
+					.name(LANGUAGE_COOKIE)
+					.value(value)
+					.build(),
+			),
+		)
+	}
+
+	/** 系统语言 → 站点语言名，跟着系统走时用它折算 siteLanguage */
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 	internal fun siteLanguageForLocales(locales: List<Locale>): String =
 		locales.firstNotNullOfOrNull { LANGUAGE_BY_ISO[it.language?.lowercase()] }.orEmpty()
@@ -237,18 +267,6 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	/**
-	 * 语言诊断（临时）：推荐流的语种由站点决定，需要知道站内切换器走什么——链接参数、表单
-	 * 还是 cookie。这里把 cookie 名和切换器标签摊出来
-	 */
-	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-	internal fun languageDiagnostic(doc: Document): String {
-		val cookies = context.cookieJar.getCookies(domain).joinToString(",") { it.name }
-		val switcher = doc.selectFirst("select, form[action*=lang], a[hreflang], a[href*=/lang]")
-		val markup = switcher?.outerHtml()?.replace('\n', ' ')?.take(150)
-		return "Z-Library 语言诊断：cookies=[$cookies] switcher=$markup"
-	}
-
-	/**
 	 * 优先用 OkHttp 取页；被 DiamWall 拦下时改走宿主 WebView 的同源 XHR；两者都拿不到才请用户
 	 * 去应用内浏览器完成验证。
 	 *
@@ -257,6 +275,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	 * 能直接拿到正文
 	 */
 	private suspend fun fetchDocument(url: String): Document {
+		applyLanguageCookie()
 		lastFetchUsedBrowser = false
 		val direct = fetchDirect(url)
 		if (direct != null && !isDiamWallChallenge(direct)) {
@@ -374,7 +393,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		val contentTypes = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("type:") }?.substringAfter("type:") }
 		if (categoryTag == null && filter.query.isNullOrBlank()) {
 			// /s/?selected_content_types[]=book 现在会 302 到首页，直接在首页取推荐流
-			return homeFeedUrl(configuredLanguage())
+			return "https://$domain/"
 		}
 		return buildString {
 			append("https://").append(domain)
@@ -789,6 +808,8 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		const val LANGUAGE_SYSTEM = "system"
 		const val LANGUAGE_ALL = "all"
 		const val DEFAULT_LANGUAGE_ISO = "en"
+		const val LANGUAGE_COOKIE = "siteLanguage"
+		val ISO_LANGUAGE_CODE_REGEX = Regex("[a-z]{2}(-[A-Za-z]{2,4})?")
 
 		/** 站点语言名 ↔ ISO 639-1 语言码 */
 		val LANGUAGE_BY_ISO = mapOf(
@@ -808,6 +829,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			"nl" to "dutch",
 			"vi" to "vietnamese",
 		)
+		val LANGUAGE_ISO_BY_LANGUAGE_NAME = LANGUAGE_BY_ISO.entries.associate { (iso, name) -> name to iso }
 		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
 		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")

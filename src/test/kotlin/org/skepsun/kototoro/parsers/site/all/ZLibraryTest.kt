@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.SourceConfigMock
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentListFilter
@@ -140,19 +141,26 @@ class ZLibraryTest {
 		assertEquals("https://z-library.sk/c/2.jpg", items[1].coverUrl)
 	}
 
-	/** 推荐流语言：默认跟随系统（不加参数），指定语言时附站点的 languages[] */
+	/** 推荐流语种靠 `siteLanguage` cookie：跟随系统取系统语言，指定语言取用户选择 */
 	@Test
-	fun `home feed language`() {
-		assertEquals("https://z-library.sk/", parser.homeFeedUrl(""))
-		assertEquals(
-			"https://z-library.sk/?languages%5B%5D=chinese",
-			parser.homeFeedUrl("chinese"),
-		)
+	fun `language cookie value`() {
 		assertEquals("chinese", parser.siteLanguageForLocales(listOf(Locale.SIMPLIFIED_CHINESE)))
 		assertEquals("russian", parser.siteLanguageForLocales(listOf(Locale("xx"), Locale("ru"))))
 		assertEquals("", parser.siteLanguageForLocales(listOf(Locale("xx"))))
 		// 默认跟随系统：mock 的系统语言是 en
 		assertEquals("en", parser.acceptLanguageHeader())
+		assertEquals("en", parser.languageCookieValue(null))
+		assertEquals("en", parser.languageCookieValue("zh"))
+
+		(parser.config as SourceConfigMock).set(parser.languageKey, "russian")
+		// 站点现有值写的是 ISO 码，就继续写码
+		assertEquals("ru", parser.languageCookieValue("zh"))
+		// 站点现有值写的是语言名，就跟着写名
+		assertEquals("russian", parser.languageCookieValue("chinese"))
+		assertEquals("ru", parser.languageCookieValue(null))
+
+		(parser.config as SourceConfigMock).set(parser.languageKey, "all")
+		assertNull(parser.languageCookieValue("zh"))
 	}
 
 	@Test
@@ -160,23 +168,6 @@ class ZLibraryTest {
 		val keys = ArrayList<ConfigKey<*>>()
 		parser.onCreateConfig(keys)
 		assertTrue(keys.any { it is ConfigKey.PreferredLanguage && it.title == "推荐流语言" })
-	}
-
-	/** 语言诊断要能带上 cookie 名和站内语言切换器的标签 */
-	@Test
-	fun `language diagnostic dumps switcher`() {
-		val doc = Jsoup.parse(
-			"""<html><body>
-			<form action="/language" method="post">
-				<select name="language"><option value="en">English</option><option value="ru">Русский</option></select>
-			</form>
-			</body></html>""".trimIndent(),
-			"https://z-library.sk/",
-		)
-		val message = parser.languageDiagnostic(doc)
-		assertTrue(message.contains("cookies=["))
-		assertTrue(message.contains("switcher="))
-		assertTrue(message.contains("""name="language""""))
 	}
 
 	@Test
