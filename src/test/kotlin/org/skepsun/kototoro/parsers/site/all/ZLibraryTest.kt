@@ -4,6 +4,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -89,6 +90,24 @@ class ZLibraryTest {
 		assertFalse(parser.isHomeFeed(ContentListFilter(query = "kant")))
 		val math = ContentTag("Mathematics", "cat:23", parser.source)
 		assertFalse(parser.isHomeFeed(ContentListFilter(tags = setOf(math))))
+	}
+
+	/** 首页形态：书名/作者/书号在 z-cover 属性上，链接只给 href（真机 2026-10 形态） */
+	@Test
+	fun `parse home feed fixture`() {
+		val items = parser.parseHomeFeed(fixture("home.html"))
+		// 第三个 z-cover 既无 title 也无链接文字，跳过
+		assertEquals(2, items.size)
+		assertEquals("The Love Hypothesis", items[0].title)
+		assertEquals(setOf("Ali Hazelwood"), items[0].authors)
+		assertEquals(
+			"https://z-library.sk/book/5R0Am2Vrjp/the-love-hypothesis.html?dsource=mostpopular",
+			items[0].publicUrl,
+		)
+		assertEquals("https://s3proxy.cdn-zlib.example/covers100/userbooks/love.jpg", items[0].coverUrl)
+		assertEquals("Project Hail Mary", items[1].title)
+		assertEquals(setOf("Andy Weir"), items[1].authors)
+		assertNotEquals(items[0].id, items[1].id)
 	}
 
 	/** 首页是 SPA 外壳（无 z-bookcard）时按 /book/ 链接兜底，至少能出浏览列表 */

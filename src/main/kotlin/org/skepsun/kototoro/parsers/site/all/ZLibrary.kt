@@ -392,7 +392,56 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 	internal fun parseHomeFeed(doc: Document): List<Content> {
 		val viaCards = parseBookList(doc)
-		return viaCards.ifEmpty { parseBookLinks(doc) }
+		if (viaCards.isNotEmpty()) {
+			return viaCards
+		}
+		// 首页是 <a href="/book/{hash}/{slug}.html"><z-cover id title author>…</z-cover></a>
+		val viaCovers = parseCoverLinks(doc)
+		return viaCovers.ifEmpty { parseBookLinks(doc) }
+	}
+
+	/**
+	 * 首页形态：书名/作者/书籍 id 都在 <z-cover> 的属性里，链接只提供 href。
+	 * z-cover 的 id 与搜索页 z-bookcard 的 id 是同一套书号，两个入口的内容能对齐
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseCoverLinks(doc: Document): List<Content> {
+		val items = ArrayList<Content>()
+		val seen = LinkedHashSet<String>()
+		for (cover in doc.select("z-cover")) {
+			val anchor = cover.closest("a[href*=/book/]") ?: continue
+			val href = anchor.attrOrNull("href") ?: continue
+			val bookId = cover.attrOrNull("id")?.trim()?.takeIf(String::isNotEmpty)
+				?: BOOK_ID_REGEX.find(href)?.groupValues?.getOrNull(1)
+				?: continue
+			val title = cover.attrOrNull("title")?.trim()?.takeIf(String::isNotEmpty)
+				?: anchor.textOrNull()
+				?: continue
+			if (!seen.add(bookId)) {
+				continue
+			}
+			val authors = cover.attrOrNull("author")?.let(::parseAuthors).orEmpty()
+			val coverUrl = parseCoverUrl(cover) ?: parseCoverUrl(anchor)
+			items.add(
+				Content(
+					id = generateUid(bookId),
+					title = title,
+					altTitles = emptySet(),
+					url = href,
+					publicUrl = href.toAbsoluteUrl(domain),
+					rating = RATING_UNKNOWN,
+					contentRating = ContentRating.SAFE,
+					coverUrl = coverUrl?.toAbsoluteUrl(domain),
+					tags = emptySet(),
+					state = null,
+					authors = authors,
+					description = null,
+					chapters = null,
+					source = source,
+				),
+			)
+		}
+		return items
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -651,7 +700,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			"(function(){try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);x.send(null);" +
 				"return [x.status,x.responseText];}catch(e){return [-1,String(e)];}})()"
 		const val BROWSER_FETCH_URL_SLOT = "%URL%"
-		val BOOK_ID_REGEX = Regex("/book/(\\d+)/")
+		val BOOK_ID_REGEX = Regex("/book/([^/?#]+)/")
 		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
 		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")
