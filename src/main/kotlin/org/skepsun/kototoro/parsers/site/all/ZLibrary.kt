@@ -253,7 +253,16 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		} catch (e: Exception) {
 			e.message ?: e.toString()
 		}
-		return "Z-Library 语言开关探测：\n" + (probe ?: "浏览器上下文不可用")
+		return "Z-Library 语言探测：\njar: " + jarCookieSummary() + "\nbrowser: " + (probe ?: "不可用")
+	}
+
+	/** 语言相关 cookie 打全值，其它只留名字，避免把凭据带进错误信息 */
+	private fun jarCookieSummary(): String = context.cookieJar.getCookies(domain).joinToString(",") { cookie ->
+		if (cookie.name == LANGUAGE_COOKIE || cookie.name.contains("lang", ignoreCase = true)) {
+			"${cookie.name}=${cookie.value}"
+		} else {
+			cookie.name
+		}
 	}
 
 	private suspend fun applyLanguageCookie() {
@@ -842,23 +851,25 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		const val BROWSER_FETCH_LANGUAGE_SLOT = "%LANG%"
 
 		/**
-		 * 探测站内语言开关：cookie 值、localStorage、select、hreflang 链接、html lang。
-		 * 长值会被截断，只留形态
+		 * 在浏览器上下文里找站内语言开关：按语言名匹配元素文本（开关是 JS 渲染、class 名不可靠），
+		 * 顺带把 cookie、localStorage、select、html lang 摊出来。长值截断，只留形态
 		 */
-		const val LANGUAGE_PROBE_SCRIPT = "(function(){try{var o=[],d=document,i,k;" +
+		const val LANGUAGE_PROBE_SCRIPT = "(function(){try{var o=[],d=document,i,j,el,t;" +
 			"o.push('href='+location.href);" +
 			"o.push('html.lang='+d.documentElement.lang+' nav='+navigator.language);" +
-			"o.push('cookie='+d.cookie.replace(/=[^;]{25,}/g,'=<long>'));" +
-			"var ls=[];for(i=0;i<localStorage.length&&i<12;i++){k=localStorage.key(i);ls.push(k+'='+String(localStorage.getItem(k)).slice(0,16));}" +
-			"o.push('ls='+ls.join(' | '));" +
+			"o.push('cookie='+d.cookie.replace(/=[^;]{20,}/g,'=<long>'));" +
+			"var ls=[];for(i=0;i<localStorage.length&&i<12;i++){var k=localStorage.key(i);ls.push(k+'='+String(localStorage.getItem(k)).slice(0,14));}" +
+			"o.push('ls='+ls.join('|'));" +
 			"var sels=d.querySelectorAll('select');" +
-			"for(i=0;i<sels.length&&i<3;i++){var s=sels[i],op=[];" +
-			"for(k=0;k<s.options.length&&k<10;k++)op.push(s.options[k].value);" +
-			"o.push('select name='+s.name+' id='+s.id+' val='+s.value+' opts='+op.join('/'));}" +
-			"var hl=d.querySelectorAll('[hreflang]');" +
-			"for(i=0;i<hl.length&&i<8;i++)o.push('hreflang='+hl[i].getAttribute('hreflang')+' href='+(hl[i].getAttribute('href')||'').slice(0,40));" +
-			"var cl=d.querySelectorAll('[class*=lang],[id*=lang]');" +
-			"for(i=0;i<cl.length&&i<5;i++)o.push('el '+(cl[i].className||cl[i].id)+'=>'+(cl[i].textContent||'').trim().replace(/\\s+/g,' ').slice(0,50));" +
+			"for(i=0;i<sels.length&&i<3;i++){var op=[];" +
+			"for(j=0;j<sels[i].options.length&&j<8;j++)op.push(sels[i].options[j].value);" +
+			"o.push('select name='+sels[i].name+' id='+sels[i].id+' val='+sels[i].value+' opts='+op.join('/'));}" +
+			"var names=['Русский','Español','Italiano','中文','Deutsch','Français','Português','English','日本語','한국어','العربية']; " +
+			"var all=d.querySelectorAll('a,button,li,span,div,label,option,summary'),c=0;" +
+			"for(i=0;i<all.length&&c<6;i++){el=all[i];t=(el.textContent||'').trim();" +
+			"if(t.length<15&&names.indexOf(t)>=0&&el.children.length<2){" +
+			"o.push('LANG <'+el.tagName+' class='+(el.className||'')+' href='+(el.getAttribute('href')||'')+' data='+JSON.stringify(el.dataset||{}).slice(0,50)+'>');c++;}}" +
+			"o.push('langHits='+c);" +
 			"return o.join('\\n');}catch(e){return 'probe error: '+e;}})()"
 		val BOOK_ID_REGEX = Regex("/book/([^/?#]+)/")
 
