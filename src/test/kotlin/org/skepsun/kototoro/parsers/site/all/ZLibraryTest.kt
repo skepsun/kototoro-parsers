@@ -140,6 +140,26 @@ class ZLibraryTest {
 		assertFalse(parser.isDiamWallChallenge(doc))
 	}
 
+	/** 注入脚本里的 URL 必须整体转义，否则带引号的地址会截断脚本 */
+	@Test
+	fun `browser fetch script escapes url`() {
+		val script = parser.buildBrowserFetchScript(
+			"https://z-library.sk/s/?q=a\"b\\c&page=2%20x",
+		)
+		assertFalse(script.contains("%URL%"))
+		assertFalse(script.contains("%TIMEOUT%"))
+		assertTrue(script.contains("""x.open('GET',"https://z-library.sk/s/?q=a\"b\\c&page=2%20x",false)"""))
+		assertTrue(script.contains("x.timeout=2800"))
+		assertTrue(script.contains("return [x.status,x.responseText]"))
+	}
+
+	@Test
+	fun `browser fetch script handles newlines`() {
+		val script = parser.buildBrowserFetchScript("https://z-library.sk/a\nb")
+		assertFalse(script.contains("a\nb"))
+		assertTrue(script.contains("""a\nb"""))
+	}
+
 	private fun fixture(name: String): Document = Jsoup.parse(
 		javaClass.getResourceAsStream("/fixtures/zlibrary/$name")?.bufferedReader()?.use { it.readText() }
 			?: error("fixture not found: $name"),

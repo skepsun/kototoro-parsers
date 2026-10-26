@@ -1,9 +1,13 @@
 package org.skepsun.kototoro.parsers.site.all
 
 import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.Headers
 import okhttp3.Response
+import org.json.JSONArray
 import org.jsoup.HttpStatusException
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentParserAuthProvider
@@ -14,6 +18,7 @@ import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
+import java.net.HttpURLConnection.HTTP_OK
 import java.util.EnumSet
 
 /**
@@ -34,8 +39,10 @@ import java.util.EnumSet
  *   非浏览器客户端会收到 503、513 "Verifying your browser" 或 517 "Access Denied"，
  *   也可能收到 200 + 一段只跑 JS 的挑战页（`<title>` 含 DiamWall）。新版挑战是交互式 CAPTCHA
  *   （同源 iframe `/.well-known/diamwall/...`），纯 HTTP 客户端解不了，只有指纹自洽的真实浏览器
- *   能自动通过，所以这里转换成 requestBrowserAction 交给应用内 WebView；验证后的 cookie 由宿主
- *   cookie jar 共享给后续请求
+ *   能通过；验证是通过宿主 WebView 做的（requestBrowserAction）
+ * - clearance 与签发它的客户端指纹绑定：浏览器验证通过后，OkHttp 即便带着 cookie 仍会被 513
+ *   拒答。所以 OkHttp 被拦时先回退到宿主 WebView 里用同源 XHR 取正文（见 [fetchInBrowser]），
+ *   仍然不行才请用户在浏览器里验证
  *
  * 限制:
  * - 下载有每日配额；本解析器不处理验证码与账号付费逻辑
@@ -115,25 +122,67 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	/**
-	 * DiamWall 拦截时把它转成浏览器动作。httpGet 对 4xx/5xx 先抛 HttpStatusException，
-	 * 而"200 + 挑战页"要走正常响应路径，所以两处都要拦
+	 * 优先用 OkHttp 取页；被 DiamWall 拦下时改走宿主 WebView 的同源 XHR；两者都拿不到才请用户
+	 * 去应用内浏览器完成验证。
+	 *
+	 * 之所以要回退到浏览器：clearance 与签发它的客户端指纹绑定，浏览器验证通过后 OkHttp 仍会被
+	 * 513 拒答（表现为"验证过了还一直报拦截"）。WebView 里的 XHR 与浏览器同指纹、共享 cookie jar，
+	 * 能直接拿到正文
 	 */
 	private suspend fun fetchDocument(url: String): Document {
+		val direct = fetchDirect(url)
+		if (direct != null && !isDiamWallChallenge(direct)) {
+			return direct
+		}
+		fetchInBrowser(url)?.let { return it }
+		requestBrowserVerification(url)
+	}
+
+	/**
+	 * @return null 表示被 DiamWall 按状态码拒答，需要走浏览器通道；其余错误照常抛出
+	 */
+	private suspend fun fetchDirect(url: String): Document? {
 		val response = try {
 			webClient.httpGet(url, getRequestHeaders())
 		} catch (e: HttpStatusException) {
 			if (isDiamWallStatus(e.statusCode)) {
-				requestBrowserVerification(e.url ?: url)
+				return null
 			}
 			throw e
 		}
 		checkAuth(response)
-		val doc = response.parseHtml()
-		if (isDiamWallChallenge(doc)) {
-			requestBrowserVerification(url)
-		}
-		return doc
+		return response.parseHtml()
 	}
+
+	/**
+	 * 在宿主 WebView 的页面上下文里用同步 XHR 取同一个 URL。
+	 *
+	 * 宿主 evaluateJs 的看门狗是 4s，所以让 XHR 自己先超时放弃；拿不到正文（无浏览器能力、
+	 * 超时、仍是挑战页）时返回 null，由调用方转到 requestBrowserAction
+	 */
+	private suspend fun fetchInBrowser(url: String): Document? {
+		val raw = try {
+			context.evaluateJs(url, buildBrowserFetchScript(url))
+		} catch (_: TimeoutCancellationException) {
+			// 宿主 evaluateJs 的 4s 看门狗到点，按"取不到"处理，转浏览器动作
+			null
+		} catch (e: CancellationException) {
+			throw e
+		} catch (_: Exception) {
+			null
+		} ?: return null
+		val result = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+		val html = result.optString(1)
+		if (result.optInt(0, -1) != HTTP_OK || html.isBlank()) {
+			return null
+		}
+		return Jsoup.parse(html, url).takeUnless(::isDiamWallChallenge)
+	}
+
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun buildBrowserFetchScript(url: String): String = BROWSER_FETCH_SCRIPT
+		.replace(BROWSER_FETCH_URL_SLOT, url.toJsStringLiteral())
+		.replace(BROWSER_FETCH_TIMEOUT_SLOT, BROWSER_FETCH_TIMEOUT_MS.toString())
 
 	/**
 	 * 交给宿主浏览器验证。没有浏览器能力的环境（CLI、测试）里声明式接口会抛
@@ -149,6 +198,21 @@ internal class ZLibrary(context: ContentLoaderContext) :
 				e,
 			)
 		}
+	}
+
+	/** 注进 WebView 的 URL 走 JS 字符串字面量，避免引号/反斜杠截断脚本 */
+	private fun String.toJsStringLiteral(): String = buildString(length + 2) {
+		append('"')
+		for (c in this@toJsStringLiteral) {
+			when (c) {
+				'"', '\\' -> append('\\').append(c)
+				'\n' -> append("\\n")
+				'\r' -> append("\\r")
+				'\u2028', '\u2029' -> append("\\u").append(c.code.toString(16).padStart(4, '0'))
+				else -> append(c)
+			}
+		}
+		append('"')
 	}
 
 	/** DiamWall 用非标准状态码拒答：503 校验中、513 Verifying your browser、517 Access Denied */
@@ -473,6 +537,17 @@ internal class ZLibrary(context: ContentLoaderContext) :
 
 		// 挑战页只有几 KB，正文页远超这个量级；用它把正文扫描限制在真正的挑战页上
 		const val MAX_CHALLENGE_HTML_LENGTH = 64 * 1024
+
+		// 注入 WebView 的取页脚本，返回 [status, responseText]；占位符由 fetchInBrowser 填充
+		const val BROWSER_FETCH_SCRIPT =
+			"(function(){try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);" +
+				"x.timeout=%TIMEOUT%;x.send(null);return [x.status,x.responseText];}" +
+				"}catch(e){return [-1,String(e)];}})()"
+		const val BROWSER_FETCH_URL_SLOT = "%URL%"
+		const val BROWSER_FETCH_TIMEOUT_SLOT = "%TIMEOUT%"
+
+		// 宿主 evaluateJs 的看门狗是 4s，留出 WebView 冷启动的余量
+		const val BROWSER_FETCH_TIMEOUT_MS = 2800
 		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
 		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")
