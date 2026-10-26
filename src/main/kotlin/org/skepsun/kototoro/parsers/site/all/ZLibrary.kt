@@ -157,8 +157,9 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	/**
 	 * 在宿主 WebView 的页面上下文里用同步 XHR 取同一个 URL。
 	 *
-	 * 宿主 evaluateJs 的看门狗是 4s，所以让 XHR 自己先超时放弃；拿不到正文（无浏览器能力、
-	 * 超时、仍是挑战页）时返回 null，由调用方转到 requestBrowserAction
+	 * 同步 XHR 不能设 timeout（Chromium 直接抛 InvalidAccessError），所以这里没有自设超时，
+	 * 卡住时靠宿主 evaluateJs 的 4s 看门狗兜底；拿不到正文（无浏览器能力、超时、仍是挑战页）
+	 * 时返回 null，由调用方转到 requestBrowserAction
 	 */
 	private suspend fun fetchInBrowser(url: String): Document? {
 		val raw = try {
@@ -180,9 +181,8 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
-	internal fun buildBrowserFetchScript(url: String): String = BROWSER_FETCH_SCRIPT
-		.replace(BROWSER_FETCH_URL_SLOT, url.toJsStringLiteral())
-		.replace(BROWSER_FETCH_TIMEOUT_SLOT, BROWSER_FETCH_TIMEOUT_MS.toString())
+	internal fun buildBrowserFetchScript(url: String): String =
+		BROWSER_FETCH_SCRIPT.replace(BROWSER_FETCH_URL_SLOT, url.toJsStringLiteral())
 
 	/**
 	 * 交给宿主浏览器验证。没有浏览器能力的环境（CLI、测试）里声明式接口会抛
@@ -538,16 +538,13 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		// 挑战页只有几 KB，正文页远超这个量级；用它把正文扫描限制在真正的挑战页上
 		const val MAX_CHALLENGE_HTML_LENGTH = 64 * 1024
 
-		// 注入 WebView 的取页脚本，返回 [status, responseText]；占位符由 fetchInBrowser 填充
+		// 注入 WebView 的取页脚本，返回 [status, responseText]；%URL% 由 fetchInBrowser 填充。
+		// 只有同步 XHR 才能把结果当场带回来，而同步请求不能设 x.timeout（Chromium 抛
+		// InvalidAccessError），所以卡住的情况交给宿主 evaluateJs 的 4s 看门狗
 		const val BROWSER_FETCH_SCRIPT =
-			"(function(){try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);" +
-				"x.timeout=%TIMEOUT%;x.send(null);return [x.status,x.responseText];}" +
-				"}catch(e){return [-1,String(e)];}})()"
+			"(function(){try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);x.send(null);" +
+				"return [x.status,x.responseText];}catch(e){return [-1,String(e)];}})()"
 		const val BROWSER_FETCH_URL_SLOT = "%URL%"
-		const val BROWSER_FETCH_TIMEOUT_SLOT = "%TIMEOUT%"
-
-		// 宿主 evaluateJs 的看门狗是 4s，留出 WebView 冷启动的余量
-		const val BROWSER_FETCH_TIMEOUT_MS = 2800
 		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
 		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")

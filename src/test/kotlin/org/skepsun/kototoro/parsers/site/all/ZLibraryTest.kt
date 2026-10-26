@@ -147,10 +147,11 @@ class ZLibraryTest {
 			"https://z-library.sk/s/?q=a\"b\\c&page=2%20x",
 		)
 		assertFalse(script.contains("%URL%"))
-		assertFalse(script.contains("%TIMEOUT%"))
 		assertTrue(script.contains("""x.open('GET',"https://z-library.sk/s/?q=a\"b\\c&page=2%20x",false)"""))
-		assertTrue(script.contains("x.timeout=2800"))
+		assertTrue(script.contains("x.send(null)"))
 		assertTrue(script.contains("return [x.status,x.responseText]"))
+		// 同步 XHR 设 timeout 会被浏览器抛 InvalidAccessError，脚本里绝不能出现
+		assertFalse(script.contains("x.timeout"))
 	}
 
 	@Test
