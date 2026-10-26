@@ -122,14 +122,27 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
+		val homeFeed = isHomeFeed(filter)
+		if (homeFeed && page > 1) {
+			// 首页推荐流不分页，翻页直接收尾，避免反复拿到同一批
+			return emptyList()
+		}
 		val url = buildListUrl(page, order, filter)
 		val doc = fetchDocument(url)
-		val items = parseBookList(doc)
+		val items = if (homeFeed) parseHomeFeed(doc) else parseBookList(doc)
 		if (items.isEmpty()) {
 			throw ParseException(describeEmptyList(doc), url)
 		}
 		return items
 	}
+
+	/**
+	 * 站点已不支持无关键词的 /s/?filters（302 回首页），浏览列表只能落在首页推荐流上。
+	 * 带关键词或有分类标签时仍走搜索页
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun isHomeFeed(filter: ContentListFilter): Boolean =
+		filter.query.isNullOrBlank() && filter.tags.none { it.key.startsWith("cat:") }
 
 	/**
 	 * 临时诊断：列表解析为空时把页面形态摊出来，用来区分"盾拦/跳转到了别的页"和"卡片结构漂移"
@@ -138,12 +151,16 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 	internal fun describeEmptyList(doc: Document): String {
 		val cards = doc.select("z-bookcard")
-		val head = "Z-Library 列表为空：cards=${cards.size} len=${doc.outerHtml().length} " +
-			"mode=${if (lastFetchUsedBrowser) "browser" else "http"} title=${doc.title().take(40)}"
-		if (cards.isEmpty()) {
-			return "$head text=${doc.body()?.text().orEmpty().take(60)}"
+		val bookLinks = doc.select("a[href*=/book/]")
+		val head = "Z-Library 列表为空：cards=${cards.size} books=${bookLinks.size} " +
+			"imgs=${doc.select("img").size} jsons=${doc.select("script[type=application/json]").size} " +
+			"len=${doc.outerHtml().length} mode=${if (lastFetchUsedBrowser) "browser" else "http"} " +
+			"title=${doc.title().take(36)}"
+		val first = (cards.getOrNull(0) ?: bookLinks.getOrNull(0))?.outerHtml()?.take(140)
+			?.replace('\n', ' ')
+		if (first == null) {
+			return "$head text=${doc.body()?.text().orEmpty().take(50)}"
 		}
-		val first = cards.getOrNull(0)?.outerHtml()?.take(140)?.replace('\n', ' ')
 		return "$head first=$first"
 	}
 
@@ -271,6 +288,10 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		val languages = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("lang:") }?.substringAfter("lang:") }
 		val extensions = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("fmt:") }?.substringAfter("fmt:") }
 		val contentTypes = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("type:") }?.substringAfter("type:") }
+		if (categoryTag == null && filter.query.isNullOrBlank()) {
+			// /s/?selected_content_types[]=book 现在会 302 到首页，直接在首页取推荐流
+			return "https://$domain/"
+		}
 		return buildString {
 			append("https://").append(domain)
 			if (categoryTag != null) {
@@ -363,6 +384,64 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		}
 		return items
 	}
+
+	/**
+	 * 首页推荐流：优先按 z-bookcard 解析；首页是 SPA 外壳、卡片由客户端渲染时，
+	 * 退一步按 /book/ 链接兜底，至少让浏览列表能出内容
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseHomeFeed(doc: Document): List<Content> {
+		val viaCards = parseBookList(doc)
+		return viaCards.ifEmpty { parseBookLinks(doc) }
+	}
+
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun parseBookLinks(doc: Document): List<Content> {
+		// 同一本书常被链接两次（封面链接 + 标题链接），先按 id 收，再让真标题覆盖 slug 兜底标题
+		val collected = LinkedHashMap<String, Pair<Content, Boolean>>()
+		for (link in doc.select("a[href*=/book/]")) {
+			val href = link.attrOrNull("href") ?: continue
+			val bookId = BOOK_ID_REGEX.find(href)?.groupValues?.getOrNull(1) ?: continue
+			val realTitle = link.textOrNull()
+				?: link.selectFirst("img")?.attrOrNull("alt")?.trim()?.takeIf(String::isNotEmpty)
+				?: link.attrOrNull("title")?.trim()?.takeIf(String::isNotEmpty)
+			val title = realTitle ?: titleFromBookHref(href) ?: continue
+			val cover = link.selectFirst("img")?.let { img -> img.attrOrNull("data-src") ?: img.attrOrNull("src") }
+			val existing = collected[bookId]
+			if (existing == null) {
+				collected[bookId] = Content(
+					id = generateUid(bookId),
+					title = title,
+					altTitles = emptySet(),
+					url = href,
+					publicUrl = href.toAbsoluteUrl(domain),
+					rating = RATING_UNKNOWN,
+					contentRating = ContentRating.SAFE,
+					coverUrl = cover?.toAbsoluteUrl(domain),
+					tags = emptySet(),
+					state = null,
+					authors = emptySet(),
+					description = null,
+					chapters = null,
+					source = source,
+				) to (realTitle == null)
+			} else if (existing.second && realTitle != null) {
+				collected[bookId] = existing.first.copy(title = realTitle) to false
+			} else if (existing.first.coverUrl == null && cover != null) {
+				collected[bookId] = existing.first.copy(coverUrl = cover.toAbsoluteUrl(domain)) to existing.second
+			}
+		}
+		return collected.values.map { it.first }
+	}
+
+	/** 卡片只有封面、没有标题时用详情页 slug 兜底：/book/1/ab/lost-souls.html → lost souls */
+	private fun titleFromBookHref(href: String): String? = href
+		.substringBeforeLast('?')
+		.substringAfterLast('/')
+		.removeSuffix(".html")
+		.replace('-', ' ')
+		.trim()
+		.takeIf(String::isNotEmpty)
 
 	override suspend fun getDetails(manga: Content): Content {
 		val doc = fetchDocument(manga.url.toAbsoluteUrl(domain))
@@ -572,6 +651,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			"(function(){try{var x=new XMLHttpRequest();x.open('GET',%URL%,false);x.send(null);" +
 				"return [x.status,x.responseText];}catch(e){return [-1,String(e)];}})()"
 		const val BROWSER_FETCH_URL_SLOT = "%URL%"
+		val BOOK_ID_REGEX = Regex("/book/(\\d+)/")
 		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
 		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")

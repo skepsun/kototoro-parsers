@@ -62,10 +62,12 @@ class ZLibraryTest {
 
 	@Test
 	fun `build list urls`() {
+		// 无关键词的 /s/?filters 已被站点 302 到首页，浏览列表落在首页推荐流
 		assertEquals(
-			"https://z-library.sk/s/?selected_content_types%5B%5D=book",
+			"https://z-library.sk/",
 			parser.buildListUrl(1, SortOrder.RELEVANCE, ContentListFilter()),
 		)
+		assertTrue(parser.isHomeFeed(ContentListFilter()))
 		val search = ContentListFilter(query = "Kant Kritik")
 		val url = parser.buildListUrl(2, SortOrder.POPULARITY, search)
 		assertTrue(url.startsWith("https://z-library.sk/s/Kant+Kritik?"))
@@ -80,6 +82,41 @@ class ZLibraryTest {
 		assertTrue(catUrl.contains("extensions%5B%5D=PDF"))
 		assertTrue(catUrl.contains("languages%5B%5D=chinese"))
 		assertTrue(catUrl.contains("selected_content_types%5B%5D=book"))
+	}
+
+	@Test
+	fun `search and category are not home feed`() {
+		assertFalse(parser.isHomeFeed(ContentListFilter(query = "kant")))
+		val math = ContentTag("Mathematics", "cat:23", parser.source)
+		assertFalse(parser.isHomeFeed(ContentListFilter(tags = setOf(math))))
+	}
+
+	/** 首页是 SPA 外壳（无 z-bookcard）时按 /book/ 链接兜底，至少能出浏览列表 */
+	@Test
+	fun `home feed falls back to book links`() {
+		val doc = Jsoup.parse(
+			"""<html><head><title>Z-Library</title></head><body>
+			<header><a href="/">Home</a><a href="/my">My Library</a></header>
+			<main>
+			<a href="/book/25126620/78b103/lost-souls.html"><img data-src="https://covers.example/a.jpg"></a>
+			<a href="/book/25126621/1c2f0a/kant-kritik.html"><img alt="Kritik der reinen Vernunft" src="/c/2.jpg"></a>
+			<a href="/book/25126621/9f9f9f/kant-kritik.html">Kritik der reinen Vernunft</a>
+			<a href="/book/25126620/78b103/lost-souls.html">Lost Souls</a>
+			</main></body></html>""".trimIndent(),
+			"https://z-library.sk/",
+		)
+		val items = parser.parseHomeFeed(doc)
+		assertEquals(2, items.size)
+		// 封面链接先出现，标题后出现：标题要升级成真标题，顺序保持不变
+		assertEquals("https://z-library.sk/book/25126620/78b103/lost-souls.html", items[0].publicUrl)
+		assertEquals("Lost Souls", items[0].title)
+		assertEquals("https://covers.example/a.jpg", items[0].coverUrl)
+		assertEquals(
+			"https://z-library.sk/book/25126621/1c2f0a/kant-kritik.html",
+			items[1].publicUrl,
+		)
+		assertEquals("Kritik der reinen Vernunft", items[1].title)
+		assertEquals("https://z-library.sk/c/2.jpg", items[1].coverUrl)
 	}
 
 	@Test
