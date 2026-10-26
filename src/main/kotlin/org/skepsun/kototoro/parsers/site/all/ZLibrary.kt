@@ -133,6 +133,10 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		val url = buildListUrl(page, order, filter)
 		val doc = fetchDocument(url)
 		val items = if (homeFeed) parseHomeFeed(doc) else parseBookList(doc)
+		if (homeFeed && isLanguageExplicitlySet()) {
+			// 语言覆盖还没真正生效，先把站点语言开关的存法探出来（跟随系统下不影响正常浏览）
+			throw ParseException(probeLanguageSwitch(), url)
+		}
 		if (items.isEmpty() && homeFeed) {
 			// 搜索为空是正常结果；推荐流为空基本是站点改版，抛出来才能定位
 			throw ParseException(describeEmptyList(doc), url)
@@ -229,6 +233,27 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		// 站点现有写法是 ISO 码就写码，是语言名就写名
 		val usesIsoCode = existingValue == null || ISO_LANGUAGE_CODE_REGEX.matches(existingValue)
 		return if (usesIsoCode) iso else siteLanguage
+	}
+
+	/** 是否在设置里明确指定了语言（不是跟随系统/不限） */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun isLanguageExplicitlySet(): Boolean = config[languageKey].let { language ->
+		language != LANGUAGE_SYSTEM && language != LANGUAGE_ALL
+	}
+
+	/**
+	 * 临时探测：站点右下角的语言开关是 JS 渲染的，DOM 里搜不到控件。
+	 * 这里在浏览器上下文里跑一段脚本，把语言相关的 cookie/localStorage/select/hreflang 摊出来
+	 */
+	private suspend fun probeLanguageSwitch(): String {
+		val probe = try {
+			context.evaluateJs("https://$domain/", LANGUAGE_PROBE_SCRIPT)
+		} catch (e: CancellationException) {
+			throw e
+		} catch (e: Exception) {
+			e.message ?: e.toString()
+		}
+		return "Z-Library 语言开关探测：\n" + (probe ?: "浏览器上下文不可用")
 	}
 
 	private suspend fun applyLanguageCookie() {
@@ -815,6 +840,26 @@ internal class ZLibrary(context: ContentLoaderContext) :
 				"return [x.status,x.responseText];}catch(e){return [-1,String(e)];}})()"
 		const val BROWSER_FETCH_URL_SLOT = "%URL%"
 		const val BROWSER_FETCH_LANGUAGE_SLOT = "%LANG%"
+
+		/**
+		 * 探测站内语言开关：cookie 值、localStorage、select、hreflang 链接、html lang。
+		 * 长值会被截断，只留形态
+		 */
+		const val LANGUAGE_PROBE_SCRIPT = "(function(){try{var o=[],d=document,i,k;" +
+			"o.push('href='+location.href);" +
+			"o.push('html.lang='+d.documentElement.lang+' nav='+navigator.language);" +
+			"o.push('cookie='+d.cookie.replace(/=[^;]{25,}/g,'=<long>'));" +
+			"var ls=[];for(i=0;i<localStorage.length&&i<12;i++){k=localStorage.key(i);ls.push(k+'='+String(localStorage.getItem(k)).slice(0,16));}" +
+			"o.push('ls='+ls.join(' | '));" +
+			"var sels=d.querySelectorAll('select');" +
+			"for(i=0;i<sels.length&&i<3;i++){var s=sels[i],op=[];" +
+			"for(k=0;k<s.options.length&&k<10;k++)op.push(s.options[k].value);" +
+			"o.push('select name='+s.name+' id='+s.id+' val='+s.value+' opts='+op.join('/'));}" +
+			"var hl=d.querySelectorAll('[hreflang]');" +
+			"for(i=0;i<hl.length&&i<8;i++)o.push('hreflang='+hl[i].getAttribute('hreflang')+' href='+(hl[i].getAttribute('href')||'').slice(0,40));" +
+			"var cl=d.querySelectorAll('[class*=lang],[id*=lang]');" +
+			"for(i=0;i<cl.length&&i<5;i++)o.push('el '+(cl[i].className||cl[i].id)+'=>'+(cl[i].textContent||'').trim().replace(/\\s+/g,' ').slice(0,50));" +
+			"return o.join('\\n');}catch(e){return 'probe error: '+e;}})()"
 		val BOOK_ID_REGEX = Regex("/book/([^/?#]+)/")
 
 		const val LANGUAGE_SYSTEM = "system"

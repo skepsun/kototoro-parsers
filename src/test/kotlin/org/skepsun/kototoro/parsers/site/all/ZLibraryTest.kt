@@ -249,6 +249,15 @@ class ZLibraryTest {
 		assertTrue(script.contains("""a\nb"""))
 	}
 
+	@Test
+	fun `explicit language detection`() {
+		assertFalse(parser.isLanguageExplicitlySet())
+		(parser.config as SourceConfigMock).set(parser.languageKey, "chinese")
+		assertTrue(parser.isLanguageExplicitlySet())
+		(parser.config as SourceConfigMock).set(parser.languageKey, "all")
+		assertFalse(parser.isLanguageExplicitlySet())
+	}
+
 	/** 浏览器通道的 XHR 会带上语种 cookie，避免 WebView 与 jar 不一致 */
 	@Test
 	fun `browser fetch script sets language cookie`() {
