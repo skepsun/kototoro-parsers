@@ -161,6 +161,30 @@ class ZLibraryTest {
 		assertTrue(script.contains("""a\nb"""))
 	}
 
+	/** 空列表诊断要能把"没有卡片"和"卡片结构变了"区分开 */
+	@Test
+	fun `describe empty list without cards`() {
+		val doc = Jsoup.parse("<html><head><title>Z-Library</title></head><body>Home page</body></html>", "https://z-library.sk/")
+		val message = parser.describeEmptyList(doc)
+		assertTrue(message.contains("cards=0"))
+		assertTrue(message.contains("mode=http"))
+		assertTrue(message.contains("Z-Library"))
+		assertTrue(message.contains("Home page"))
+	}
+
+	@Test
+	fun `describe empty list with unparsable cards`() {
+		val doc = Jsoup.parse(
+			"""<html><head><title>Search</title></head><body>
+			<z-bookcard id="1" href="/book/1/x.html"><span>title lives elsewhere now</span></z-bookcard>
+			</body></html>""".trimIndent(),
+			"https://z-library.sk/",
+		)
+		val message = parser.describeEmptyList(doc)
+		assertTrue(message.contains("cards=1"))
+		assertTrue(message.contains("first=<z-bookcard"))
+	}
+
 	private fun fixture(name: String): Document = Jsoup.parse(
 		javaClass.getResourceAsStream("/fixtures/zlibrary/$name")?.bufferedReader()?.use { it.readText() }
 			?: error("fixture not found: $name"),

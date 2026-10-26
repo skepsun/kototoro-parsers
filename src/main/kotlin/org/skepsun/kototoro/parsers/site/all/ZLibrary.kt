@@ -52,6 +52,10 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	PagedContentParser(context, ContentParserSource.ZLIBRARY, pageSize = 50),
 	ContentParserAuthProvider {
 
+	/** 诊断用：上一次正文是不是从浏览器通道拿到的 */
+	@Volatile
+	private var lastFetchUsedBrowser = false
+
 	/**
 	 * 均为 2026-09 实测在线的官方边缘节点（DiamWall 特征一致）：
 	 * 主站 + 语言子域 + 短域名轮换。克隆站（z-lib.cc / z-lib.id 等自有 support email）不收录
@@ -118,7 +122,29 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		return parseBookList(fetchDocument(buildListUrl(page, order, filter)))
+		val url = buildListUrl(page, order, filter)
+		val doc = fetchDocument(url)
+		val items = parseBookList(doc)
+		if (items.isEmpty()) {
+			throw ParseException(describeEmptyList(doc), url)
+		}
+		return items
+	}
+
+	/**
+	 * 临时诊断：列表解析为空时把页面形态摊出来，用来区分"盾拦/跳转到了别的页"和"卡片结构漂移"
+	 * TODO 定位完删掉
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun describeEmptyList(doc: Document): String {
+		val cards = doc.select("z-bookcard")
+		val head = "Z-Library 列表为空：cards=${cards.size} len=${doc.outerHtml().length} " +
+			"mode=${if (lastFetchUsedBrowser) "browser" else "http"} title=${doc.title().take(40)}"
+		if (cards.isEmpty()) {
+			return "$head text=${doc.body()?.text().orEmpty().take(60)}"
+		}
+		val first = cards.getOrNull(0)?.outerHtml()?.take(140)?.replace('\n', ' ')
+		return "$head first=$first"
 	}
 
 	/**
@@ -130,6 +156,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	 * 能直接拿到正文
 	 */
 	private suspend fun fetchDocument(url: String): Document {
+		lastFetchUsedBrowser = false
 		val direct = fetchDirect(url)
 		if (direct != null && !isDiamWallChallenge(direct)) {
 			return direct
@@ -177,7 +204,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		if (result.optInt(0, -1) != HTTP_OK || html.isBlank()) {
 			return null
 		}
-		return Jsoup.parse(html, url).takeUnless(::isDiamWallChallenge)
+		return Jsoup.parse(html, url).takeUnless(::isDiamWallChallenge)?.also { lastFetchUsedBrowser = true }
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
