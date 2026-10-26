@@ -9,11 +9,13 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
+import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 import org.skepsun.kototoro.parsers.model.SortOrder
+import java.util.Locale
 
 class ZLibraryTest {
 
@@ -136,6 +138,28 @@ class ZLibraryTest {
 		)
 		assertEquals("Kritik der reinen Vernunft", items[1].title)
 		assertEquals("https://z-library.sk/c/2.jpg", items[1].coverUrl)
+	}
+
+	/** 推荐流语言：默认跟随系统（不加参数），指定语言时附站点的 languages[] */
+	@Test
+	fun `home feed language`() {
+		assertEquals("https://z-library.sk/", parser.homeFeedUrl(""))
+		assertEquals(
+			"https://z-library.sk/?languages%5B%5D=chinese",
+			parser.homeFeedUrl("chinese"),
+		)
+		assertEquals("chinese", parser.siteLanguageForLocales(listOf(Locale.SIMPLIFIED_CHINESE)))
+		assertEquals("russian", parser.siteLanguageForLocales(listOf(Locale("xx"), Locale("ru"))))
+		assertEquals("", parser.siteLanguageForLocales(listOf(Locale("xx"))))
+		// 默认跟随系统：mock 的系统语言是 en
+		assertEquals("en", parser.acceptLanguageHeader())
+	}
+
+	@Test
+	fun `language setting is registered`() {
+		val keys = ArrayList<ConfigKey<*>>()
+		parser.onCreateConfig(keys)
+		assertTrue(keys.any { it is ConfigKey.PreferredLanguage && it.title == "推荐流语言" })
 	}
 
 	@Test

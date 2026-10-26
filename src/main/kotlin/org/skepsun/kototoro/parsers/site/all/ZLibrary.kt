@@ -20,6 +20,7 @@ import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 import java.net.HttpURLConnection.HTTP_OK
 import java.util.EnumSet
+import java.util.Locale
 
 /**
  * Z-Library - 大型电子书图书馆（出版物为主）
@@ -102,7 +103,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	 */
 	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
 		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-		.add("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8")
+		.add("Accept-Language", acceptLanguageHeader())
 		.build()
 
 	override suspend fun isAuthorized(): Boolean {
@@ -128,9 +129,15 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			return emptyList()
 		}
 		val url = buildListUrl(page, order, filter)
-		val doc = fetchDocument(url)
-		val items = if (homeFeed) parseHomeFeed(doc) else parseBookList(doc)
-		if (items.isEmpty()) {
+		var doc = fetchDocument(url)
+		var items = if (homeFeed) parseHomeFeed(doc) else parseBookList(doc)
+		if (homeFeed && items.isEmpty() && configuredLanguage().isNotEmpty()) {
+			// 站点不认 languages[] 时退回不带语言参数的首页，避免指定语言反而把列表弄空
+			doc = fetchDocument(homeFeedUrl(""))
+			items = parseHomeFeed(doc)
+		}
+		if (items.isEmpty() && homeFeed) {
+			// 搜索为空是正常结果；推荐流为空基本是站点改版，抛出来才能定位
 			throw ParseException(describeEmptyList(doc), url)
 		}
 		return items
@@ -145,14 +152,14 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		filter.query.isNullOrBlank() && filter.tags.none { it.key.startsWith("cat:") }
 
 	/**
-	 * 临时诊断：列表解析为空时把页面形态摊出来，用来区分"盾拦/跳转到了别的页"和"卡片结构漂移"
-	 * TODO 定位完删掉
+	 * 推荐流解析为空时把页面形态摊出来，用来区分"盾拦/跳到了别的页"和"卡片结构漂移"。
+	 * 只在推荐流（浏览列表）抛，搜索无结果仍然返回空列表
 	 */
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
 	internal fun describeEmptyList(doc: Document): String {
 		val cards = doc.select("z-bookcard")
 		val bookLinks = doc.select("a[href*=/book/]")
-		val head = "Z-Library 列表为空：cards=${cards.size} books=${bookLinks.size} " +
+		val head = "Z-Library 推荐流解析失败：cards=${cards.size} books=${bookLinks.size} " +
 			"imgs=${doc.select("img").size} jsons=${doc.select("script[type=application/json]").size} " +
 			"len=${doc.outerHtml().length} mode=${if (lastFetchUsedBrowser) "browser" else "http"} " +
 			"title=${doc.title().take(36)}"
@@ -162,6 +169,67 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			return "$head text=${doc.body()?.text().orEmpty().take(50)}"
 		}
 		return "$head first=$first"
+	}
+
+	/**
+	 * 首页推荐流跟着站点语言走：默认跟随系统（不额外加参数，交给浏览器自己带 Accept-Language），
+	 * 用户也可以在源设置里指定一种语言，这时在首页 URL 上附站点的 languages[] 过滤
+	 */
+	private val languageKey = ConfigKey.PreferredLanguage(
+		title = "推荐流语言",
+		presetValues = linkedMapOf(
+			LANGUAGE_SYSTEM to "跟随系统",
+			LANGUAGE_ALL to "不限（站点默认）",
+			"english" to "English",
+			"chinese" to "中文",
+			"japanese" to "日本語",
+			"korean" to "한국어",
+			"russian" to "Русский",
+			"spanish" to "Español",
+			"french" to "Français",
+			"german" to "Deutsch",
+			"italian" to "Italiano",
+			"portuguese" to "Português",
+			"arabic" to "العربية",
+			"turkish" to "Türkçe",
+			"polish" to "Polski",
+			"dutch" to "Nederlands",
+			"vietnamese" to "Tiếng Việt",
+		),
+		defaultValue = LANGUAGE_SYSTEM,
+	)
+
+	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+		super.onCreateConfig(keys)
+		keys.add(languageKey)
+	}
+
+	/** 用户在设置里指定的站点语言名；跟随系统/不限时为空串（不覆盖站点默认行为） */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun configuredLanguage(): String = config[languageKey]
+		.takeIf { it != LANGUAGE_SYSTEM && it != LANGUAGE_ALL }
+		.orEmpty()
+
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun homeFeedUrl(language: String): String = if (language.isEmpty()) {
+		"https://$domain/"
+	} else {
+		"https://$domain/?languages%5B%5D=" + language.urlEncoded()
+	}
+
+	/** 系统语言 → 站点语言名，用于跟随系统时兜底（站点不认 languages[] 时不发参数） */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun siteLanguageForLocales(locales: List<Locale>): String =
+		locales.firstNotNullOfOrNull { LANGUAGE_BY_ISO[it.language?.lowercase()] }.orEmpty()
+
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun acceptLanguageHeader(): String {
+		val codes = when (val language = config[languageKey]) {
+			LANGUAGE_SYSTEM, LANGUAGE_ALL -> context.getPreferredLocales()
+				.mapNotNull { it.language?.lowercase()?.takeIf { code -> code.isNotEmpty() && code != "und" } }
+			else -> listOfNotNull(LANGUAGE_BY_ISO.entries.firstOrNull { it.value == language }?.key)
+		}.distinct().ifEmpty { listOf(DEFAULT_LANGUAGE_ISO) }
+		return codes.mapIndexed { index, code -> if (index == 0) code else "$code;q=0.8" }.joinToString(",")
 	}
 
 	/**
@@ -290,7 +358,7 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		val contentTypes = filter.tags.mapNotNull { it.key.takeIf { k -> k.startsWith("type:") }?.substringAfter("type:") }
 		if (categoryTag == null && filter.query.isNullOrBlank()) {
 			// /s/?selected_content_types[]=book 现在会 302 到首页，直接在首页取推荐流
-			return "https://$domain/"
+			return homeFeedUrl(configuredLanguage())
 		}
 		return buildString {
 			append("https://").append(domain)
@@ -701,6 +769,29 @@ internal class ZLibrary(context: ContentLoaderContext) :
 				"return [x.status,x.responseText];}catch(e){return [-1,String(e)];}})()"
 		const val BROWSER_FETCH_URL_SLOT = "%URL%"
 		val BOOK_ID_REGEX = Regex("/book/([^/?#]+)/")
+
+		const val LANGUAGE_SYSTEM = "system"
+		const val LANGUAGE_ALL = "all"
+		const val DEFAULT_LANGUAGE_ISO = "en"
+
+		/** 站点语言名 ↔ ISO 639-1 语言码 */
+		val LANGUAGE_BY_ISO = mapOf(
+			"en" to "english",
+			"zh" to "chinese",
+			"ja" to "japanese",
+			"ko" to "korean",
+			"ru" to "russian",
+			"es" to "spanish",
+			"fr" to "french",
+			"de" to "german",
+			"it" to "italian",
+			"pt" to "portuguese",
+			"ar" to "arabic",
+			"tr" to "turkish",
+			"pl" to "polish",
+			"nl" to "dutch",
+			"vi" to "vietnamese",
+		)
 		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
 		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")

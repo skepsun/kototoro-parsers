@@ -26,6 +26,7 @@ import java.net.Proxy
 import java.net.URI
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import javax.net.ssl.SSLContext
@@ -131,6 +132,8 @@ internal object ContentLoaderContextMock : ContentLoaderContext() {
     override fun getConfig(source: ContentSource): ContentSourceConfig {
         return SourceConfigMock()
     }
+
+    override fun getPreferredLocales(): List<Locale> = listOf(Locale.ENGLISH)
 
     override fun getDefaultUserAgent(): String = UserAgents.FIREFOX_MOBILE
 
