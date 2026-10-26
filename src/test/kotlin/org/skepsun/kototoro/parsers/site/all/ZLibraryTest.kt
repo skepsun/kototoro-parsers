@@ -92,6 +92,54 @@ class ZLibraryTest {
 		assertEquals(RATING_UNKNOWN, parser.parseRating("bad"))
 	}
 
+	/**
+	 * 应用内浏览器拿本源 UA 去装载验证页，这里若返回伪造的桌面 client hints，
+	 * WebView 会把它们原样带进顶层导航，与真实引擎指纹矛盾
+	 */
+	@Test
+	fun `request headers stay browser consistent`() {
+		val headers = parser.getRequestHeaders()
+
+		assertEquals(ContentLoaderContextMock.getDefaultUserAgent(), headers["User-Agent"])
+		assertNull(headers["sec-ch-ua"])
+		assertNull(headers["sec-ch-ua-mobile"])
+		assertNull(headers["sec-ch-ua-platform"])
+		assertNull(headers["Sec-Fetch-Site"])
+		assertNull(headers["Upgrade-Insecure-Requests"])
+	}
+
+	@Test
+	fun `detect diamwall rejection statuses`() {
+		assertTrue(parser.isDiamWallStatus(503))
+		assertTrue(parser.isDiamWallStatus(513))
+		assertTrue(parser.isDiamWallStatus(517))
+		assertFalse(parser.isDiamWallStatus(200))
+		assertFalse(parser.isDiamWallStatus(403))
+		assertFalse(parser.isDiamWallStatus(404))
+	}
+
+	@Test
+	fun `detect diamwall interstitial served with 200`() {
+		assertTrue(parser.isDiamWallChallenge(fixture("diamwall-challenge.html")))
+		assertFalse(parser.isDiamWallChallenge(fixture("search.html")))
+		assertFalse(parser.isDiamWallChallenge(fixture("book.html")))
+	}
+
+	/** 正文里出现 DiamWall 字样（书名/简介）不算拦截 */
+	@Test
+	fun `content mentioning diamwall is not a challenge`() {
+		val doc = Jsoup.parse(
+			"""
+			<html><head><title>Book</title></head><body>
+			<z-bookcard id="1" href="/book/1/x.html"><div slot="title">DiamWall and me</div></z-bookcard>
+			<p>c_token= and __diamwall are cookie names discussed in this book.</p>
+			</body></html>
+			""".trimIndent(),
+			"https://z-library.sk/",
+		)
+		assertFalse(parser.isDiamWallChallenge(doc))
+	}
+
 	private fun fixture(name: String): Document = Jsoup.parse(
 		javaClass.getResourceAsStream("/fixtures/zlibrary/$name")?.bufferedReader()?.use { it.readText() }
 			?: error("fixture not found: $name"),

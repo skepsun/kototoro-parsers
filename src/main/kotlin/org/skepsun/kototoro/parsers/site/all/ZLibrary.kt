@@ -3,6 +3,7 @@ package org.skepsun.kototoro.parsers.site.all
 import androidx.annotation.VisibleForTesting
 import okhttp3.Headers
 import okhttp3.Response
+import org.jsoup.HttpStatusException
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentParserAuthProvider
@@ -12,7 +13,6 @@ import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.exception.AuthRequiredException
 import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.network.UserAgents
 import org.skepsun.kototoro.parsers.util.*
 import java.util.EnumSet
 
@@ -20,7 +20,7 @@ import java.util.EnumSet
  * Z-Library - 大型电子书图书馆（出版物为主）
  *
  * 网站: https://z-library.sk/
- * 最后验证: 2026-09（页面结构以 2025 年 Wayback 快照比对；线上有 DiamWall JS 盾）
+ * 最后验证: 2026-10（页面结构以 2025 年 Wayback 快照比对；线上有 DiamWall JS 盾）
  *
  * 站点协议（匿名可读、下载需登录）:
  * - 搜索: `/s/{query}?page=N`，可加 `selected_content_types[]=book`、`extensions[]=EPUB`、`languages[]=english`、`order=popular|date|year`
@@ -30,9 +30,12 @@ import java.util.EnumSet
  *
  * 认证:
  * - 浏览搜索匿名可用；下载需要 remix_userid + remix_userkey cookie（WebView 登录）
- * - 站方 DiamWall 按 UA/IP/TLS 指纹打分：正常浏览器先发 307 下发 `__diamwall` cookie 并由 JS 计算后续；
- *   非浏览器客户端会得到 503 "verifying your browser"（验证页）或 517 "unusual"（直接拒绝），
- *   两者都在这里转换成带指引的 ParseException。应用内 WebView 登录可完成 JS 验证并携带会话 cookie
+ * - 站方 DiamWall 按 UA、UA-CH、TLS 指纹打分，放行时才下发 `__diamwall` clearance cookie。
+ *   非浏览器客户端会收到 503、513 "Verifying your browser" 或 517 "Access Denied"，
+ *   也可能收到 200 + 一段只跑 JS 的挑战页（`<title>` 含 DiamWall）。新版挑战是交互式 CAPTCHA
+ *   （同源 iframe `/.well-known/diamwall/...`），纯 HTTP 客户端解不了，只有指纹自洽的真实浏览器
+ *   能自动通过，所以这里转换成 requestBrowserAction 交给应用内 WebView；验证后的 cookie 由宿主
+ *   cookie jar 共享给后续请求
  *
  * 限制:
  * - 下载有每日配额；本解析器不处理验证码与账号付费逻辑
@@ -55,11 +58,13 @@ internal class ZLibrary(context: ContentLoaderContext) :
 		"en.z-library.sk",
 	)
 
-	/**
-	 * DiamWall 按 UA/指纹打分，默认 `Kototoro/x.x` UA 会直接被判异常，
-	 * 这里以桌面 Chrome 作为可配置默认值（站点设置里的 UserAgent 项可覆盖）
+	/*
+	 * 刻意不覆盖 userAgentKey：基类默认值就是宿主 WebView 自己的 UA（context.getDefaultUserAgent()），
+	 * 而应用内浏览器正是拿本源 UA 去装载验证页面。DiamWall 会交叉比对 navigator.userAgent 与
+	 * UA-CH/platform/touch 等环境特征，给 Android WebView 塞桌面 Windows UA 会自相矛盾，挑战页就
+	 * 永远停在 "Verifying your browser"；只有浏览器与 OkHttp 都用引擎真实 UA，两边指纹才一致。
+	 * 站点设置里的 UserAgent 项仍可覆盖此默认值。
 	 */
-	override val userAgentKey = ConfigKey.UserAgent(UserAgents.CHROME_DESKTOP)
 
 	override val authUrl: String
 		get() = "https://$domain/"
@@ -79,16 +84,14 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			isTagsExclusionSupported = false,
 		)
 
+	/**
+	 * 只加与浏览器无关的通用头。不要伪造 `sec-ch-ua*` / `Sec-Fetch-*`：宿主会把这里返回的头
+	 * 原样交给 WebView.loadUrl 作为顶层导航头，而顶层导航的 `Sec-Fetch-Site` 只可能是 `none`，
+	 * 再叠加与真实引擎矛盾的桌面 client hints，会被 DiamWall 直接判成机器人
+	 */
 	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
 		.add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
 		.add("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8")
-		.add("sec-ch-ua", "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\", \"Google Chrome\";v=\"126\"")
-		.add("sec-ch-ua-mobile", "?0")
-		.add("sec-ch-ua-platform", "\"Windows\"")
-		.add("Sec-Fetch-Dest", "document")
-		.add("Sec-Fetch-Mode", "navigate")
-		.add("Sec-Fetch-Site", "same-origin")
-		.add("Upgrade-Insecure-Requests", "1")
 		.build()
 
 	override suspend fun isAuthorized(): Boolean {
@@ -112,24 +115,63 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	}
 
 	/**
-	 * DiamWall 命中时 [org.skepsun.kototoro.parsers.network.WebClient.httpGet] 会先抛
-	 * HttpStatusException（503 verifying / 517 denied），这里换成可操作的错误提示
+	 * DiamWall 拦截时把它转成浏览器动作。httpGet 对 4xx/5xx 先抛 HttpStatusException，
+	 * 而"200 + 挑战页"要走正常响应路径，所以两处都要拦
 	 */
 	private suspend fun fetchDocument(url: String): Document {
 		val response = try {
 			webClient.httpGet(url, getRequestHeaders())
-		} catch (e: org.jsoup.HttpStatusException) {
-			if (e.statusCode == HTTP_ANTIBOT || e.statusCode == HTTP_ANTIBOT_VERIFY) {
-				throw ParseException(
-					"Z-Library DiamWall 反爬校验 (HTTP ${e.statusCode})：请在应用内打开本源并完成登录" +
-						"（WebView 会执行浏览器验证并带上会话 Cookie）；若持续失败请改用 Library Genesis 等源",
-					e.url ?: url,
-				)
+		} catch (e: HttpStatusException) {
+			if (isDiamWallStatus(e.statusCode)) {
+				requestBrowserVerification(e.url ?: url)
 			}
 			throw e
 		}
 		checkAuth(response)
-		return response.parseHtml()
+		val doc = response.parseHtml()
+		if (isDiamWallChallenge(doc)) {
+			requestBrowserVerification(url)
+		}
+		return doc
+	}
+
+	/**
+	 * 交给宿主浏览器验证。没有浏览器能力的环境（CLI、测试）里声明式接口会抛
+	 * UnsupportedOperationException，这里退化成带指引的解析错误，避免裸异常
+	 */
+	private fun requestBrowserVerification(url: String): Nothing {
+		try {
+			context.requestBrowserAction(this, url)
+		} catch (e: UnsupportedOperationException) {
+			throw ParseException(
+				"Z-Library 被 DiamWall 浏览器验证拦截：请在应用内打开本源，完成验证后再试",
+				url,
+				e,
+			)
+		}
+	}
+
+	/** DiamWall 用非标准状态码拒答：503 校验中、513 Verifying your browser、517 Access Denied */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun isDiamWallStatus(statusCode: Int): Boolean =
+		statusCode == HTTP_DIAMWALL_CHECKING || statusCode == HTTP_DIAMWALL_VERIFY || statusCode == HTTP_DIAMWALL_DENIED
+
+	/**
+	 * 200 但内容是挑战页。正常页面带 `<z-bookcard>` / `<z-cover>`，据此优先排除，
+	 * 避免正文里偶然出现 "DiamWall" 字样（例如书名）时误判
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun isDiamWallChallenge(doc: Document): Boolean {
+		val title = doc.title()
+		if (DIAMWALL_TITLE_MARKERS.any { title.contains(it, ignoreCase = true) }) {
+			return true
+		}
+		if (doc.selectFirst("z-bookcard, z-cover") != null) {
+			return false
+		}
+		val html = doc.outerHtml()
+		return html.length <= MAX_CHALLENGE_HTML_LENGTH &&
+			DIAMWALL_BODY_MARKERS.any { html.contains(it, ignoreCase = true) }
 	}
 
 	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -335,12 +377,6 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	override suspend fun getPageUrl(page: ContentPage): String = page.url
 
 	private fun checkAuth(response: Response) {
-		if (response.code == HTTP_ANTIBOT) {
-			throw ParseException(
-				"Z-Library 反爬墙 (HTTP $HTTP_ANTIBOT)，请在应用内重新打开站点并登录",
-				response.request.url.toString(),
-			)
-		}
 		if (response.request.url.encodedPath.startsWith("/login") || response.request.url.queryParameter("redirectUrl") != null) {
 			throw AuthRequiredException(source)
 		}
@@ -430,8 +466,15 @@ internal class ZLibrary(context: ContentLoaderContext) :
 	)
 
 	private companion object {
-		const val HTTP_ANTIBOT = 517
-		const val HTTP_ANTIBOT_VERIFY = 503
+		// DiamWall 的非标准拒绝码
+		const val HTTP_DIAMWALL_CHECKING = 503
+		const val HTTP_DIAMWALL_VERIFY = 513
+		const val HTTP_DIAMWALL_DENIED = 517
+
+		// 挑战页只有几 KB，正文页远超这个量级；用它把正文扫描限制在真正的挑战页上
+		const val MAX_CHALLENGE_HTML_LENGTH = 64 * 1024
+		val DIAMWALL_TITLE_MARKERS = arrayOf("diamwall", "verifying your browser")
+		val DIAMWALL_BODY_MARKERS = arrayOf("__diamwall", "/.well-known/diamwall/", "cpt.lib", "c_token=")
 		val EXT_PARAM_FIND = Regex("[?&]extension=([a-zA-Z0-9]+)")
 		val FORMAT_LINE_FIND = Regex("Format:\\s*([a-zA-Z0-9]+)")
 		const val MAX_RATING = 5f

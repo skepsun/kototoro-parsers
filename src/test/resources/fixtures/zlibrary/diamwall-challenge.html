@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<title>Verifying your browser | DiamWall</title>
+<script>
+  window.__diamwall = {
+    "chl": "\/.well-known\/diamwall\/load\/html\/3f8a1c9d",
+    "cpt": "https:\/\/cdn.diamwall.example\/v2\/cpt.lib.js",
+    "ts": 1761435000
+  };
+</script>
+</head>
+<body>
+<div id="dw-gate" role="dialog" aria-live="polite"></div>
+<iframe src="/.well-known/diamwall/load/html/3f8a1c9d" title="verification" width="0" height="0" hidden></iframe>
+<script src="/.well-known/diamwall/load/js/3f8a1c9d"></script>
+<script>
+  // 挑战页在这里写 clearance 相关 cookie，再由同一脚本 reload 到真实页面
+  document.cookie = "c_token=A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2; path=/; max-age=1800";
+  document.cookie = "dwid=8f14e45fceea167a5a36dedd4bea2543; path=/; max-age=86400";
+  navigator.sendBeacon("/.well-known/diamwall/load/beacon/3f8a1c9d", "ok");
+</script>
+</body>
+</html>
