@@ -162,6 +162,23 @@ class ZLibraryTest {
 		assertTrue(keys.any { it is ConfigKey.PreferredLanguage && it.title == "推荐流语言" })
 	}
 
+	/** 语言诊断要能带上 cookie 名和站内语言切换器的标签 */
+	@Test
+	fun `language diagnostic dumps switcher`() {
+		val doc = Jsoup.parse(
+			"""<html><body>
+			<form action="/language" method="post">
+				<select name="language"><option value="en">English</option><option value="ru">Русский</option></select>
+			</form>
+			</body></html>""".trimIndent(),
+			"https://z-library.sk/",
+		)
+		val message = parser.languageDiagnostic(doc)
+		assertTrue(message.contains("cookies=["))
+		assertTrue(message.contains("switcher="))
+		assertTrue(message.contains("""name="language""""))
+	}
+
 	@Test
 	fun `parse rating`() {
 		assertEquals(0.88f, parser.parseRating("4.4"), 0.001f)

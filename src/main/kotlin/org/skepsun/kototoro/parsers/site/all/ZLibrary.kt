@@ -136,6 +136,10 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			doc = fetchDocument(homeFeedUrl(""))
 			items = parseHomeFeed(doc)
 		}
+		if (homeFeed && configuredLanguage().isNotEmpty()) {
+			// 语言覆盖还没打通（站点不认 languages[]），先把站内开关的形态摊出来定位
+			throw ParseException(languageDiagnostic(doc), url)
+		}
 		if (items.isEmpty() && homeFeed) {
 			// 搜索为空是正常结果；推荐流为空基本是站点改版，抛出来才能定位
 			throw ParseException(describeEmptyList(doc), url)
@@ -230,6 +234,18 @@ internal class ZLibrary(context: ContentLoaderContext) :
 			else -> listOfNotNull(LANGUAGE_BY_ISO.entries.firstOrNull { it.value == language }?.key)
 		}.distinct().ifEmpty { listOf(DEFAULT_LANGUAGE_ISO) }
 		return codes.mapIndexed { index, code -> if (index == 0) code else "$code;q=0.8" }.joinToString(",")
+	}
+
+	/**
+	 * 语言诊断（临时）：推荐流的语种由站点决定，需要知道站内切换器走什么——链接参数、表单
+	 * 还是 cookie。这里把 cookie 名和切换器标签摊出来
+	 */
+	@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+	internal fun languageDiagnostic(doc: Document): String {
+		val cookies = context.cookieJar.getCookies(domain).joinToString(",") { it.name }
+		val switcher = doc.selectFirst("select, form[action*=lang], a[hreflang], a[href*=/lang]")
+		val markup = switcher?.outerHtml()?.replace('\n', ' ')?.take(150)
+		return "Z-Library 语言诊断：cookies=[$cookies] switcher=$markup"
 	}
 
 	/**
