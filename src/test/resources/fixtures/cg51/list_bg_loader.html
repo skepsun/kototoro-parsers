@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>51吃瓜 - 2026 模板列表夹具</title></head>
+<body>
+<div class="main-container">
+    <!-- 2026-10 模板: 封面改为声明式背景加载(z-bg-loader-url), 卡片内无 img、无 loadBannerDirect -->
+    <article itemscope itemtype="http://schema.org/BlogPosting" class="">
+        <meta itemprop="url mainEntityOfPage" content="/archives/200001/" />
+        <a href="/archives/200001/">
+            <div class="post-card" id="post-card-200001">
+                <div class="blog-background" z-bg-loader-url="https://pic.example.com/cover-200001.jpeg" data-no-loading="1"></div>
+                <div class="post-card-mask">
+                    <div class="post-card-container">
+                        <h2 class="post-card-title" itemprop="headline">新模板标题甲 第一集</h2>
+                        <div class="post-card-info post-card-info--hot">
+                            <span class="post-card-meta">
+                                <span itemprop="author">瓜瓜 • </span>
+                                <span itemprop="datePublished">2026 年 10 月 27 日 • </span>
+                                <span>今日吃瓜, 海外吃瓜</span>
+                            </span>
+                            <div class="wrap"><span class="wraps">热门</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </article>
+    <!-- 2026-10 模板的另一写法: 封面写在 background-image 内联样式里 -->
+    <article itemscope itemtype="http://schema.org/BlogPosting" class="">
+        <a href="/archives/200002/" title="新模板标题乙 第二集">
+            <div class="post-card" id="post-card-200002">
+                <div class="blog-background" style="background-image:url('https://pic.example.com/cover-200002.jpeg')"></div>
+                <div class="post-card-mask">
+                    <div class="post-card-container">
+                        <h2 class="post-card-title" itemprop="headline">新模板标题乙 第二集</h2>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </article>
+    <!-- 广告条目: 外链, 不应出现在列表中 -->
+    <article class="ad-item">
+        <a href="https://ad.example1.com" target="_blank" title="广告1">
+            <div class="blog-background" z-bg-loader-url="https://ad.example1.com/banner.jpeg"></div>
+        </a>
+    </article>
+</div>
+</body>
+</html>

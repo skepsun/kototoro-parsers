@@ -36,6 +36,11 @@ import okhttp3.Headers
 /**
  * 51吃瓜 - Mirages Typecho 主题站。
  *
+ * 站点结构（列表页）：
+ * - 文章卡片 = article[itemscope=BlogPosting] + /archives/{id} 链接；ad-item 为外链广告
+ * - 封面：2026-10 起改为 div.blog-background[z-bg-loader-url]（无 <img>、无内联脚本），
+ *   旧模板才是 loadBannerDirect 脚本或 img 懒加载属性，见 [listCoverUrl]
+ *
  * 站点结构（详情页）：
  * - 正文容器：#post .post-content[itemprop=articleBody]
  * - 正文内混有大量非正文块（广告按钮/站址公告/下载APP按钮/上下篇/热门推荐/评论区），
@@ -120,7 +125,20 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
     /** 懒加载属性优先级：自定义解密属性 > 通用懒加载 > 原始 src */
     private val lazySrcAttrs = listOf("data-xkrkllgl", "data-src", "data-original")
 
+    /**
+     * 列表封面属性。2026-10 模板改版把封面从 loadBannerDirect 脚本改成声明式背景加载
+     * （image.20260416.js 读取 z-bg-loader-url），文章卡片里不再有 <img> 与内联脚本。
+     */
+    private val listCoverAttrs = listOf("z-bg-loader-url", "data-bg-loader-url")
+
+    /** 旧模板：loadBannerDirect('封面地址', ...) 内联脚本 */
     private val bannerScriptRegex = Regex("""loadBannerDirect\s*\(\s*['"]([^'"]+)['"]""")
+
+    /** 兜底：background-image:url(...) 内联样式 */
+    private val cssBackgroundRegex = Regex(
+        """background(?:-image)?\s*:\s*url\(\s*['"]?([^'")]+)['"]?\s*\)""",
+        RegexOption.IGNORE_CASE,
+    )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions {
         val tags = categories.map { (name, id) ->
@@ -178,8 +196,7 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
             if (title.isEmpty()) return@mapNotNull null
             if (violentKeywords.any { title.contains(it, ignoreCase = true) }) return@mapNotNull null
 
-            val cover = bannerScriptRegex.find(node.outerHtml())?.groupValues?.get(1)?.sanitizeUrl()
-                ?: node.selectFirst("img")?.contentImageSrc()
+            val cover = listCoverUrl(node)
             Content(
                 id = generateUid(absoluteUrl),
                 title = title,
@@ -198,6 +215,24 @@ internal class Cg51(context: ContentLoaderContext) : PagedContentParser(
                 chapters = null,
             )
         }
+    }
+
+    /**
+     * 列表封面：声明式背景属性（当前模板）> 旧模板 loadBannerDirect 脚本 >
+     * 内联 background-image 样式 > <img> 懒加载属性。
+     */
+    internal fun listCoverUrl(node: Element): String? {
+        listCoverAttrs.firstNotNullOfOrNull { name ->
+            node.selectFirst("[$name]")?.attr(name)?.trim()?.takeIf { it.isNotEmpty() }
+        }?.let { return it.sanitizeUrl() }
+
+        bannerScriptRegex.find(node.outerHtml())?.groupValues?.get(1)?.let { return it.sanitizeUrl() }
+
+        node.selectFirst("[style*=background]")?.attr("style")?.let { style ->
+            cssBackgroundRegex.find(style)?.groupValues?.get(1)?.let { return it.sanitizeUrl() }
+        }
+
+        return node.selectFirst("img")?.contentImageSrc()
     }
 
     override suspend fun getDetails(manga: Content): Content {

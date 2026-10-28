@@ -55,6 +55,20 @@ class Cg51ParserTest {
     }
 
     @Test
+    fun `list cover uses z-bg-loader-url in 2026 template`() {
+        val result = parser.parseList(fixture("list_bg_loader.html"))
+
+        assertEquals(2, result.size)
+        // 2026-10 模板: 卡片里只有 div.blog-background[z-bg-loader-url]
+        assertEquals("https://pic.example.com/cover-200001.jpeg", result[0].coverUrl)
+        // 标题不带 post-card-info 里的"热门"角标
+        assertEquals("新模板标题甲 第一集", result[0].title)
+        // 备用写法: background-image 内联样式
+        assertEquals("https://pic.example.com/cover-200002.jpeg", result[1].coverUrl)
+        assertEquals("新模板标题乙 第二集", result[1].title)
+    }
+
+    @Test
     fun `detail description excludes noise blocks`() {
         val result = parser.parseDetails(fixture("detail_video.html"), content())
 
