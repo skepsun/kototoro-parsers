@@ -173,26 +173,24 @@ internal class WnacgParser(context: ContentLoaderContext) :
     // 分類映射：cateId -> 名稱
     private val cateMap = mapOf(
         5 to "同人誌",
-        1 to "漢化", 12 to "日語", 16 to "English", 2 to "CG畫集", 22 to "3D漫畫", 3 to "寫真Cosplay",
+        1 to "漢化", 12 to "日語", 16 to "English", 2 to "CG畫集", 37 to "AI圖集", 22 to "3D漫畫", 3 to "Cosplay",
         6 to "單行本", 9 to "漢化", 13 to "日語", 17 to "English",
         7 to "雜誌短篇", 10 to "漢化", 14 to "日語", 18 to "English",
-        19 to "韓漫", 20 to "漢化", 21 to "生肉",
     )
-    // 分組映射：cateId -> 分組（同人誌/單行本/雜誌短篇/韓漫）
+    // 分組映射：cateId -> 分組（同人誌/單行本/雜誌短篇）；站點已撤下韓漫（cate 19/20/21 均 404）
     private val cateGroup = mapOf(
         // 同人誌
-        5 to "同人誌", 1 to "同人誌", 12 to "同人誌", 16 to "同人誌", 2 to "同人誌", 22 to "同人誌", 3 to "同人誌",
+        5 to "同人誌", 1 to "同人誌", 12 to "同人誌", 16 to "同人誌", 2 to "同人誌", 37 to "同人誌", 22 to "同人誌",
+        3 to "同人誌",
         // 單行本
         6 to "單行本", 9 to "單行本", 13 to "單行本", 17 to "單行本",
         // 雜誌短篇
         7 to "雜誌短篇", 10 to "雜誌短篇", 14 to "雜誌短篇", 18 to "雜誌短篇",
-        // 韓漫
-        19 to "韓漫", 20 to "韓漫", 21 to "韓漫",
     )
 
     // 提供过滤器标签（与站点现有类别一致）
     private val availableCateTags: Set<ContentTag> = run {
-        val ids = listOf(5, 1, 12, 16, 2, 22, 3, 6, 9, 13, 17, 7, 10, 14, 18, 19, 20, 21)
+        val ids = listOf(5, 1, 12, 16, 2, 37, 22, 3, 6, 9, 13, 17, 7, 10, 14, 18)
         ids.map { id ->
             val group = cateGroup[id]
             val sub = cateMap[id]
@@ -469,14 +467,20 @@ internal class WnacgParser(context: ContentLoaderContext) :
             return withScheme.replaceFirst(Regex("^https:/{3,}"), "https://")
         }
         val cover = normalizeCover(doc.selectFirst("div.userwrap .asTBcell.uwthumb img")?.src()) ?: manga.coverUrl
-        val tags = doc.select("a.tagshow").mapToSet { a ->
+        // 合集的章節目錄也用 a.tagshow（帶 data-chid），標籤只取 addtags 區
+        val tags = doc.select("div.addtags a.tagshow").mapToSet { a ->
             ContentTag(
                 key = a.text().trim(),
                 title = a.text().trim(),
                 source = source,
             )
         }
-        val chapters = if (id != null) listOf(
+        val seriesChapters = if (id != null && doc.selectFirst("#sr_pub") != null) {
+            loadSeriesChapters(doc, id)
+        } else {
+            emptyList()
+        }
+        val chapters = if (seriesChapters.isNotEmpty()) seriesChapters else if (id != null) listOf(
             ContentChapter(
                 id = generateUid("/photos-slist-aid-$id.html"),
                 url = "/photos-slist-aid-$id.html",
@@ -503,6 +507,51 @@ internal class WnacgParser(context: ContentLoaderContext) :
             chapters = chapters,
             description = description,
         )
+    }
+
+    /**
+     * 合集（分集）詳情頁：章節目錄在 #sr_pub 後的 a.tagshow[data-chid]，每頁 12 話，
+     * 後續頁為 data-pageurl（/photos-index-aid-{sid}-page-N.html）。每一話本身是普通作品，
+     * 圖片仍走 photos-gallery-aid-{chid}.html。
+     */
+    private suspend fun loadSeriesChapters(firstPage: Document, seriesId: String): List<ContentChapter> {
+        val box = firstPage.selectFirst("#sr_pub")
+        val total = box?.attr("data-total")?.toIntOrNull() ?: 0
+        val perPage = box?.attr("data-per")?.toIntOrNull()?.takeIf { it > 0 } ?: 12
+        val pageCount = if (total > 0) (total + perPage - 1) / perPage else 1
+        val links = ArrayList<Element>(maxOf(total, perPage))
+        links.addAll(firstPage.select("a.tagshow[data-chid]"))
+        for (page in 2..pageCount) {
+            val doc = httpGetHtmlWithBackoff("https://$domain/photos-index-aid-$seriesId-page-$page.html")
+            val pageLinks = doc.select("a.tagshow[data-chid]")
+            if (pageLinks.isEmpty()) break
+            links.addAll(pageLinks)
+        }
+        val seen = HashSet<String>(links.size)
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
+        return links.mapIndexedNotNull { index, a ->
+            val chapterId = a.attr("data-chid").trim().takeIf { it.isNotEmpty() && seen.add(it) }
+                ?: return@mapIndexedNotNull null
+            val url = "/photos-slide-aid-$chapterId-sid-$seriesId.html"
+            // title 形如：第1話《原標題》 55P 2024-08-26
+            val info = a.attr("title")
+            val number = Regex("第(\\d+)話").find(a.text())?.groupValues?.get(1)?.toFloatOrNull()
+                ?: (index + 1).toFloat()
+            val uploadDate = Regex("(\\d{4}-\\d{2}-\\d{2})\\s*$").find(info)?.groupValues?.get(1)
+                ?.let { runCatching { dateFormat.parse(it)?.time }.getOrNull() }
+                ?: 0L
+            ContentChapter(
+                id = generateUid(url),
+                url = url,
+                title = a.text().trim().ifEmpty { "第${number.toInt()}話" },
+                number = number,
+                volume = 0,
+                scanlator = null,
+                uploadDate = uploadDate,
+                branch = null,
+                source = source,
+            )
+        }
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {

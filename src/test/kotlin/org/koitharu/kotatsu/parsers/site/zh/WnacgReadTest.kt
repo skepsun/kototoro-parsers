@@ -49,4 +49,35 @@ class WnacgReadTest {
         val resp = context.doRequest(pageUrl, pages.first().source)
         assertTrue(resp.isSuccessful, "图片请求失败：HTTP ${resp.code} ${resp.message}")
     }
+
+    @Test
+    fun series_chapters_span_pages() = runTest(timeout = 3.minutes) {
+        val parser = context.newParserInstance(ContentParserSource.WNACG)
+        val domain = parser.domain
+        // 合集：13 話，目錄每頁 12 話，第 13 話在 -page-2
+        val sid = "400714"
+        val seed = Content(
+            id = sid.hashCode().toLong(),
+            title = "aid-$sid",
+            altTitles = emptySet(),
+            url = "/photos-index-page-1-aid-$sid.html",
+            publicUrl = "https://$domain/photos-index-page-1-aid-$sid.html",
+            rating = RATING_UNKNOWN,
+            contentRating = null,
+            coverUrl = null,
+            tags = emptySet(),
+            state = null,
+            authors = emptySet(),
+            description = null,
+            chapters = null,
+            source = ContentParserSource.WNACG,
+        )
+        val detailed = parser.getDetails(seed)
+        val chapters = detailed.chapters.orEmpty()
+        assertTrue(chapters.size == 13, "合集章節數應為 13：${chapters.size}")
+        assertTrue(chapters.map { it.number } == (1..13).map { it.toFloat() }, "話數不連續：${chapters.map { it.number }}")
+        assertTrue(detailed.tags.none { it.title.startsWith("第") }, "章節被當成標籤：${detailed.tags}")
+        val pages = parser.getPages(chapters.last())
+        assertTrue(pages.isNotEmpty(), "第 13 話閱讀頁為空")
+    }
 }
