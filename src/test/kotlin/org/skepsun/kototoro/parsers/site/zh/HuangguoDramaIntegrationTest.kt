@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.ContentTag
 import org.skepsun.kototoro.parsers.model.SortOrder
 import org.skepsun.kototoro.parsers.util.await
 
@@ -64,6 +65,40 @@ class HuangguoDramaIntegrationTest {
             )
             assertTrue(decoded.body.bytes().size > 4_096)
         }
+    }
+
+    @Test
+    fun `paginates feed channels and tag keyword fallback`() = runBlocking {
+        val pages = (0..2).map { index ->
+            parser.getList(index * 20, SortOrder.UPDATED, ContentListFilter.EMPTY)
+        }
+        pages.forEachIndexed { index, page ->
+            assertTrue(page.size >= 15, "第${index + 1}页条数异常: ${page.size}")
+        }
+        // 站点按发布时间排序，翻页期间有新剧入库会让相邻页少量重叠，这里只要求绝大多数条目不同
+        val feedIds = pages.flatten().map { it.id }
+        assertTrue(
+            feedIds.toSet().size >= 45,
+            "翻页内容几乎重复，去重后只剩 ${feedIds.toSet().size} 条",
+        )
+
+        val channel = parser.getFilterOptions().availableTags.first { it.key == "ai-duanju" }
+        val channelPages = (0..1).map { index ->
+            parser.getList(index * 20, SortOrder.UPDATED, ContentListFilter(tags = setOf(channel)))
+        }
+        assertTrue(channelPages.all { it.size >= 15 }, "频道翻页条数异常")
+        assertTrue(
+            channelPages.flatten().map { it.id }.toSet().size >= 30,
+            "频道翻页内容几乎重复",
+        )
+
+        // 详情里的内容标签没有筛选接口，退化成关键词搜索，仍应是可翻页的结果集
+        val tagSearch = parser.getList(
+            0,
+            SortOrder.UPDATED,
+            ContentListFilter(tags = setOf(ContentTag("都市", "都市", parser.source))),
+        )
+        assertTrue(tagSearch.isNotEmpty(), "标签关键词搜索无结果")
     }
 
     private suspend fun fetch(url: String): String {

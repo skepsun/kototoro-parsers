@@ -8,7 +8,9 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.skepsun.kototoro.parsers.OfflineContentLoaderContext
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.ContentState
 import org.skepsun.kototoro.parsers.model.ContentTag
@@ -50,13 +52,52 @@ internal class HuangguoDramaTest {
                 ContentListFilter(tags = setOf(ContentTag("AI成人漫剧", "ai-manju", p.source))),
             ),
         )
-        // 未知标签不拼进路径，回落全站流
+        // 频道标签按 key、按标题、按去掉 AI 前缀的写法都能落到分类接口
         assertEquals(
-            "https://huangguoai.com/api/videos?page=1&size=20&sort=new",
+            "https://huangguoai.com/api/videos/category/ai-huanlian?page=1&size=20&sort=new",
             p.buildListUrl(
                 1,
                 SortOrder.UPDATED,
-                ContentListFilter(tags = setOf(ContentTag("自造", "not-a-channel", p.source))),
+                ContentListFilter(tags = setOf(ContentTag("AI换脸", "ai-huanlian", p.source))),
+            ),
+        )
+        assertEquals(
+            "https://huangguoai.com/api/videos/category/ai-huanlian?page=1&size=20&sort=new",
+            p.buildListUrl(
+                1,
+                SortOrder.UPDATED,
+                ContentListFilter(tags = setOf(ContentTag("AI换脸", "some-stale-key", p.source))),
+            ),
+        )
+        assertEquals(
+            "https://huangguoai.com/api/videos/category/ai-huanlian?page=1&size=20&sort=new",
+            p.buildListUrl(
+                1,
+                SortOrder.UPDATED,
+                ContentListFilter(tags = setOf(ContentTag("换脸", "换脸", p.source))),
+            ),
+        )
+        // 站点没有真标签接口的内容标签（如详情里的「都市」）退化成关键词搜索，而不是回落全站
+        assertEquals(
+            "https://huangguoai.com/api/search?q=%E9%83%BD%E5%B8%82&page=1&size=20",
+            p.buildListUrl(
+                1,
+                SortOrder.UPDATED,
+                ContentListFilter(tags = setOf(ContentTag("都市", "都市", p.source))),
+            ),
+        )
+        // 多个标签里只要有一个能落到频道，就按频道过滤
+        assertEquals(
+            "https://huangguoai.com/api/videos/category/ai-mogai?page=1&size=20&sort=new",
+            p.buildListUrl(
+                1,
+                SortOrder.UPDATED,
+                ContentListFilter(
+                    tags = setOf(
+                        ContentTag("都市", "都市", p.source),
+                        ContentTag("AI魔改", "ai-mogai", p.source),
+                    ),
+                ),
             ),
         )
         assertEquals(
@@ -149,6 +190,36 @@ internal class HuangguoDramaTest {
 
         assertEquals(listOf(1f, 2f), chapters.map { it.number })
         assertEquals("/api/videos/12/play?ep=1", chapters.first().url)
+    }
+
+    @Test
+    fun `skips malformed list entries instead of failing the page`() {
+        val p = parser()
+        val items = JSONArray(
+            """
+            [
+              {"id": 11, "title": "数字 id"},
+              {"id": "12", "title": "字符串 id"},
+              {"title": "缺少 id"},
+              {"id": 0, "title": "非法 id"},
+              {"id": 13, "title": "数字 id 2"}
+            ]
+            """.trimIndent(),
+        )
+
+        val list = p.parseList(items, "https://huangguoai.com/api/videos?page=1&size=20")
+
+        assertEquals(listOf("数字 id", "字符串 id", "数字 id 2"), list.map { it.title })
+    }
+
+    @Test
+    fun `fails the page when every list entry is malformed`() {
+        val p = parser()
+        val items = JSONArray("""[{"title": "缺少 id"}, {"title": "还是缺少 id"}]""")
+
+        assertThrows<ParseException> {
+            p.parseList(items, "https://huangguoai.com/api/videos?page=1&size=20")
+        }
     }
 
     @Test

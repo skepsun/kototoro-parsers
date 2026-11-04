@@ -91,11 +91,30 @@ GET /api/videos/12/play?ep=1
   建议章节 URL 存站内相对地址 `/api/videos/{id}/play?ep={n}`，在 `getPages()` 时才换真链。
 - 详情里的 `video_url` 是第 1 集的预置 m3u8，可直接复用（少了 `ep=1` 的一次请求）。
 
+## 四之二、标签筛选：只有 4 个频道是真的（2026-11-04 补充实测）
+
+应用会把内容上的 `tags`（`明星` / `都市` / `换脸` …）作为列表顶部的过滤标签回传，
+而站点只有 4 个频道具备真实筛选能力，其余「标签」都是 SEO 门面：
+
+| 候选接口 | 实测结果 |
+|---|---|
+| `/api/tags` | 200，返回 10 个分类 / 156 个标签（`name` / `slug` / `cate_id`），**只能用于取名字↔slug** |
+| `/api/videos?tag_id=929` | 忽略参数，`total` 仍是全站 3222 |
+| `/api/videos?tag=都市` / `tag_slug=dushi` | 忽略参数，返回全站流 |
+| `/api/videos/tag/{slug}` | `200` 但 `items: []` |
+| `/api/tags/{slug}/videos`、`/api/tag/{slug}` | 404 |
+| `/tag/{slug}/`、`/tag/{slug}/page/{n}/`（SSR 页面） | 200，标题与分页器（`data-pages`）都是该标签的，但**卡片不按标签过滤**：`/tag/fanzui/` 首页 4 张卡片里 3 张没有 `fanzui`；`/page/2/`、`/page/3/` 与第 1 页共享前 4 条 id |
+
+结论：**不要**去解析标签页，否则等于伪造筛选能力。实现上：
+
+- 频道标签：按 `key` / 完整标题 / 去掉 `AI` 前缀的标题（`换脸` → `ai-huanlian`）解析到分类接口；
+- 其余内容标签：退化为 `/api/search?q={标签名}` 关键词搜索，保证「点了标签列表会收窄」，而不是原样返回全站流。
+
 ## 五、与仓库契约的映射
 
 | 仓库能力 | 黄果接口 |
 |---|---|
-| `getListPage(page, order, filter)` | `/api/videos`（search 时 `/api/search`，带 tag 时 `/api/videos/category/{cate}`） |
+| `getListPage(page, order, filter)` | `/api/videos`（search 时 `/api/search`，频道标签时 `/api/videos/category/{cate}`，其余标签退化为搜索） |
 | `SortOrder.UPDATED` | `sort=new` |
 | `SortOrder.POPULARITY` | 默认流（`/api/videos`，实测即热度倒序） |
 | `availableTags` | 4 个 v1 分类：AI成人短剧 / AI成人漫剧 / AI换脸 / AI魔改 |

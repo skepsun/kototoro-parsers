@@ -51,6 +51,8 @@ import java.util.EnumSet
  *   由 [intercept] 走 [HuangguoImageDecoder] 解密。
  * - 分集 `title` 字段经常塞的是整段剧情简介而不是「第N集」，
  *   这里统一规范成「第N集」，避免异常长且露骨的文字直接进章节列表。
+ * - 只有 4 个频道（ai-duanju / ai-manju / ai-huanlian / ai-mogai）支持真实筛选；
+ *   详情里的 `tags` 没有对应接口，点选后按关键词搜索处理（见 [buildListUrl]）。
  */
 @ContentSourceParser(
     "HUANGGUO",
@@ -82,6 +84,7 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
+        // 站点只有这 4 个频道能真正筛选，其余标签在详情里展示，但点选后按关键词搜索处理
         availableTags = CHANNELS.mapTo(linkedSetOf()) { (key, title) -> ContentTag(title, key, source) },
         availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
     )
@@ -153,29 +156,68 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
         return HuangguoImageDecoder.decodeResponse(chain.proceed(chain.request()))
     }
 
+    /**
+     * 站点只有 4 个频道有真实筛选能力。详情里的 `tags`（「都市」「换脸」…）在服务端没有对应接口：
+     * `/tag/{slug}/` 页面确实存在，但卡片并不按标签过滤（实测 /tag/fanzui/ 里混入大量无关剧集），
+     * 所以这类标签退化成站点搜索的关键词，至少保证「点了标签列表会随之收窄」，而不是原地不动返回全站。
+     */
     internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = "https://$domain"
         val query = filter.query?.trim().orEmpty()
         // 站点搜索走独立接口，且不支持叠加分类筛选
         if (query.isNotEmpty()) {
-            return "$base/api/search?q=${query.urlEncoded().replace("+", "%20")}&page=$page&size=$pageSize"
+            return searchUrl(base, page, query)
         }
-        // 只接受已知频道，避免把用户遗留的自定义标签拼进路径
-        val channel = filter.tags.firstOrNull()?.key?.takeIf { key -> CHANNELS.any { it.first == key } }
+        val tag = filter.tags.firstOrNull { channelOf(it) != null } ?: filter.tags.firstOrNull()
+            ?: return feedUrl(base, page, order, channel = null)
+        channelOf(tag)?.let { return feedUrl(base, page, order, channel = it) }
+        val keyword = tag.title.trim().ifEmpty { tag.key.trim() }
+        return if (keyword.isEmpty()) {
+            feedUrl(base, page, order, channel = null)
+        } else {
+            searchUrl(base, page, keyword)
+        }
+    }
+
+    private fun searchUrl(base: String, page: Int, query: String): String =
+        "$base/api/search?q=${query.urlEncoded().replace("+", "%20")}&page=$page&size=$pageSize"
+
+    private fun feedUrl(base: String, page: Int, order: SortOrder, channel: String?): String {
         val path = if (channel != null) "/api/videos/category/$channel" else "/api/videos"
         val sort = if (order == SortOrder.UPDATED) "&sort=new" else ""
         return "$base$path?page=$page&size=$pageSize$sort"
     }
 
+    /**
+     * 频道标签解析：先按 key（解析器自己发布的标签），再按完整标题，
+     * 最后兼容详情标签里「换脸」「魔改」这类省掉 `AI` 前缀的写法。
+     */
+    private fun channelOf(tag: ContentTag): String? {
+        CHANNELS.firstOrNull { (key, title) -> tag.key == key || tag.title == title }?.let { return it.first }
+        val title = tag.title.trim()
+        if (title.isEmpty()) return null
+        return CHANNELS.firstOrNull { (_, channelTitle) -> channelTitle.removePrefix("AI") == title }?.first
+    }
+
     internal fun parseList(items: JSONArray, url: String): List<Content> = buildList(items.length()) {
         for (index in 0 until items.length()) {
             val item = items.optJSONObject(index) ?: continue
-            val videoId = item.optInt("id")
-            if (videoId <= 0) {
-                throw ParseException("黄果短剧: 列表条目缺少 id", url)
-            }
+            val videoId = videoIdOfItem(item) ?: continue
             add(parseCard(item, videoId))
         }
+        if (isEmpty() && items.length() > 0) {
+            throw ParseException("黄果短剧: 列表条目缺少 id", url)
+        }
+    }
+
+    /**
+     * `id` 实测是数字，但站点偶尔会把统计字段拼成字符串，这里两种都接受，
+     * 单条坏数据不应该让整页失败（应用会把失败记为列表错误并停止翻页）。
+     */
+    private fun videoIdOfItem(item: JSONObject): Int? = when (val raw = item.opt("id")) {
+        is Number -> raw.toInt().takeIf { it > 0 }
+        is String -> raw.trim().toIntOrNull()?.takeIf { it > 0 }
+        else -> null
     }
 
     internal fun parseCard(item: JSONObject, videoId: Int = item.optInt("id")): Content {
