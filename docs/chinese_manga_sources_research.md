@@ -40,6 +40,7 @@
 - 阅读参数：章节 HTML 中的 `params` 采用“前 16 字节 IV + AES-128-CBC/PKCS7 密文”，解密后读取 `host`、`source_id` 和 `images`；实现使用 JVM 原生密码库，不执行站点 JavaScript。
 - 普通图片线路：当前在线样本 `source_id=6` 直接返回 JPEG，无需 Referer。样本 `/chapter/618076-224176.html` 解析到 22 张图片。
 - 加密图片线路：脚本中的 `source_id=12` 会下载加密二进制并再次进行 AES-CBC 解密。实现通过带内部 URL fragment 的精确拦截器替换响应体，离线密码夹具已通过；当前尚未找到在线的 `source_id=12` 章节，不能视为线上验证完成。
+- 同库镜像六漫画：`https://www.liumanhua.com` 与滴答共用作品/章节 ID 和阅读参数协议（book `618076` 在两站都是「神奇蜘蛛侠v1」，章节 `224176` 相同），仅路由和 DOM 不同——详情 `/{id}`、章节 `/{id}/{chapterId}.html`、列表 `div.cy_list_mh`、详情 `div.cy_info`。已合并进同一解析器作为第二预设域名，作品/章节 URL 规范化为 `/book/{id}` 与 `/book/{bookId}/{chapterId}`，切换镜像后收藏仍可读。
 
 ## 漫画100
 
