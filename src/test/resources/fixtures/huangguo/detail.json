@@ -1,0 +1,49 @@
+{
+  "data": {
+    "id": 12,
+    "title": "测试剧集 A",
+    "description": "测试用简介 A：仅用于离线解析测试。",
+    "cover": "https://pic.drleao.cn/upload_01/upload/20260101/cover_a.jpg?auth_key=1793783714-0-0-bbbbbbbb",
+    "tags": [
+      "超能力",
+      "都市",
+      "奇幻"
+    ],
+    "score": 9.6,
+    "is_finished": true,
+    "episode_count": 3,
+    "duration": "207",
+    "author": {
+      "id": 2001,
+      "name": "测试作者",
+      "avatar": ""
+    },
+    "actors": [],
+    "episodes": [
+      {
+        "ep_num": 1,
+        "status": 1,
+        "duration": 207,
+        "title": "第1集"
+      },
+      {
+        "ep_num": 2,
+        "status": 1,
+        "duration": 185,
+        "title": "一段很长的剧情简介，用来验证章节标题会被规范成“第N集”。"
+      },
+      {
+        "ep_num": 3,
+        "status": 0,
+        "duration": 190,
+        "title": "第3集"
+      }
+    ],
+    "video_url": "https://yd-lphu-hls.hzjvlo.cn/videos5/0123456789abcdef/0123456789abcdef.m3u8?auth_key=1793777832-0-0-dddddddd",
+    "video_url_hevc": "",
+    "video_type": 1
+  },
+  "status": 1,
+  "msg": "",
+  "req_time": 1793777900
+}
