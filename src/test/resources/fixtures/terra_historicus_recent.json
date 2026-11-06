@@ -1,0 +1,36 @@
+{
+  "code": 0,
+  "data": [
+    {
+      "coverUrl": "https://web.hycdn.cn/comic/pic/20261102/b7cab3cb872bdeebcd68b5ed79543363.jpg",
+      "comicCid": "6253",
+      "title": "123罗德岛！？",
+      "subtitle": "你可能不知道的罗德岛小剧场！",
+      "episodeCid": "2858",
+      "episodeType": 1,
+      "episodeShortTitle": "「国度」篇",
+      "updateTime": 1793721600
+    },
+    {
+      "coverUrl": "https://web.hycdn.cn/comic/pic/20261102/8caf7a86433b004bf269733c05a12561.jpg",
+      "comicCid": "6253",
+      "title": "123罗德岛！？",
+      "subtitle": "你可能不知道的罗德岛小剧场！",
+      "episodeCid": "4991",
+      "episodeType": 1,
+      "episodeShortTitle": "「冻河」篇",
+      "updateTime": 1793635200
+    },
+    {
+      "coverUrl": "https://web.hycdn.cn/comic/pic/20261030/e0983a3d12866994c76048adce0b7940.jpg",
+      "comicCid": "6253",
+      "title": "123罗德岛！？",
+      "subtitle": "你可能不知道的罗德岛小剧场！",
+      "episodeCid": "7487",
+      "episodeType": 1,
+      "episodeShortTitle": "「塔露拉」篇",
+      "updateTime": 1793548800
+    }
+  ],
+  "msg": ""
+}

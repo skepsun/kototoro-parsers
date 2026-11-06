@@ -1,0 +1,32 @@
+{
+  "code": 0,
+  "data": {
+    "title": "下篇",
+    "shortTitle": "02",
+    "type": 1,
+    "likes": 116,
+    "pageInfos": [
+      {
+        "width": 1200,
+        "height": 1691,
+        "doublePage": true
+      },
+      {
+        "width": 1200,
+        "height": 1691,
+        "doublePage": false
+      },
+      {
+        "width": 1200,
+        "height": 1691,
+        "doublePage": false
+      },
+      {
+        "width": 1200,
+        "height": 1691,
+        "doublePage": false
+      }
+    ]
+  },
+  "msg": ""
+}
