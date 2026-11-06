@@ -1,0 +1,31 @@
+{
+  "genre": "short_play",
+  "name": "短剧",
+  "count": 1,
+  "items": [
+    {
+      "series_id": "7700008608125160472",
+      "title": "婚糖",
+      "cover": "https://p6-novel.byteimg.com/novel-pic/6124be40733729718f7cecf3d981cafb~tplv-shrink:640:0.image",
+      "episode_cnt": 70,
+      "score": "",
+      "play_cnt": 0,
+      "heat": "全70集",
+      "tags": [
+        "爱情",
+        "都市爱情",
+        "先婚后爱",
+        "替嫁"
+      ],
+      "category": "",
+      "abstract": "天才摄影师桑语，为挣脱桑家压榨，替养姐嫁给了车祸致残的总裁傅煦安，做起名义傅太太。她隐藏传奇摄影师Y的马甲，在杂志社打工，而Y正是傅煦安苦苦搜寻的神秘人。朝夕相处间，暗生暧昧。桑语看见满墙Y的调查线索，错认自己是替身，心灰意冷提出离婚。等她寻回失散亲人，傅煦安道出真相，当年车祸舍命救他的，就是桑语。误会消解，卸下契约枷锁，满身伤痕的他们，终于双向奔赴，拥抱属于彼此的爱意。",
+      "vid": "7700010524985003033",
+      "stream_url": "/stream?vid=7700010524985003033",
+      "episodes_url": "/episodes?series_id=7700008608125160472"
+    }
+  ],
+  "has_more": false,
+  "next_offset": 3,
+  "session_id": "site",
+  "source": "site"
+}

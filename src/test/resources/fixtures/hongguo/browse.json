@@ -1,0 +1,51 @@
+{
+  "genre": "short_play",
+  "name": "短剧",
+  "count": 2,
+  "items": [
+    {
+      "series_id": "7701935931787316286",
+      "title": "十八岁太奶奶驾到，重整家族荣耀第五部",
+      "cover": "https://p6-novel.byteimg.com/novel-pic/84a71f1a5d7ef5c9c16a73b74011ef75~tplv-shrink:640:0.image",
+      "episode_cnt": 102,
+      "score": "",
+      "play_cnt": 0,
+      "heat": "全102集",
+      "tags": [
+        "家族",
+        "家族振兴",
+        "穿越",
+        "扮猪吃虎"
+      ],
+      "category": "",
+      "abstract": "纪家大少爷那个势利前妻突然回来，非要跟女儿朵朵认亲！太奶奶容遇带领纪家全体，扮穷测试前妻真心，最后却发现真相跟他们想的不一样。而后，新孙子大东又认亲回归纪家，他这个黄毛魔丸竟大闹纪家，最后反转又至！！！",
+      "vid": "7701937936731737112",
+      "stream_url": "/stream?vid=7701937936731737112",
+      "episodes_url": "/episodes?series_id=7701935931787316286"
+    },
+    {
+      "series_id": "7701334722449787928",
+      "title": "一念沉沦，霍总心动了",
+      "cover": "https://p6-novel.byteimg.com/novel-pic/adef31dd5cafc28d1cb9d52b0c5e2818~tplv-shrink:640:0.image",
+      "episode_cnt": 96,
+      "score": "",
+      "play_cnt": 0,
+      "heat": "全96集",
+      "tags": [
+        "爱情",
+        "都市爱情",
+        "暧昧拉扯",
+        "总裁"
+      ],
+      "category": "",
+      "abstract": "姜晚是个老实本分的实习生，总裁老板霍衍是顶级魅魔。和其他同事一样，姜晚也觊觎霍衍这幅好皮囊。但她也只是觊觎，品行很是端正，努力上班，只想顺利转正。某天深夜，姜晚才知道霍衍对她也有心思。一夜风光后，姜晚心满意足。提起裙子后，以为这件事会永远烂在两人心里。可霍衍，似乎并不像她想象的那般风流。他们频频相遇，姜晚慌然逃避。在这场狼兔角逐中，只有那头狼，自始至终地知道，这是一场蓄谋已久的破冰游戏",
+      "vid": "7701336636495252504",
+      "stream_url": "/stream?vid=7701336636495252504",
+      "episodes_url": "/episodes?series_id=7701334722449787928"
+    }
+  ],
+  "has_more": true,
+  "next_offset": 2,
+  "session_id": "site",
+  "source": "site"
+}

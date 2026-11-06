@@ -1,0 +1,46 @@
+{
+  "genre": "short_play",
+  "name": "短剧",
+  "count": 2,
+  "items": [
+    {
+      "series_id": "7703864030414261273",
+      "title": "闺蜜，请迎接我的“璀璨”人生",
+      "episode_cnt": 27,
+      "score": "8.6",
+      "play_cnt": 1012,
+      "cover": "https://p3-reading-sign.fqnovelpic.com/novel-pic/a09e595033223fa117192f63124b7efd~tplv-81nmtwyey9-superreso-aifit:400:0.image",
+      "copyright": "郑州空港聚美影视传媒有限公司",
+      "category": "成长 / 重生逆袭 / 揭露阴谋 / 大女主 / 现代",
+      "tags": [],
+      "abstract": "苏氏继承人苏念前世遭未婚夫楚航与闺蜜肖姗谋害，家人受害，自己也被杀害。她重生在领证前夕，联手陆景行设局复仇。假意笼络肖姗引诱贪财的楚航入局，先使其投资惨败，再于宴会上当众曝光全部罪证。直播留存证据，警方到场抓人，二人伏法。苏念大仇得报，开启新生。",
+      "vid": "7703866026147974206",
+      "comment_count": 0,
+      "duration": 2214,
+      "horiz_cover": "",
+      "stream_url": "/stream?vid=7703866026147974206",
+      "episodes_url": "/episodes?series_id=7703864030414261273"
+    },
+    {
+      "series_id": "7704689952381996056",
+      "title": "假简历生存指南",
+      "episode_cnt": 33,
+      "score": "8.6",
+      "play_cnt": 998,
+      "cover": "https://p3-reading-sign.fqnovelpic.com/novel-pic/40260737bf969a4026e9cad3c02ea938~tplv-81nmtwyey9-superreso-aifit:400:0.image",
+      "copyright": "鱼戏映画",
+      "category": "都市 / 逆袭翻身 / 日久生情 / 大男主 / 现代",
+      "tags": [],
+      "abstract": "二本毕业的陆词，求职屡屡碰壁，无奈伪造亮眼简历进入大厂。入职首日，他凭借多年客服经验，找出爆款退货率暴增的根源。同事苏简看破他底子薄弱，给了他三十天时间学习提升。学习过程中，他意外发现还有另一个冒用他身份入职的黑客“陆词”。系统突发崩溃，陆词依靠草根思路快速止损一战成名。简历虽是伪造，但能力属实。这是一段底层草根逆袭的故事，证明人的本心与拼搏无法造假。",
+      "vid": "7704691889781345305",
+      "comment_count": 0,
+      "duration": 3203,
+      "horiz_cover": "",
+      "stream_url": "/stream?vid=7704691889781345305",
+      "episodes_url": "/episodes?series_id=7704689952381996056"
+    }
+  ],
+  "has_more": true,
+  "next_offset": 21,
+  "session_id": "app-session-0000"
+}

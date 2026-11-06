@@ -1,0 +1,110 @@
+# 红果短剧接入调研：直连不可行，改用 hongguo-web 网关（2026-11-06）
+
+结论：**直连不可行，但接自建网关可行**。红果短剧（字节番茄系：真人短剧 / 漫剧 / AI 短剧）的
+数据与播放都在 App 侧做了签名与加密，纯 Kotlin 解析器无法稳定复刻；而开源网关
+[hongguo-web](https://github.com/sunnysky123/hongguo-web)（v1.2.2，Node 18+、零第三方依赖）
+把「签名 → 取流 → spade 解密 → 剥 CENC 信令 → 按 Range 输出 mp4」整条链路做完，对外只有一组
+普通 JSON 接口。因此本仓库新增的 `HongguoDrama` 解析器**接的是这个网关**，不是红果 App。
+
+本文档的接口结论全部在本机实例（`PORT=8123`，2026-11-06）实测复核。
+
+## 结论速览
+
+| 项 | 实测结果 | 影响 |
+|---|---|---|
+| 直连 App 接口 | 需 6 个签名头（`x-gorgon` / `x-khronos` / `x-ladon` / `x-argus` / `x-helios` / `x-medusa`）+ `a_bogus`，搜索另需 `device_id` | ❌ 不在解析器里复刻签名 |
+| 播放地址 | 上游只给分轨加密 mp4（`spade_a` 解 content key + CENC 信令）；新分集仅 ByteVC2 | ❌ 客户端解不了 |
+| 网关接口鉴权 | 全部数据接口需 `x-api-key`；`/api-key` 免鉴权自动签发（实测无 key → 401） | ✅ 解析器首次请求自动取密钥 |
+| 列表 | `/browse` 真分页（`offset` + `session_id` 游标 + `next_offset`） | ✅ `PagedContentParser` |
+| 搜索 | `/search?q=` 可用（`魔神人生` → 3 条，含 100 集全集） | ✅ 真搜索 |
+| 播放 | `/stream?vid=` 服务端解密，`Range` → `206 video/mp4`（实测块 1 MiB / 全片 39.9 MB） | ✅ 直链交给播放器 |
+| 体裁 | `short_play` / `comic_series` / `ai_series` 三个 `genre` | ✅ 只暴露这三种为标签 |
+| 上游风控 | 偶发 HTTP 200 + 空 body、同设备重复取流被判重 | ⚠️ 网关内部重试，解析器只做报错提示 |
+
+## 一、为什么不能直连
+
+上游 API 域 `api5-normal-sinfonlinea.fqnovel.com`（App 参数 `aid=8662`、`app_name=novelread`、
+`version_code=72232`），要点：
+
+1. **签名**：每个请求带六个签名头，其中 `x-khronos` 是秒级时间戳、`x-ladon` 是它的 BE32 base64、
+   `x-argus` 是 LE32 base64，还有设备指纹参与的 `x-gorgon`；搜索接口额外校验 `device_id`。
+   网关内是 800+ 行纯 JS 复刻（`server/src/core/pure-sign.js`）。
+2. **播放**：接口返回的 mp4 是**分轨加密**的，content key 要从 `spade_a` 字段按字节变换解出
+   （`server/src/core/spade.js`），再剥掉 CENC 信令（`senc`/`tenc`/`pssh`）才是可播的普通 mp4。
+3. **编码**：较早分集是 `bytevc1`（标准 HEVC，可播）；新上线分集**只有 ByteVC2**（字节私有封装，
+   码流本身是标准 H.266/VVC，但样本条目写成 `bvc2`、配置盒写成 `bv2C`），网关会以
+   `415 + code=BVC2_ONLY` 拒绝在线播放，只留下载后本地播放的路。
+
+以上任何一条都不是「换个 UA/加点 header」能解决的，且都涉及上游签名/加密算法，不适合塞进解析器。
+网关把这一层隔离掉，解析器只需处理 HTTP + JSON。
+
+## 二、网关接口（实测）
+
+启动：解压 Releases 发行包后 `scripts/start.*`，或 `cd server && npm start`；
+默认监听 `127.0.0.1:8000`，`BIND_HOST=0.0.0.0` 才能局域网访问（对外暴露务必同时设 `ADMIN_TOKEN`）。
+
+| 用途 | 请求 | 关键返回 |
+|---|---|---|
+| 密钥 | `GET /api-key`（免鉴权） | `{"api_key": "...", "note": "...", "rate_per_min": 600}` |
+| 列表 | `GET /browse?genre=&sort=&limit=&offset=[&session_id=]` | `items[]` + `has_more` + `next_offset` + `session_id` |
+| 搜索 | `GET /search?q=&limit=&offset=` | `results[]` + `count` + `has_more` + `next_offset` |
+| 详情 | `GET /episodes?series_id=` | `meta{title,abstract,episode_cnt,status,cover,category[]}` + `episodes[{index,vid,duration,cover}]` |
+| 直链信息 | `GET /video_url?vid=` | `{url,size,definition,codec,playable}`（`url` 带时效签名，不入库） |
+| 播放 | `GET /stream?vid=&quality=best` | `206 video/mp4`，支持 `Range`（`HEAD` 不支持，返回 404） |
+
+实测样本（2026-11-06）：
+
+- `/browse?genre=short_play&sort=hot_score&limit=20&offset=0` → `count=24`、`session_id=site`、
+  `next_offset=2`、`has_more=true`（首屏走官网 SSR 快路径，续页沿用同一会话）。
+- 列表条目字段：`series_id`、`title`、`cover`、`episode_cnt`、`score`、`play_cnt`、`heat`、
+  `tags[]`、`category`、`abstract`、`vid`、`stream_url`、`episodes_url`。
+- `/search?q=魔神人生` → `count=3`，首条 `series_id=7474811850085895230`、`episode_cnt=100`、
+  `score=8.3`、`vid=7474846201993497624`。
+- `/episodes?series_id=7474811850085895230` → `meta.status=完结`、100 条 `episodes`（`index` 1..100）。
+- `/stream?vid=7474846201993497624` + `Range: bytes=0-1048575` → `206`、
+  `Content-Range: bytes 0-1048575/39968709`、`Content-Type: video/mp4`。
+
+## 三、解析器映射（`HongguoDrama`）
+
+| 契约 | 实现 |
+|---|---|
+| 来源 | `ContentType.VIDEO`、`ContentRating.SAFE`、`zh` |
+| 服务地址 | `configKeyDomain`，默认 `127.0.0.1:8000`；填了 `http://` / `https://` 就原样用，否则按 `http://` 处理（本机/内网服务通常没证书） |
+| 密钥 | `ConfigKey.Text("service_api_key")`；留空时读一次 `/api-key` 并缓存，手填优先 |
+| 列表 | `/browse`；`POPULARITY → sort=hot_score`、`UPDATED → sort=online_time` |
+| 体裁标签 | 真人短剧 / 漫剧 / AI 短剧 → `genre` 参数 |
+| 内容标签 | 详情里的「逆袭」「重生」等没有筛选接口，退化成关键词 `/search`（点了标签列表仍会收窄） |
+| 翻页 | 沿用上一页的 `session_id` + `next_offset`，不按 `page*pageSize` 硬推（网关两种游标混用）；`has_more=false` 后不再发请求 |
+| 去重 | 网关深池续页会带少量重复条目，按站内 `series_id` 在实例内去重 |
+| 详情 | `/episodes` → 章节 `title=第N集`、`url=/video/{vid}`（与网关地址无关） |
+| 播放 | 先查 `/video_url`：`playable=false`（ByteVC2）直接抛「只有 ByteVC2 片源」；否则返回 `{base}/stream?vid=&quality=best`，并带 `X-Api-Key` 头 |
+| favicon | 网关无站点图标，返回空列表，避免对服务地址发无意义请求 |
+
+## 四、已知限制
+
+1. **必须自建服务**：解析器本身不带任何红果凭据，服务没起就只会得到明确报错
+   （「连不上 hongguo-web 服务…」）。同一服务的多个客户端共用一个密钥即可。
+2. **ByteVC2 分集播不了**：新分集上游只给 BVC2，在线播放被网关以 415 拦下
+   （网关可下载成标准 VVC mp4 后本地播放）；解析器在 `getPages` 前置检查并报原因。
+3. **官网快路径池子小**：仅体裁 + 最热时首屏走官网页，翻完自动续接 App 深池；同一榜单
+   相邻页可能有少量重复（已做实例内去重）。
+4. **上游风控**：偶发 200 + 空 body、同设备短时间重复取流被判重；网关有重试，解析器不做额外兜底。
+5. **未暴露 8 维筛选**：网关 `/filters` 支持主题/设定/背景/受众/完结/上新/时长等，
+   但解析器只暴露体裁标签，避免把多选 UI 映射到单选的 `theme` 参数。
+
+## 五、联调与验证
+
+```bash
+# 1. 启动网关（发行包解压后 scripts/start.sh 亦可）
+cd hongguo-web/server && npm start            # 127.0.0.1:8000
+
+# 2. 离线单测（夹具来自真实响应，已脱敏）
+./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.HongguoDramaTest"
+
+# 3. 在线联调（服务不在 8000 时用 HONGGUO_BASE_URL 覆盖）
+HONGGUO_INTEGRATION_TEST=1 HONGGUO_BASE_URL=127.0.0.1:8123 \
+  ./gradlew test --tests "org.skepsun.kototoro.parsers.site.zh.HongguoDramaIntegrationTest"
+```
+
+在线测试覆盖：热播列表 → 详情 → 首集/末集 `Range` 取流（校验 2xx 与 `video/*`）、
+关键词搜索、漫剧体裁列表。

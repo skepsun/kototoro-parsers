@@ -1,0 +1,42 @@
+{
+  "query": "魔神人生",
+  "count": 2,
+  "results": [
+    {
+      "series_id": "7474811850085895230",
+      "title": "魔神人生",
+      "episode_cnt": 100,
+      "score": "8.3",
+      "play_cnt": 128421,
+      "hot": "2654万热度",
+      "copyright": "tomatotv",
+      "cover": "https://p3-reading-sign.fqnovelpic.com/novel-pic/c745fc755c1d798639fadad0a8b0b8bb~tplv-81nmtwyey9-superreso-aifit:600:0.image",
+      "tags": [],
+      "category": "逆袭 / 玄幻仙侠 / 重生 / 打脸反派 / 大男主 / 古代",
+      "abstract": "叶秋流落二十年被叶家找回，却爹不疼娘不爱，受尽家人与仆人的鄙夷。外公看重他想传衣钵，却引来叶清嫉妒，被诬陷暗通魔族险遭杀身之祸。重生后，他叛出家门化身魔王，声名鹊起时家人又来求他，他却不再稀罕。",
+      "vid": "7474846201993497624",
+      "duration": 9175,
+      "horiz_cover": ""
+    },
+    {
+      "series_id": "7687961499481934910",
+      "title": "我本是魔之阴阳魔帝",
+      "episode_cnt": 1000,
+      "score": "8.3",
+      "play_cnt": 11492211,
+      "hot": "5023万热度",
+      "copyright": "灵龙创作",
+      "cover": "https://p9-reading-sign.fqnovelpic.com/novel-pic/3193aa9b9162ec12aba065f733878df8~tplv-81nmtwyey9-superreso-aifit:600:0.image",
+      "tags": [
+        "爆剧"
+      ],
+      "category": "玄幻 / 修真 / 异界",
+      "abstract": "方凌自少年时期踏上修行之路，在广阔天地间结识明月等伙伴，也逐渐接触到更辽阔的宗门世界。一路上，他不断认识自身力量与责任，在一次次历练中坚定内心，与伙伴共同探寻修行真意。随着眼界不断开阔，方凌也从意气少年成长为能够独当一面的修士，开启属于自己的传奇篇章。",
+      "vid": "7688005499974863934",
+      "duration": 53009,
+      "horiz_cover": ""
+    }
+  ],
+  "has_more": true,
+  "next_offset": 20
+}
