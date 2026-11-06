@@ -1,0 +1,61 @@
+{
+  "data": {
+    "page": {
+      "current_page": 2,
+      "total_page": 1,
+      "orderby": "click",
+      "count": 14,
+      "comic_sort": "",
+      "search_key": "",
+      "time": 11
+    },
+    "data": [
+      {
+        "comic_id": 25935,
+        "comic_name": "偷星九月天",
+        "last_chapter_name": "番外2 偷星九月天少年版",
+        "comic_type": "rexue,热血|maoxian,冒险|xuanhuan,玄幻",
+        "comic_newid": "touxingjiuyuetian",
+        "comic_author": "周洪滨工作室",
+        "renqi": 9269218730,
+        "update_time": 1793929600632,
+        "shoucang": 2565287,
+        "comic_grade": "2",
+        "cartoon_desc": "一场爱与梦想的奇妙冒险…… 　　是男仆还是热血的少年侦探？江洋大盗竟是如花美眷？…",
+        "cover_img": "http://image.yqmh.com/mh/25935_3_4.jpg-noresize.webp",
+        "has_video": 0
+      },
+      {
+        "comic_id": 12911,
+        "comic_name": "奇怪的苏夕",
+        "last_chapter_name": "第2季第142话 暗流涌动2",
+        "comic_type": "maoxian,冒险|lianai,恋爱|xuanhuan,玄幻|jingpin,精品",
+        "comic_newid": "qiguaidesuxi",
+        "comic_author": "飒飒动漫",
+        "renqi": 9135620090,
+        "update_time": 1793929600632,
+        "shoucang": 3045214,
+        "comic_grade": "2",
+        "cartoon_desc": "【独家/每月1日与15日更新】曾经的天之骄女，如今的破产女孩，一个身体，两个灵魂…",
+        "cover_img": "http://image.yqmh.com/mh/12911_3_4.jpg-noresize.webp",
+        "has_video": 0
+      },
+      {
+        "comic_id": 96981,
+        "comic_name": "神医嫡女",
+        "last_chapter_name": "再见啦！ ",
+        "comic_type": "lianai,恋爱|gufeng,古风|chuanyue,穿越",
+        "comic_newid": "shenyidinv",
+        "comic_author": "三福动漫",
+        "renqi": 8193293197,
+        "update_time": 1793929600632,
+        "shoucang": 4364816,
+        "comic_grade": "2",
+        "cartoon_desc": "【每周二、五更新】duang的一声穿越，中西医双料圣手凤羽珩分分钟成了大顺朝的受…",
+        "cover_img": "http://image.yqmh.com/mh/96981_3_4.jpg-noresize.webp",
+        "has_video": 0
+      }
+    ]
+  },
+  "status": 0
+}
