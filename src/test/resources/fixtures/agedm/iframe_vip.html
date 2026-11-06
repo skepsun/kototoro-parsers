@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><title>云播放器</title></head>
+<body>
+	<div id="loading" align="center"><div class="mov"></div></div>
+	<script>
+		// 解析服务返回的播放器配置（真实响应精简）：/vip/ 线路：Vurl 是密文，需 global.min.js 现场解密
+		var Ref = "aHR0cHM6Ly93d3cuYWdlZG0uaW8vcGxheS8yMDI2MDI4Mi8yLzE=";
+		var Isios = navigator.userAgent.match(/iPad|iPhone|iPod/i) != null;
+		var Iswap = navigator.userAgent.match(/iPad|iPhone|Android|Linux|iPod|SymbianOS|Windows Phone/i) != null;
+		var Time = "1793950821";
+		var Version = "V3.2";
+		var Vurl = '768EF8F928C1F3B836B751E2D6BEB0BE7C4C7ADA6BB88841956F82E9C4D56536E91FCE1EF3F413587367075525E9989D';
+		var PlayConfig = {
+			'Id': "904a4fccc5086a7cae5024f22760643e",
+			'Title': "云播放器",
+			'Url': Vurl,
+			'Online': 0,
+			'Iskpad': 0,
+			'Kpadmp4': "https://175.178.227.159:7788/Play/adposter.mp4",
+			'Kpadimg': "https://175.178.227.159:7788/Play/adposter.jpg",
+			'Route': "titan.mgtv.com|ixigua.com|bilivideo.com|miguvideo.com|douyinvod.com"
+		};
+	</script>
+	<script type="text/javascript" src="https://cdn.xmfxgjzx.com/jx/20230723ver/Play/global.min.js?v=20260512"></script>
+</body>
+</html>

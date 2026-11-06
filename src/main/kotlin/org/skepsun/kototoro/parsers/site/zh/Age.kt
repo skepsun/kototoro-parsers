@@ -10,6 +10,7 @@ import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ParseException
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
 import org.skepsun.kototoro.parsers.model.Content
@@ -131,29 +132,66 @@ internal class Age(context: ContentLoaderContext) :
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
         val playUrl = chapter.url.toAbsoluteUrl(domain)
         val document = webClient.httpGet(playUrl).parseHtml()
+        // 站点把播放交给第三方解析服务，播放页只有一个 iframe；各线路对应不同的解析端点
         val iframeSrc = document.selectFirst("#iframeForVideo")
             ?.attr("src")
             ?.takeIf { !it.isNullOrBlank() }
-            ?: throw IllegalStateException("Video iframe not found")
+            ?: throw ParseException(shortMessage = "AGE动漫：播放页缺少播放器 iframe", url = playUrl)
 
         val absoluteIframe = iframeSrc.toAbsoluteUrl(domain)
-        val resolvedVideo = try {
-            resolveVideoUrl(playUrl, absoluteIframe)
-        } catch (_: Exception) {
-            null
-        } ?: absoluteIframe
+        val streamUrl = resolveStreamUrl(playUrl, absoluteIframe, chapter)
 
         return listOf(
             ContentPage(
-                id = generateUid(resolvedVideo),
-                url = resolvedVideo,
+                id = generateUid(streamUrl),
+                url = streamUrl,
                 preview = null,
                 source = source,
             ),
         )
     }
 
-    private fun parseCatalog(document: Document): List<Content> {
+    /**
+     * 播放链路（2026-11-06 实测）：
+     * - `sid=2..5`（非凡/暴风/无尽/计算云）的 iframe 指向 `…/m3u8/?url=age_…`，响应 HTML 里直接写着
+     *   `https://vip.ffzy-plays.com/…/index.m3u8` 这样的直链（HTTP 200 + `application/vnd.apple.mpegurl`）。
+     * - `sid=1`（西瓜）的 iframe 指向 `…/vip/?url=age_…`，响应里只有密文 `var Vurl`，需要页面自己的
+     *   `global.min.js`（另一个已失效的 CDN 域）现场解密，客户端拿不到直链——直接给出可操作的报错，
+     *   让用户切线路，而不是把密文当视频地址返回。
+     * - 旧版 `api.php`（url/t/key/act/play）链路仍保留兜底，某些解析端点还会走这套。
+     */
+    private suspend fun resolveStreamUrl(playUrl: String, iframeUrl: String, chapter: ContentChapter): String {
+        val iframeHttpUrl = iframeUrl.toHttpUrl()
+        val iframeHeaders = getRequestHeaders().newBuilder()
+            .add("Referer", playUrl)
+            .build()
+        val iframeHtml = webClient.httpGet(iframeUrl, iframeHeaders).parseRaw()
+
+        parseStreamUrl(iframeHtml)?.let { return finalizeVideoUrl(iframeHttpUrl, it) }
+
+        val resolvedByApi = parseIframePayload(iframeHtml)?.let { payload ->
+            when (payload) {
+                is IframePayload.Direct -> finalizeVideoUrl(iframeHttpUrl, payload.url)
+                is IframePayload.Api -> fetchPlayerStream(iframeUrl, iframeHttpUrl, payload)
+            }
+        }
+        if (!resolvedByApi.isNullOrBlank()) {
+            return resolvedByApi
+        }
+
+        // 先取响应再判断：万一 /vip/ 线路以后改成直出地址，这里就能自动跟上
+        throw ParseException(
+            shortMessage = if (isJsOnlyIframe(iframeUrl)) {
+                "AGE动漫：该线路（${chapter.branch ?: "西瓜"}）由第三方 JS 解析，客户端无法直连，" +
+                    "请切换到「非凡/暴风/无尽/计算云」等 m3u8 线路"
+            } else {
+                "AGE动漫：解析线路没有返回可播放地址（${chapter.branch ?: chapter.title}）"
+            },
+            url = playUrl,
+        )
+    }
+
+    internal fun parseCatalog(document: Document): List<Content> {
         val result = ArrayList<Content>()
         val seen = HashSet<Long>()
         val cards = document.select(".card.cata_video_item")
@@ -199,7 +237,7 @@ internal class Age(context: ContentLoaderContext) :
         return result
     }
 
-    private fun parseChapters(document: Document): List<ContentChapter> {
+    internal fun parseChapters(document: Document): List<ContentChapter> {
         val chapters = ArrayList<ContentChapter>()
         val buttons = document.select(".video_detail_playlist_wrapper button[data-bs-target]")
         if (buttons.isNotEmpty()) {
@@ -292,22 +330,11 @@ internal class Age(context: ContentLoaderContext) :
         }
     }
 
-    private suspend fun resolveVideoUrl(referer: String, iframeUrl: String): String? {
-        val iframeHeaders = getRequestHeaders().newBuilder()
-            .add("Referer", referer)
-            .build()
-        val iframeHtml = webClient.httpGet(iframeUrl, iframeHeaders).parseRaw()
-        val iframeHttpUrl = iframeUrl.toHttpUrl()
-        val payload = parseIframePayload(iframeHtml) ?: return null
-        return when (payload) {
-            is IframePayload.Direct -> finalizeVideoUrl(iframeHttpUrl, payload.url)
-            is IframePayload.Api -> fetchPlayerStream(iframeUrl, iframeHttpUrl, payload)
-        }
-    }
-
     private fun parseIframePayload(html: String): IframePayload? {
+        // `var Vurl` 在 /vip/ 线路里是密文而不是地址，只有长得像 URL 的才当作直链
         val direct = DIRECT_URL_REGEX.find(html)?.groupValues?.getOrNull(1)
-        if (!direct.isNullOrBlank() && !direct.equals("about:blank", true)) {
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") || it.startsWith("//") }
+        if (!direct.isNullOrBlank()) {
             return IframePayload.Direct(direct)
         }
 
@@ -345,6 +372,18 @@ internal class Age(context: ContentLoaderContext) :
         val videoUrl = response.optString("url").takeIf { it.isNotBlank() } ?: return null
         return finalizeVideoUrl(iframeHttpUrl, videoUrl)
     }
+
+    /**
+     * 解析服务返回的 HTML 里直接写着 m3u8 直链时取第一条。
+     * 只认 m3u8：`/vip/` 播放器配置里有 `Kpadmp4` 这类**广告** mp4（`…/Play/adposter.mp4`），
+     * 用宽泛的 mp4 正则会把广告当成正片；真正的 mp4 直链只在 `var Vurl` 里出现，走 [parseIframePayload]。
+     */
+    internal fun parseStreamUrl(iframeHtml: String): String? = STREAM_URL_REGEX.find(iframeHtml)?.value
+
+    /** `/vip/` 线路由播放器现场 JS 解密，客户端拿不到直链。 */
+    internal fun isJsOnlyIframe(iframeUrl: String): Boolean = runCatching {
+        iframeUrl.toHttpUrl().encodedPath.startsWith(VIP_ONLY_PATH_PREFIX)
+    }.getOrDefault(false)
 
     private fun finalizeVideoUrl(base: HttpUrl, raw: String): String {
         return when {
@@ -537,6 +576,8 @@ internal class Age(context: ContentLoaderContext) :
         private val NUMBER_REGEX = Regex("""\d+(?:\.\d+)?""")
         private val BR_REGEX = Regex("(?i)<br\\s*/?>")
         private val DIRECT_URL_REGEX = Regex("""(?i)(?:var|let|const)\s+Vurl\s*=\s*['"]([^'"]+)""")
+        private val STREAM_URL_REGEX = Regex("""(?i)https?://[^"'\s\\]+?\.m3u8[^"'\s\\]*""")
+        private const val VIP_ONLY_PATH_PREFIX = "/vip"
         private val IFRAME_URL_REGEX = Regex("""var\s+url\s*=\s*"([^"]+)"""")
         private val IFRAME_T_REGEX = Regex("""var\s+t\s*=\s*"([^"]+)"""")
         private val IFRAME_KEY_ENCODED_REGEX = Regex("""var\s+key\s*=\s*OKOK\("([^"]+)""")
