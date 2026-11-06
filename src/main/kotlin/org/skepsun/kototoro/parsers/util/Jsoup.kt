@@ -3,6 +3,7 @@
 package org.skepsun.kototoro.parsers.util
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
 import org.jsoup.select.QueryParser
@@ -196,6 +197,16 @@ public fun Element.metaValue(itemprop: String): String? = getElementsByAttribute
 	.firstNotNullOfOrNull { element ->
 		element.attrOrNull("content")
 	}
+
+/**
+ * Collects `og:*` Open Graph metadata of the document as a map keyed by the full property name
+ * (e.g. `og:novel:book_name`), so callers do not have to guess whether the prefix was stripped.
+ */
+public fun Document.ogMeta(): Map<String, String> = select("meta[property^=og:]").mapNotNull { meta ->
+	val property = meta.attrOrNull("property") ?: return@mapNotNull null
+	val content = meta.attrOrNull("content") ?: return@mapNotNull null
+	property to content
+}.toMap()
 
 public fun String.cssUrl(): String? {
 	val fromIndex = indexOf("url(")
