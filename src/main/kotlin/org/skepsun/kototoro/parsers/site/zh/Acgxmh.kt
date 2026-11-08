@@ -1,19 +1,26 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import okhttp3.Request
+import org.jsoup.HttpStatusException
 import org.jsoup.nodes.Document
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
 import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
+import org.skepsun.kototoro.parsers.exception.ContentUnavailableException
+import org.skepsun.kototoro.parsers.exception.NotFoundException
 import org.skepsun.kototoro.parsers.model.*
+import org.skepsun.kototoro.parsers.network.CloudFlareHelper
 import org.skepsun.kototoro.parsers.network.UserAgents
+import org.skepsun.kototoro.parsers.util.await
 import org.skepsun.kototoro.parsers.util.generateUid
 import org.skepsun.kototoro.parsers.util.parseHtml
 import org.skepsun.kototoro.parsers.util.parseRaw
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrl
 import org.skepsun.kototoro.parsers.util.toAbsoluteUrlOrNull
 import org.skepsun.kototoro.parsers.util.urlEncoded
+import java.net.HttpURLConnection.HTTP_NOT_FOUND
 import java.net.URI
 import java.util.EnumSet
 
@@ -36,27 +43,34 @@ internal abstract class AcgxmhBase(
 
 	protected fun pathTag(title: String, path: String): ContentTag = ContentTag(title, "path:$path", source)
 
-	protected suspend fun loadIndexTags(title: String, path: String, pages: Int = 1, limit: Int = 24): ContentTagGroup {
+	internal suspend fun loadIndexTags(
+		title: String,
+		path: String,
+		pages: Int = 1,
+		limit: Int = 24,
+		itemSelector: String = SPECIALS_ITEM_SELECTOR,
+	): ContentTagGroup {
 		val tags = LinkedHashSet<ContentTag>()
 		for (page in 1..pages) {
 			val doc = runCatching {
 				webClient.httpGet(buildPagedPathUrl(path, page), getRequestHeaders()).parseHtml()
 			}.getOrNull() ?: continue
-			doc.select("dl.specials dd > a[href]").asSequence()
-				.mapNotNull { a ->
-					val name = a.selectFirst(".special-title")?.text()?.trim()
-						?: a.attr("title").takeIf { it.isNotBlank() }
-						?: a.selectFirst("img")?.attr("alt")?.takeIf { it.isNotBlank() }
-					val itemPath = a.attr("href").toSitePath()
-					if (name.isNullOrBlank() || itemPath.isNullOrBlank()) null else pathTag(name, itemPath)
-				}
-				.forEach { tag ->
-					if (tags.size < limit) tags.add(tag)
-				}
+			parseIndexTags(doc, itemSelector).forEach { tag ->
+				if (tags.size < limit) tags.add(tag)
+			}
 			if (tags.size >= limit) break
 		}
 		return ContentTagGroup(title, tags, isExclusive = true)
 	}
+
+	internal fun parseIndexTags(doc: Document, itemSelector: String): List<ContentTag> =
+		doc.select(itemSelector).mapNotNull { a ->
+			val name = a.selectFirst(".special-title")?.text()?.trim()
+				?: a.attr("title").takeIf { it.isNotBlank() }
+				?: a.selectFirst("img")?.attr("alt")?.takeIf { it.isNotBlank() }
+			val itemPath = a.attr("href").toSitePath()
+			if (name.isNullOrBlank() || itemPath.isNullOrBlank()) null else pathTag(name, itemPath)
+		}
 
 	protected fun buildPagedPathUrl(path: String, page: Int): String {
 		val pagedPath = when {
@@ -67,6 +81,53 @@ internal abstract class AcgxmhBase(
 			else -> "$path/index-$page.html"
 		}
 		return "https://$domain$pagedPath"
+	}
+
+	/**
+	 * 站内搜索不是 `/?q=`（首页的 `q` 参数会被服务端忽略，永远返回推荐流），
+	 * 而是路径式的 `/q/<关键词>-<页码>.html` —— 站内 JS 把首页表单 action 拼成这条路径。
+	 * 关键词要放进路径段：空格必须编码成 %20（`+` 在路径里是字面加号）。
+	 * 命中标签/角色/作品名时站点会 302 到对应的 www 标签页（可直接解析）；
+	 * 其余关键词 302 到 `search.acgxmh.com`，该主机对非浏览器客户端有 Cloudflare 校验。
+	 */
+	protected fun buildSearchUrl(query: String, page: Int): String =
+		"https://$domain/q/${query.toSearchPathSegment()}-$page.html"
+
+	private fun String.toSearchPathSegment(): String = urlEncoded().replace("+", "%20")
+
+	/**
+	 * 拉取列表页并做站点侧异常识别：
+	 * Cloudflare 校验交给宿主浏览器（与 wenku8/xanimu 一致），
+	 * 站点自带「提示信息」页（如搜索过于频繁）转成可读错误，而不是静默返回空列表。
+	 */
+	protected suspend fun loadListDocument(url: String): Document {
+		val request = Request.Builder()
+			.get()
+			.url(url)
+			.headers(getRequestHeaders())
+			.build()
+		val response = context.httpClient.newCall(request).await()
+		if (CloudFlareHelper.checkResponseForProtection(response) != CloudFlareHelper.PROTECTION_NOT_DETECTED) {
+			response.close()
+			context.requestBrowserAction(this, url)
+		}
+		if (!response.isSuccessful) {
+			val code = response.code
+			response.close()
+			if (code == HTTP_NOT_FOUND) {
+				throw NotFoundException("Not Found", url)
+			}
+			throw HttpStatusException("HTTP $code", code, url)
+		}
+		return response.parseHtml().also { it.raiseIfSiteMessage() }
+	}
+
+	internal fun Document.raiseIfSiteMessage() {
+		val message = selectFirst(".showMsg .content")?.text()?.trim()
+			?: selectFirst(".showMsg")?.text()?.trim()
+		if (!message.isNullOrBlank()) {
+			throw ContentUnavailableException("ACGXMH：$message")
+		}
 	}
 
 	protected fun String.toSitePath(): String? {
@@ -85,6 +146,14 @@ internal abstract class AcgxmhBase(
 				val key = it.attr("href").substringAfterLast('/').substringBefore('.')
 				if (name.isNotBlank() && key.isNotBlank()) ContentTag(name, key, source) else null
 			}
+	}
+
+	internal companion object {
+		/** /tags/、/characters/、/artist/、/circle/、/coser/、/cv/、/special/ 索引页的条目结构。 */
+		const val SPECIALS_ITEM_SELECTOR = "dl.specials dd > a[href]"
+
+		/** /anime/（戏仿列表，即作品索引）没有 dl.specials，作品卡是 `#doujin_album li a.thumb[title]`。 */
+		const val WORK_ITEM_SELECTOR = "#doujin_album li a.thumb[href]"
 	}
 }
 
@@ -112,7 +181,7 @@ internal class Acgxmh(context: ContentLoaderContext) :
 				isExclusive = true,
 			),
 			loadIndexTags("专题", "/special/"),
-			loadIndexTags("戏仿", "/anime/"),
+			loadIndexTags("戏仿", "/anime/", pages = 2, limit = 24, itemSelector = WORK_ITEM_SELECTOR),
 			loadIndexTags("角色", "/characters/", pages = 2, limit = 48),
 			loadIndexTags("主题标签", "/tags/", pages = 2, limit = 48),
 			loadIndexTags("作品艺术家", "/artist/", pages = 2, limit = 48),
@@ -122,7 +191,7 @@ internal class Acgxmh(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		return parseList(webClient.httpGet(buildListUrl(page, order, filter), getRequestHeaders()).parseHtml())
+		return parseList(loadListDocument(buildListUrl(page, order, filter)))
 	}
 
 	override suspend fun getDetails(manga: Content): Content {
@@ -169,9 +238,9 @@ internal class Acgxmh(context: ContentLoaderContext) :
 		return images.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
-	private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+	internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
 		filter.query?.takeIf { it.isNotBlank() }?.let {
-			return "https://$domain/?q=${it.urlEncoded()}" + if (page > 1) "&page=$page" else ""
+			return buildSearchUrl(it, page)
 		}
 		filter.tags.firstOrNull()?.let {
 			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
@@ -184,7 +253,7 @@ internal class Acgxmh(context: ContentLoaderContext) :
 		}
 	}
 
-	private fun parseList(doc: Document): List<Content> = doc.select("#list li").mapNotNull { item ->
+	internal fun parseList(doc: Document): List<Content> = doc.select("#list li").mapNotNull { item ->
 		val a = item.selectFirst("a.thumb[href], a.title[href]") ?: return@mapNotNull null
 		val href = a.attr("href").toAbsoluteUrl(domain)
 		if (!href.removePrefix("https://$domain").isImageContentPath()) return@mapNotNull null
@@ -234,7 +303,7 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		return parseList(webClient.httpGet(buildListUrl(page, order, filter), getRequestHeaders()).parseHtml())
+		return parseList(loadListDocument(buildListUrl(page, order, filter)))
 	}
 
 	override suspend fun getDetails(manga: Content): Content {
@@ -297,9 +366,9 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		return playableUrls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
-	private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+	internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
 		filter.query?.takeIf { it.isNotBlank() }?.let {
-			return "https://$domain/?q=${it.urlEncoded()}" + if (page > 1) "&page=$page" else ""
+			return buildSearchUrl(it, page)
 		}
 		filter.tags.firstOrNull()?.let {
 			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
@@ -309,7 +378,7 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		return buildPagedPathUrl(if (order == SortOrder.POPULARITY) "/hanime/" else "/gif/", page)
 	}
 
-	private fun parseList(doc: Document): List<Content> = (doc.select(".grid-item") + doc.select("#list li")).mapNotNull { item ->
+	internal fun parseList(doc: Document): List<Content> = (doc.select(".grid-item") + doc.select("#list li")).mapNotNull { item ->
 		val a = item.selectFirst("a.thumb[href], a[href*=/gif/], a[href*=/hanime/]") ?: return@mapNotNull null
 		val href = a.attr("href").toAbsoluteUrl(domain)
 		if (!href.removePrefix("https://$domain").isVideoContentPath()) return@mapNotNull null
