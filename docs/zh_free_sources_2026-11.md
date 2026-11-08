@@ -2,7 +2,7 @@
 
 范围：面向个人研究，只收录**不强制付费**的站点；正版付费墙站点只作对照。本文档替代 `docs/zh_content_sources_research.md`（2026-10-28）中过期的域名结论，未变部分仍可参考该文的结构分析。
 
-仓库基线：`summary.yaml` total 96（zh 52 / en 21 / ja 4 / all 18 / pt 1）。上游对照：Keiyoushi `extensions-source` `src/zh` 2026-11-05 检出 60 个中文源；爱站排行榜「动画漫画 / 小说阅读」分类前 160 条。
+仓库基线：`summary.yaml` total 115（zh 71 / en 21 / ja 4 / all 18 / pt 1，2026-11-08 复核）。上游对照：Keiyoushi `extensions-source` `src/zh` 2026-11-05 检出 60 个中文源；爱站排行榜「动画漫画 / 小说阅读」分类前 160 条。
 
 ## 结论速览
 
@@ -11,9 +11,9 @@
 | 漫画（正版，免费章为主） | 腾讯动漫 `ac.qq.com`、快看 `kuaikanmanhua.com`、咚漫 `dongmanmanhua.cn` | 内容合法、结构 SSR，适合「只解析公开免费章」，付费章显式报错 |
 | 漫画（第三方，全免费） | 拷贝漫画 `mangacopy.com`、漫画柜 `manhuagui.com`、包子漫画 `webmota.com`、极速漫画 `1kkk.com` / 动漫屋 `dm5.com`、漫客栈 `mkzhan.com` | 体量与更新速度最好；`1kkk`/`dm5` 作品链接由 JS 注入，成本高 |
 | 小说（免费平台） | 番茄小说 `fanqienovel.com`、七猫 `qimao.com` | 体量最大，正文走接口/字体混淆，接入难度最高 |
-| 小说（免费聚合） | 落秋 `luoqiuzw.com`、全本 `quanben.io`、qb5 `qb5.io`、52书库 `52shuku.net`、乐文 `lewen.org`、书海阁 `m.shuhaige.net`、阅友 `sma.yueyouxs.com`、笔趣阁55 `biquge55.net`、追书神器 `zhuishushenqi.com` | 结构简单、当天可落地；内容多为转载 |
+| 小说（免费聚合） | 落秋 `luoqiuzw.com`、全本 `quanben.io`、qb5 `qb5.io`、52书库 `52shuku.net`、乐文 `lewen.org`、书海阁 `m.shuhaige.net`、阅友 `sma.yueyouxs.com`、笔趣阁55 `biquge55.net` | 结构简单、当天可落地；内容多为转载。追书神器不在此列：免费章只占几十分之一，其余 VIP |
 | 视频（动漫向） | AGE动漫 `agedm.io`、动漫456 `dm456.com`、风车动漫 `fcbbcc.com`、蜜柑计划 `mikanani.me`（BT） | 播放普遍走第三方解析或 m3u8，逐集=chapter 可映射 |
-| 视频（短剧） | 红果短剧 `hongguoduanju.com` | 2025–2026 增长最快的一类免费内容 |
+| 视频（短剧） | 红果短剧 `hongguoduanju.com` | 2025–2026 增长最快的一类免费内容；Web 直连不可接，仓库经自建网关接入（第十三节） |
 
 **必须知道的两个变化**：动漫之家 `dmzj.com` 已全域不可达（社区称关站）；「樱花动漫」老域名 `yhdmz.org` 已不再提供片库（`m.yhdmz.org` 直接跳到博彩落地页），现在挂着「樱花动漫官方门户」名号的是一组 Next.js 同模板站群。
 
@@ -48,7 +48,7 @@
 | Komiic | `komiic.com` | 200 / 6 KB（需代理） | 社区图源 | ✅ 已内置 |
 | 滴答 / 六漫画 | `ddmanhua.com` / `liumanhua.com` | 200 / 98 KB、50 KB | 同库同协议，已合并为单源 | ✅ 已内置 |
 | 瓜子漫画 | `guazimanhua.com` | 200 / 39–83 KB，分类页 24 166 部（36 条/页，672 页） | 分类 `/category.php?page=N`（`sort=update\|hits\|daily\|score`，`cid=` 23 个题材）→ `article.card`；详情/目录同时有 JSON-LD（`ComicStory` + `ItemList`，**50 话以上截断**）和 HTML `[data-mobile-chapter-list]`（481 话全量）；阅读页 `section.reader-images img.reading-image` webp 直链无防盗链；无搜索入口 | ✅ 已内置（`Guazi.kt`，2026-11-05） |
-| 漫画社 / 喜漫 / 漫画160 / 喵趣 / 漫画屋 | `311s.com` / `favcomic.com` / `mh160mh.com` / `miaoqumh.org` / `mhua5.com` | 全部 200（48–151 KB） | 各自独立 CMS，体量小，上游仍在维护 | 漫画社 ✅ 已内置（`Manhuashe.kt`，2026-11-06）；其余四站 ⏸ 暂缓：2026-11-06 直连复核 `favcomic.com` 连接重置、`miaoqumh.org` TLS 握手超时、`mhua5.com` 首页 88 KB 可读但详情页 TLS 超时、`mh160mh.com` 200 / 62 KB 是另一套 `template/skin1` 模板（与漫画社的 `/comic_{id}.html` 不同源），本机当前无代理无法逐个验证 |
+| 漫画社 / 喜漫 / 漫画160 / 喵趣 / 漫画屋 | `311s.com` / `favcomic.com` / `mh160mh.com` / `miaoqumh.org` / `mhua5.com` | 全部 200（48–151 KB） | 各自独立 CMS，体量小，上游仍在维护 | 漫画社 ✅ 已内置（`Manhuashe.kt`，2026-11-06）；喜漫 ⏸ 需代理（2026-11-08 代理 200 / 147 KB、80 个 detail 链接）；漫画160 / 喵趣 / 漫画屋 ❌ 放弃（2026-11-08 直连可达但作品锚点为 0 或详情页 0 KB，见第十九节） |
 | 顶通 Toptoon 国际中文 | `toptoon.net` | 200 / 73 KB（需代理） | 模板渲染 + 接口 | 未内置 |
 | 香香腐宅 / 鸟鸟韩漫 / 漫蛙2 | `boylove.cc` / `nnhanman.xyz` / `manwa2.com` | 200 / 200 KB、46 KB（代理）、60 KB（直连） | 成人向，仓库已有同类的 `HENTAI_*` 风格源 | 未内置 |
 
@@ -78,14 +78,14 @@
 | 落秋中文 | `luoqiuzw.com` | 200 / 34–47 KB，首页 138 个作品链接 | 列表 `/class/{0..7}/{页}.html`（30 条/页）；详情全在 `og:novel:*` meta；目录页 `#list dd` 只给前 99 章，其余在 `/chapters/{id}/{页}.html`（末页「下一页」会绕回第 1 章）；正文 `document.writeln(qsbs.bb('<base64>'))`，解 base64 即得 `<p>` 段落；`/search.html` 恒返回空占位页 | ✅ 已内置（`Luoqiu.kt`，2026-11-05） |
 | 全本小说 | `quanben.io` | 200 / 41 KB | 路由 `/n/{slug}/`；分类 `/c/{slug}_{页}.html`、`div.list2` 卡片、详情 `og:novel:*` + `div.description`、目录 `/n/{slug}/list.html` 的 `ul.list3` 一次给全、正文 `div#content`；`index.php?c=book&a=search&keywords=` 搜索可用 | ✅ 已内置（`Quanben.kt`，2026-11-05） |
 | 全本小说书屋 | `qb5.io` | 200 / 14 KB | 爱站小说榜前 30；分类 `/shuku-{1..11,0}_{页}.html`、`dl.hot dd` 卡片、详情 `og:novel:*`（简介只有被截断的 `og:description`）、目录 `/xs-{id}/` 的 `ul.list` 一次给全 3818 章、正文 `div.articlebody#content`；`/?c=xs&a=sou&q=` 返回空页 | ✅ 已内置（`Qb5.kt`，2026-11-05） |
-| 52书库 | `52shuku.net` | 200 / 26 KB | 分类 `/wuxia/` 等 | ⏸ 暂缓（需代理，见十三） |
+| 52书库 | `52shuku.net` | 200 / 26 KB | 分类 `/wuxia/` 等 | ❌ 放弃（分类页无静态作品链接，见第十九节） |
 | 乐文小说 | `lewen.org` | 200 / 20–27 KB，列表 66 条/页 | 列表 `/list/{1..9}_{页}.html`、详情 `og:novel:*` 齐全，但**详情页只给最近 112 章**且无全本目录页（`/book/{id}/all.html` 404），搜索 `search.html` 500、`/search/?keyword=` 404 | ❌ 放弃（403 + 目录不全，见十三） |
 | 书海阁 | `m.shuhaige.net` | 200 / 14 KB | 移动站 | ✅ 已内置（`Shuhaige.kt`，2026-11-06） |
 | 阅友小说 | `sma.yueyouxs.com` | 200 / 71–73 KB | — | ❌ 放弃（0 个锚点，纯 JS 绑定，见十三） |
 | 笔趣阁55 | `biquge55.net` | 200 / 24 KB，列表 60 条/页 | 分类 `/xiaoshuo/{xuanhuan\|wuxia\|doushi\|chuanyue\|kehuan\|qita}_{页}/`；详情 `og:novel:*` + `div.desc` + `#list` 一次性给全 3404 章；长章节 `{id}_2.html` 分页、「下一页」串联；`/search/?q=` 恒空 | ✅ 已内置（`Biquge55.kt`，2026-11-05） |
-| 101言情 | `txtxs101.com` | 200 / 34 KB | 言情向 | ⏸ 暂缓（需代理，见十三） |
+| 101言情 | `txtxs101.com` | 200 / 34 KB | 言情向 | ❌ 放弃（详情页 503「获取数据源出错」，见第十九节） |
 | 随心看 | `m.suixkan.com` | 200 / 69–75 KB | — | ❌ 放弃（同阅友，见十三） |
-| 追书神器 | `zhuishushenqi.com` | 200 / 33 KB | 老牌聚合 | ⏸ 暂缓（限速断流，见十三） |
+| 追书神器 | `zhuishushenqi.com` | 200 / 33 KB | 老牌聚合 | ❌ 放弃（免费章仅前 18–88 章，正文走 App 加密接口，见第十九节） |
 | 笔趣阁（仓库版） | `bqg301.cc` | 200 / 1 KB，跳 `bqg867.cc` | 域名漂移中 | ✅ 已内置 |
 
 ### C. 反爬 / 不可达
@@ -271,12 +271,12 @@ QB5_INTEGRATION_TEST=1 QUANBEN_INTEGRATION_TEST=1 \
 | 极速漫画 `1kkk.com` / 动漫屋 `dm5.com` | 老参数体系 + 图片混淆（站点自己也要执行 JS） | JS 注入 + 图片混淆 |
 | 七猫中文网 `qimao.com` | 详情页 60 KB 内章节链接 0 个（只有 `/shuku/a-a-a-a-a-a-a-click-1/` 这类装饰链接） | 目录走签名接口 |
 | 刺猬猫 `ciweimao.com` | 200 / 135 KB，登录与正文混排 | 登录混合 |
-| 追书神器 `zhuishushenqi.com` | 详情 548 KB 内联 7088 章，但正文页 166 秒后 `ChunkedEncodingError`（站点对该书断流限速） | 站点限速 |
+| 追书神器 `zhuishushenqi.com` | ~~详情 548 KB 内联 7088 章，但正文页 166 秒后 `ChunkedEncodingError`~~ → 2026-11-08 深挖：免费章仅前 18–88 章（其余 VIP），正文接口只回「请安装最新版追书」 | 付费墙 + App 加密接口（见第十九节） |
 | 92漫画 `92mh.com` | 2026-11-06 复测直连恢复正常（列表/详情/阅读页均 200），此前的 TLS 握手超时不再复现 | 链路波动，非站点限制 |
-| 52书库 / 101言情 | 直连不可达，需代理 | 网络受限，需代理 |
+| 52书库 / 101言情 | ~~直连不可达，需代理~~ → 2026-11-08 直连均 200，但分别是「无静态作品链接」与「详情 503」 | 结构不可做（见第十九节） |
 | SF轻小说 VIP 章 | 免费章做完了；VIP 章解析不到正文时返回提示页 | 付费墙（不绕过） |
 
-**结论**：能靠纯 SSR 或公开 JSON 接的中文漫画/小说/视频源，到本轮基本吃干；
+**结论**（2026-11-06；2026-11-08 补充见第十九节：新复核的 15 个域名里没有可用新增，追书神器深挖后同样放弃）：能靠纯 SSR 或公开 JSON 接的中文漫画/小说/视频源，到本轮基本吃干；
 再往下要么逆向签名接口（七猫/漫画人/ikanbot），要么研究 JS 混淆（dm5/1kkk/8comic/MangaBZ），
 要么依赖代理（92漫/52书库/101言情），都不适合在没有登录态的前提下塞进解析器。
 
@@ -303,8 +303,9 @@ QB5_INTEGRATION_TEST=1 QUANBEN_INTEGRATION_TEST=1 \
 | vomic漫 `vomicmh.com` | 漫画 | ❌ 放弃 | 详情页 47 KB 既无章节链接也无 `__NEXT_DATA__`/`__NUXT__`/`window.__INITIAL_STATE__`（第十二节） |
 | 哔哩哔哩漫画 `manga.bilibili.com` | 漫画 | ❌ 不接入 | 以付费/漫画券为主且需登录态；2026-11-06 复核首页 471 KB 里 `券`/`VIP`/`登录` 均为付费链路的必然入口（合规边界） |
 | 92漫画 `92mh.com` | 漫画 | ✅ 已内置 | `Jiuermanhua.kt`：SinMH 模板，36 部/页；排序在路径里（人气是 `/list/-click/`）、筛选要带尾 `-`、搜索参数是 `keywords`；只有「类型」组是顶层标签；图片域名取自 `/js/config.js`（第十六节） |
-| 喜漫 `favcomic.com` / 漫画160 `mh160mh.com` / 喵趣 `miaoqumh.org` / 漫画屋 `mhua5.com` | 漫画 | ⏸ 暂缓（网络/模板不同） | 2026-11-06 复核：favcomic 连接重置、miaoqumh 与 mhua5 详情页 TLS 超时、mh160 是另一套 `template/skin1` 模板（非漫画社的 `/comic_{id}.html`） |
-| 顶通 Toptoon `toptoon.net` | 漫画 | ⏸ 暂缓（网络） | 2026-11-06 直连首页与 `/webtoon/` 均 20 s 超时（此前经代理 200 / 73 KB），本机无代理 |
+| 喜漫 `favcomic.com` | 漫画 | ⏸ 暂缓（需代理） | 2026-11-08 复核：直连连接重置，代理 200 / 147 KB、80 个 `detail` 链接；结构可做，等有代理环境（第十九节） |
+| 漫画160 `mh160mh.com` / 喵趣 `miaoqumh.org` / 漫画屋 `mhua5.com` | 漫画 | ❌ 放弃 | 2026-11-08 复核：mh160 是另一套 `template/skin1` 模板且作品锚点 0 个；miaoqumh 54 KB 无锚点；mhua5 首页 75 个 `/comic/` 但详情页 0 KB（第十九节） |
+| 顶通 Toptoon `toptoon.net` | 漫画 | ⏸ 暂缓（需代理） | 2026-11-08 复核：直连超时、代理 200 / 71 KB 且 `/comic/` 路由可用（第十九节） |
 | 香香腐宅 `boylove.cc` / 鸟鸟韩漫 `nnhanman.xyz` / 漫蛙2 `manwa2.com` | 漫画 | ❌ 不接入 | 成人向站点：2026-11-06 复核 boylove 超时、nnhanman `Connection reset by peer`、manwa2 TLS 超时；即便可达也属 18+ 内容，需连同分级标记一起评估，不在本轮范围 |
 | SF轻小说 `book.sfacg.com` | 小说 | ✅ 已内置 | `Sfacg.kt`：**桌面 UA 是硬要求**（移动 UA 下发 12 KB 精简页且目录只剩章节名），分页参数 `PageIndex`（第十节） |
 | 落秋 / 全本 / 全本书屋 / 笔趣阁55 / 书海阁 / 笔趣阁 | 小说 | ✅ 已内置 | `Luoqiu.kt`/`Quanben.kt`/`Qb5.kt`/`Biquge55.kt`/`Shuhaige.kt` + 仓库原有 `BIQUGE`（第八、九、十节） |
@@ -312,15 +313,15 @@ QB5_INTEGRATION_TEST=1 QUANBEN_INTEGRATION_TEST=1 \
 | 七猫中文网 `qimao.com` | 小说 | ❌ 放弃 | 详情页章节链接 0 个；2026-11-06 复核首页 294 KB 已整体转 `__NUXT__` 外壳，目录走签名接口（第十二节） |
 | 刺猬猫 `ciweimao.com` | 小说 | ❌ 放弃 | 2026-11-06 复核：详情页 113 KB / 21 章可读，但章节页正文容器不存在，页面加载 `enjs.min.js` + `myEncrytExtend-min.js` 做客户端解密，需登录（第十二节） |
 | 晋江 / 起点 / 纵横 / 17K / 塔读 | 小说 | ❌ 放弃 | 2026-11-06 复核：起点 202 空响应、纵横 402 KB 但 `__NUXT__` 壳、**17K 列表 147 KB / 586 章可解析但章节页统一 `405`**、晋江 GBK 且以付费章为主、塔读 44 KB SPA 壳 |
-| 52书库 `52shuku.net` | 小说 | ⏸ 暂缓（网络不稳） | 2026-11-06 复核首字节 200 / 25 KB 但 body 读取 `ReadTimeout`；此前代理 200 / 21 KB，分类是拼音目录 |
-| 101言情 `txtxs101.com` | 小说 | ⏸ 暂缓（网络） | 本机直连 `Connection reset by peer`（http/https 均被重置），经代理 200 / 25 KB；结构是 `/id/{id}.html` + `/class/{id}_{页}.html` |
+| 52书库 `52shuku.net` | 小说 | ❌ 放弃 | 2026-11-08 直连 200 / 25 KB，但首页与 `/wuxia/` 分类页**无静态作品链接**（依赖 JS 渲染），不是网络问题（第十九节） |
+| 101言情 `txtxs101.com` | 小说 | ❌ 放弃 | 2026-11-08 直连 200（首页 47 个 `/id/{id}.html`），但详情页一律 **503「获取数据源出错」**，站点自身故障（第十九节） |
 | 乐文小说 `lewen.org` | 小说 | ❌ 放弃 | 直连与代理均 403；且详情页只给最近 112 章、无全本目录页、搜索 500（第十节） |
 | 阅友 `sma.yueyouxs.com` / 随心看 `m.suixkan.com` | 小说 | ❌ 放弃 | 首页 61–73 KB 有书目正文但 `<a>` 标签数为 0，全靠 JS 绑定点击（第十节） |
-| 追书神器 `zhuishushenqi.com` | 小说 | ⏸ 暂缓 | 详情页 548 KB 内联 7088 章，但正文页 166 s 后 `ChunkedEncodingError`（站点限速，在线验证不可靠） |
+| 追书神器 `zhuishushenqi.com` | 小说 | ❌ 放弃 | 2026-11-08 深挖：目录接口可用，但免费章只占 18/7085、20/1556 等（其余 VIP），正文接口只回「请安装最新版追书」，PC 章页仅免费章 SSR 且整页 8.6 MB。见第十九节 |
 | 动漫456 / 风车动漫 / 「樱花动漫」站群 | 视频 | ✅ 已内置 | `Dm456.kt`/`Fengche.kt`/`Yhdm.kt`（第八、九、十节） |
 | 黄果短剧 `huangguoai.com` | 视频 | ✅ 已内置 | 仓库原有 `HUANGGUO`，含标签筛选与分页修复 |
 | AGE动漫 `agedm.io` | 视频 | ✅ 已内置（播放链路已修） | 「解析 iframe + m3u8 直链」链路已按 2026-11-06 实测实现（见第十六节末条） |
-| 红果短剧 `hongguoduanju.com` | 视频 | ❌ 放弃 | 播放页是系列级 `/player/{series_id}`，JSON-LD 里 168 个 episode 指向同一 URL，串流走字节签名接口（第八节） |
+| 红果短剧 `hongguoduanju.com` | 视频 | ✅ 已内置（自建网关） | Web/App 直连仍不可行（播放页系列级、串流走字节签名接口，见第八节），改为接自建网关：`HongguoDrama.kt` + [hongguo-web](https://github.com/sunnysky123/hongguo-web)，部署与设置见 `docs/hongguo_short_play_service_research.md` |
 | 樱花动漫（老站）`yhdmz.org` | 视频 | ❌ 放弃 | `www` 正文 0 KB（`Loading...` 壳），`m.` 302 到博彩落地页；2026-11-06 复核仍超时 |
 | 蜜柑计划 `mikanani.me` / 动漫花园 `share.dmhy.org` | 视频 | ❌ 不适用 | BT 种子站：条目是 torrent/magnet 而非「章节=页面」，与 Content/Chapter/Page 模型不匹配（第十二节） |
 | 爱剧迷 Gimy `aigm.tv` | 视频 | ❌ 放弃 | 播放页 `/play/{混淆 token}` 需逆向；2026-11-06 复核 TLS 握手超时 |
@@ -336,12 +337,14 @@ QB5_INTEGRATION_TEST=1 QUANBEN_INTEGRATION_TEST=1 \
 1. ~~**AGE动漫播放链路修复**（`AGEDM`）~~：2026-11-06 已完成，真实链路是「第三方解析 iframe → `…/m3u8/` 响应里的
    `var Vurl` 直链」，不是 `/v2/captcha`（页面里已经没有该接口）；`/vip/` 线路（西瓜）由现场 JS 解密，客户端不可播，
    解析器直接抛「请切换线路」。详见第十六节。
-2. **需要代理才能验证的站点**：92漫画、52书库、101言情、顶通 Toptoon、喜漫/漫画160/喵趣/漫画屋，
-   以及第五节上游清单里本机不可达的 `comicabc`（`articles.onemoreplace.tw` 超时）、`tongli`（東立，需 Firebase
-   登录态）、`utifa`（域名已变更）、`zazhimi`（站点只有占位页）、`hanabimanga`（Supabase REST 308 → TLS 超时）、
-   `noyacg`（SPA 壳，需要抓接口）、`zerobyw`。结构线索已记录在册（52书库拼音分类、101言情 `/id/{id}.html`），
-   有可用代理时可直接进入实现。
-3. **成人向站点**（香香腐宅/鸟鸟韩漫/漫蛙2）：需与 18+ 分级标记一起评估，单独一轮处理。
+2. **仍需代理才能验证的两个候选**：喜漫 `favcomic.com`（代理 200 / 147 KB、80 个 `detail` 链接）、
+   顶通 `toptoon.net`（代理 200 / 71 KB）。追书神器已于 2026-11-08 深挖后否掉（第十九节）。
+3. **2026-11-08 复核后否掉的**：52书库（分类/详情页无静态作品链接）、101言情（详情 503「获取数据源出错」）、
+   漫画屋 `mhua5.com`（详情 0 KB）、喵趣（0 个作品锚点）、東立 `tongli`（SSL 握手失败）、`utifa`（不可达）、
+   comicabc（`articles.onemoreplace.tw` 已变成桌游站）、`zazhimi`（0 KB 空壳）。详见第十九节。
+4. **结构未探、只确认存活**：`hanabimanga`、`noyacg`、`zerobyw`（均 200，分别为 GBK 站 / SPA / 生肉搬运站），
+   需单独一轮抓结构后再判断。
+5. **成人向站点**（香香腐宅/鸟鸟韩漫/漫蛙2）：需与 18+ 分级标记一起评估，单独一轮处理。
 
 ## 十四、2026-11-06 复核记录（本机无代理，直连 20–30 s 超时）
 
@@ -555,3 +558,57 @@ DIANYING88_INTEGRATION_TEST=1 ./gradlew test --tests "org.skepsun.kototoro.parse
 `list p1=20 p2=20 overlap=0`；`search='罗小黑' hits=8`；`灿烂如野 chapters=8 branches=[暴风线路]`，
 第 1、2 集均 `GET 200 + #EXTM3U`（`v.fengbao14.com/…/index.m3u8`）；正版线路按预期报
 「该片只提供正版平台跳转…」。注意这些 HLS 图床对 HEAD 返回 5xx，在线校验必须用 GET。
+
+## 十九、2026-11-08 复核记录（直连 + 7890 代理）
+
+第十节至第十四节的「暂缓」几乎都是同一个原因：**本机网络不可达**。本轮改用「先直连、失败的再走代理」的双路径
+复核（Chrome 142 UA、`Accept-Language: zh-CN`、直连 12–20 s / 代理 15 s 超时），把 15 个悬而未决的域名重新打了一遍，
+结论有三类：**「网络问题」其实是结构问题**（52书库/漫画屋等从「暂缓」转为「放弃」）、**表面可抓实则付费墙**（追书神器）、
+以及**仍然只有代理能验**（喜漫、顶通）。
+
+### 结果
+
+| 站点 | 直连 | 代理 | 判定 |
+| :--- | :--- | :--- | :--- |
+| 追书神器 `zhuishushenqi.com` | 200 / 35 KB | — | ❌ **放弃**：免费章仅前 18–88 章，其余数千章是 VIP；正文接口只回「请安装最新版追书」 |
+| 喜漫 `favcomic.com` | 连接重置 | 200 / 147 KB，80 个 `detail` 链接 | ⏸ 需代理，结构可做 |
+| 顶通 `toptoon.net` | 超时 | 200 / 71 KB，`/comic/` 路由 | ⏸ 需代理，模板渲染 + 接口 |
+| 52书库 `52shuku.net` | 200 / 25 KB | — | ❌ 首页与 `/wuxia/` 分类页**无静态作品链接**（全站只 1 个「阅读记录」），依赖 JS 渲染 |
+| 101言情 `txtxs101.com` | 200 / 24–32 KB | — | ❌ 首页有 47 个 `/id/{id}.html`，但**详情页 503「获取数据源出错」**（站点自身故障） |
+| 漫画屋 `mhua5.com` | 200 / 83–88 KB | — | ❌ 首页 75 个 `/comic/` 链接，**详情页 0 KB** |
+| 喵趣 `miaoqumh.org` | 200 / 54 KB | — | ❌ 作品锚点 0 个 |
+| 漫画160 `mh160mh.com` | 200 / 66 KB（GBK） | — | ❌ 与漫画社 `/comic_{id}.html` 不同模板，作品锚点 0 个 |
+| 東立 `viewer.tongli.com.tw` | SSL 失败 | SSL 失败 | ❌ 无法建连 |
+| `utifa.com` | 超时 | SSL 失败 | ❌ 域名不可用 |
+| comicabc `articles.onemoreplace.tw` | 200 / 138 KB | — | ❌ 已变成桌游站（标题「玩桌遊」），不再是漫画源 |
+| `zazhimi.com` | 200 / 0 KB | — | ❌ 空响应 |
+| `hanabimanga.com` | 200 / 38 KB（GBK） | — | ❓ 存活，结构未探 |
+| `noyacg.com` | 200 / 43 KB | — | ❓ 存活，SPA 壳，需抓接口 |
+| `zerobyw.net` | 200 / 158 KB | — | ❓ 存活，生肉搬运站，作品锚点 0 个（需手查路由） |
+
+### 追书神器：表面可抓，深挖后否定
+
+**表面现象**（容易误判为可做）：详情页 `https://www.zhuishushenqi.com/book/{24 位 hex id}` 548 KB，
+内联 7000+ 个 `/book/{id}/{n}.html` 章节链接；章页 200、`div.content > div.inner-text > p` 里就是正文。
+
+**深挖后的事实**：
+
+1. 目录接口 `GET https://api.zhuishushenqi.com/mweb/books/toc/{bookId}?platform=h5` 可用（带站内 `Referer`），
+   返回 `data.toc.chapters[]`，每项含 `_id` / `title` / `order` / **`isVip`** / `link`。实测五本书的免费章占比：
+   `18/7085`、`20/1556`、`20/1377`、`88/623`、`78/939` —— **免费章只有前 18–88 章，其余全是 VIP**。
+2. 正文接口 `https://chapter3.zhuishushenqi.com/chapter2/{urlencode(chapter.link)}` 返回 200，但 `body`
+   只有一句「请安装最新版追书 以便使用优质资源」；`chapter31.zhuishushenqi.com` 直接 500。正文只在 App 端加密链路里。
+3. PC 章页确实 SSR 了正文，但**只有免费章**：`/book/{id}/500.html` 的 `div.inner-text` 是空的，且整页约 8.6 MB
+   （7000+ 章目录全部内联、响应不压缩），按章抓等于每章重传一份完整目录。
+
+**结论**：它属于「付费墙 + App 加密接口」，与番茄、七猫、刺猬猫同一类，按仓库「不绕过付费内容」的约定放弃。
+即便只做免费章，单书也只有前 20 章左右、每章 8.6 MB，价值与成本完全不匹配。
+
+### 结论
+
+1. 追书神器经深挖后否定（付费墙 + App 加密接口）；第九节/第十四节的「暂缓」里，现在**只剩喜漫与顶通**
+   两个仍需代理才能验证的候选。
+2. 第十节与第十四节里归因为「需代理/网络不稳」的 52书库、101言情、漫画屋、喵趣、漫画160，本轮直连就能打开，
+   真正卡住的是结构（无静态链接 / 详情 503 / 详情 0 KB），因此从「暂缓」正式改为「放弃」。
+3. 上游清单（第五节）里 `comicabc`、`utifa`、`tongli`、`zazhimi` 可判定为「源已不存在」，不必再试；
+   `hanabimanga`、`noyacg`、`zerobyw` 存活但结构未知，留待单独一轮。
