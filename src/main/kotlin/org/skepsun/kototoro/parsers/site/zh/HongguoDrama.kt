@@ -41,25 +41,33 @@ import java.util.EnumSet
  * - `GET /episodes?series_id=` 详情 + 分集（带 `vid`）
  * - `GET /stream?vid=` 播放：服务端解密后按 Range 输出 mp4，可直接交给播放器
  *
- * 服务地址填在 `configKeyDomain`（默认 `127.0.0.1:8000`，即本机 `npm start` 的默认端口）。
+ * 服务地址填在 `configKeyDomain`（默认 `127.0.0.1:8000`，即本机 `start.sh` / `start.bat` 的默认端口，
+ * 设置页另有 `10.0.2.2:8000` 候选，供 Android 模拟器访问宿主机）。
  * 远程部署请填带协议的完整地址（`https://hg.example.com`），不带协议时按 `http://` 处理——
  * 本机/内网服务通常没有证书，默认走明文更符合实际部署。
  *
  * 接口鉴权用 `X-Api-Key` 头：`/api-key` 免鉴权，启动后第一条请求自动取一次并缓存；
  * 也可以在来源设置里手填（多实例或禁用 `/api-key` 时用）。
+ *
+ * 部署、局域网访问与故障排查的完整步骤见 `docs/hongguo_short_play_service_research.md`
+ * 的「部署与设置向导」一节。
  */
 @ContentSourceParser("HONGGUO", "红果短剧", "zh", type = ContentType.VIDEO)
 internal class HongguoDrama(context: ContentLoaderContext) :
 	PagedContentParser(context, ContentParserSource.HONGGUO, pageSize = LIST_PAGE_SIZE) {
 
-	override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain(DEFAULT_SERVICE)
+	override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain(*SERVICE_PRESETS)
 
 	/**
 	 * 手填的服务密钥。留空时自动读取 `/api-key`，见 [resolveApiKey]。
+	 *
+	 * 标题里写明「留空自动获取」，是因为设置页只渲染 ConfigKey 的标题，
+	 * 这行字就是用户能在设置页看到的最短提示；完整步骤见
+	 * `docs/hongguo_short_play_service_research.md` 的「部署与设置向导」。
 	 */
 	internal val apiKeyConfig: ConfigKey.Text = ConfigKey.Text(
 		key = "service_api_key",
-		title = "hongguo-web 服务密钥（留空自动获取）",
+		title = "网关 API Key（留空自动获取）",
 	)
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.POPULARITY, SortOrder.UPDATED)
@@ -398,6 +406,13 @@ internal class HongguoDrama(context: ContentLoaderContext) :
 
 	companion object {
 		private const val DEFAULT_SERVICE = "127.0.0.1:8000"
+
+		/**
+		 * 设置页「视频源域名」的候选值。两项都对应真实部署形态，用户点一下即可填入：
+		 * `127.0.0.1` 是网关与 App 同机（电脑本机 / 安卓 Termux），
+		 * `10.0.2.2` 是 Android 模拟器访问宿主机 localhost 的固定别名。
+		 */
+		private val SERVICE_PRESETS = arrayOf(DEFAULT_SERVICE, "10.0.2.2:8000")
 		private const val DEFAULT_GENRE = "short_play"
 		private const val LIST_PAGE_SIZE = 20
 

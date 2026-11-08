@@ -85,6 +85,21 @@ internal class HongguoDramaTest {
     }
 
     @Test
+    fun `offers gateway presets that match real deployments`() {
+        // 设置页把 ConfigKey.Domain 的 presets 渲染成候选值，这里是用户唯一能看到的地址提示
+        val p = parser()
+        assertEquals(listOf("127.0.0.1:8000", "10.0.2.2:8000"), p.configKeyDomain.presetValues.toList())
+        assertEquals("127.0.0.1:8000", p.configKeyDomain.defaultValue)
+    }
+
+    @Test
+    fun `api key title says it can stay empty`() {
+        val p = parser()
+        assertEquals("service_api_key", p.apiKeyConfig.key)
+        assertTrue(p.apiKeyConfig.title.contains("留空"))
+    }
+
+    @Test
     fun `uses configured domain with explicit scheme as is`() {
         val p = parser()
         (p.config as SourceConfigMock).set(p.configKeyDomain, "https://hg.example.com:8443")
