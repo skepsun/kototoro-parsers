@@ -25,6 +25,12 @@ import java.util.concurrent.TimeUnit
 private const val DOMAIN_UNAUTHORIZED = "e-hentai.org"
 private const val DOMAIN_AUTHORIZED = "exhentai.org"
 private val TAG_PREFIXES = arrayOf("male:", "female:", "other:")
+private val SINGLE_NAMESPACED_PHRASE = Regex(
+    "^([~-]?(?:male|m|female|f|other|o|mixed|x|artist|a|character|char|c|group|circle|g|" +
+        "parody|series|p|language|lang|l|cosplayer|cos|location|loc|reclass|r|tag):)" +
+        "([^\\s\":]+(?:\\s+[^\\s\":]+)+)$",
+    RegexOption.IGNORE_CASE,
+)
 private const val BANNED_RESPONSE_LENGTH = 256L
 
 @ContentSourceParser("EXHENTAI", "ExHentai", type = ContentType.HENTAI_MANGA)
@@ -382,7 +388,8 @@ internal class ExHentaiParser(
 
     @Suppress("SpellCheckingInspection")
     private val tags: String
-        get() = "ahegao,anal,angel,apron,bandages,bbw,bdsm,beauty mark,big areolae,big ass,big breasts,big clit,big lips," +
+        get() = "other:ai generated,ahegao,anal,angel,apron,bandages,bbw,bdsm,beauty mark,big areolae,big ass," +
+            "big breasts,big clit,big lips," +
             "big nipples,bikini,blackmail,bloomers,blowjob,bodysuit,bondage,breast expansion,bukkake,bunny girl,business suit," +
             "catgirl,centaur,cheating,chinese dress,christmas,collar,corset,cosplaying,cowgirl,crossdressing,cunnilingus," +
             "dark skin,daughter,deepthroat,defloration,demon girl,double penetration,double vaginal,dougi,dragon,drunk,elf,exhibitionism,farting," +
@@ -725,10 +732,11 @@ internal class ExHentaiParser(
     }
 
     private fun displayTagTitle(key: String): String {
+        val name = key.substringAfter(':', key)
         return if (isChineseLocale) {
-            tagTranslations[key] ?: key
+            tagTranslations[name] ?: name
         } else {
-            key.toTitleCase(Locale.ENGLISH)
+            name.toTitleCase(Locale.ENGLISH)
         }
     }
 
@@ -889,9 +897,24 @@ internal class ExHentaiParser(
     private fun Element.parseTags(): Set<ContentTag> {
         refreshTagCaches()
 
-        fun Element.parseTag() = textOrNull()?.let {
-            // 优先复用已缓存的 Tag，避免重复创建与翻译
-            cachedTagMap[it] ?: ContentTag(title = displayTagTitle(it), key = it, source = source)
+        fun Element.parseTag(): ContentTag? {
+            val title = attr("title").trim()
+            val id = attr("id").removePrefix("ta_")
+            val qualified = when {
+                id.contains(':') -> id
+                title.contains(':') -> title
+                else -> return null
+            }
+            val namespace = qualified.substringBefore(':').trim()
+            if (namespace.isEmpty()) return null
+            val name = if (title.startsWith("$namespace:")) {
+                title.substringAfter(':').trim()
+            } else {
+                textOrNull()?.trim().orEmpty()
+            }
+            if (name.isEmpty()) return null
+            val key = "$namespace:$name"
+            return cachedTagMap[key] ?: ContentTag(title = displayTagTitle(name), key = key, source = source)
         }
 
         val result = ArraySet<ContentTag>()
@@ -899,19 +922,7 @@ internal class ExHentaiParser(
             getElementsByAttributeValueStarting("id", "ta_$prefix").mapNotNullTo(result, Element::parseTag)
             getElementsByAttributeValueStarting("title", prefix).mapNotNullTo(result, Element::parseTag)
         }
-        select("div.gt, div.gtl, div.gtw").mapNotNullTo(result) { tag ->
-            val title = tag.attr("title").trim()
-            if (title.isEmpty()) {
-                return@mapNotNullTo null
-            }
-            val key = title.substringAfter(':').trim()
-                .ifEmpty { tag.textOrNull()?.trim().orEmpty() }
-            if (key.isEmpty()) {
-                null
-            } else {
-                cachedTagMap[key] ?: ContentTag(title = displayTagTitle(key), key = key, source = source)
-            }
-        }
+        select("div.gt, div.gtl, div.gtw").mapNotNullTo(result, Element::parseTag)
         return result
     }
 
@@ -945,7 +956,7 @@ internal class ExHentaiParser(
         }
         val parts = mutableListOf<String>()
         if (!query.isNullOrEmpty()) {
-            parts += query
+            parts += query.quoteSingleNamespacedPhrase()
         }
         for (tag in tags) {
             tag.toSearchTerm()?.let { parts += it }
@@ -954,12 +965,20 @@ internal class ExHentaiParser(
             tag.toSearchTerm()?.let { parts += "-$it" }
         }
         locale?.let { lc ->
-            parts += "language:\"${lc.toLanguagePath()}\"$"
+            parts += "language:\"${lc.toLanguagePath()}$\""
         }
         if (!author.isNullOrEmpty()) {
-            parts += "artist:\"$author\"$"
+            parts += "artist:\"$author$\""
         }
         return parts.joinToString(" ").nullIfEmpty()
+    }
+
+    private fun String.quoteSingleNamespacedPhrase(): String {
+        val match = SINGLE_NAMESPACED_PHRASE.matchEntire(trim()) ?: return this
+        val value = match.groupValues[2]
+        if (value.split(Regex("\\s+")).any { it.startsWith('-') || it.startsWith('~') }) return this
+        val exact = if (value.endsWith('$')) "$" else ""
+        return "${match.groupValues[1]}\"${value.removeSuffix("$")}$exact\""
     }
 
     private fun ContentTag.toSearchTerm(): String? {
@@ -969,9 +988,9 @@ internal class ExHentaiParser(
         val namespace = key.substringBefore(':')
         val value = key.substringAfter(':')
         return if (value != key) {
-            "$namespace:\"$value\"$"
+            "$namespace:\"$value$\""
         } else {
-            "tag:\"$key\"$"
+            "tag:\"$key$\""
         }
     }
 
