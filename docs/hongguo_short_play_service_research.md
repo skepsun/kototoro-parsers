@@ -92,7 +92,114 @@
 5. **未暴露 8 维筛选**：网关 `/filters` 支持主题/设定/背景/受众/完结/上新/时长等，
    但解析器只暴露体裁标签，避免把多选 UI 映射到单选的 `theme` 参数。
 
-## 五、联调与验证
+## 五、部署与设置向导
+
+应用里的设置页只能渲染 `ConfigKey` 的标题，放不下多步说明，所以向导正文在这里：
+设置页只留两处最短提示——「视频源域名」的候选值（`127.0.0.1:8000`、`10.0.2.2:8000`）和
+「网关 API Key（留空自动获取）」。下面按设置页从上到下的顺序走一遍。
+
+### 步骤 0 · 先决定网关跑在哪
+
+| 场景 | 网关跑在 | 「视频源域名」填 | 备注 |
+|---|---|---|---|
+| 桌面端，只在本机看 | 同一台电脑 | `127.0.0.1:8000` | 默认值，什么都不用改 |
+| 手机 + 电脑同一 WiFi | 电脑 | `192.168.x.x:8000` | 必须让网关监听 `0.0.0.0`，见步骤 3 |
+| 手机自己跑（Termux） | 手机 | `127.0.0.1:8000` | 端口照旧，注意 Termux 后台会被回收 |
+| Android 模拟器 | 宿主机 | `10.0.2.2:8000` | `10.0.2.2` 是模拟器里指向宿主机的固定别名 |
+| 公网 / 反代 | 服务器或 NAS | `https://hg.example.com` | 带协议则原样使用，需自备证书 |
+
+域名按 `HttpUrl` 校验：**只填 `host:port` 也能用**（解析器补 `http://`），
+`https://` 开头的完整地址原样使用。
+
+### 步骤 1 · 拿网关
+
+- 不想装 Node：从 [hongguo-web Releases](https://github.com/sunnysky123/hongguo-web/releases)
+  下对应平台的发行包，**已内置 Node 运行时**，解压即用。老发行版（glibc 过旧）选带
+  `-node24` 的变体包。
+- 想改代码：`git clone` 后进 `server/` 跑 `npm start`，需要 Node ≥ 18，**没有任何第三方依赖**。
+
+### 步骤 2 · 启动
+
+| 平台 | 启动 | 停止 |
+|---|---|---|
+| Windows | 双击 `scripts\start.bat` | 双击 `scripts\stop.bat` |
+| Linux / macOS | `bash scripts/start.sh` | `bash scripts/stop.sh` |
+| 通用 | `node server/src/main.js` | `node server/src/main.js --stop` |
+
+脚本会在后台轮询 `GET /health`，就绪后自动打开 <http://127.0.0.1:8000/>（想关掉设
+`HG_OPEN_BROWSER=0`）。排障常用：`node server/src/main.js --config` 看生效配置、
+`--version` 看版本、`--selftest` 跑 173 项自检。
+
+端口被占用时换一个：`PORT=8001 bash scripts/start.sh`（Windows：`set PORT=8001 && scripts\start.bat`），
+应用里的地址跟着改成 `:8001`。
+
+### 步骤 3 · 让手机连得上（跨设备才需要）
+
+网关默认只监听 `127.0.0.1`，手机填了也连不上，要放开监听并设管理口令：
+
+```bash
+BIND_HOST=0.0.0.0 ADMIN_TOKEN=<自己定一串> bash scripts/start.sh
+```
+
+- 查电脑的局域网 IP：macOS `ipconfig getifaddr en0`；Linux `ip route get 1 | awk '{print $7}'`；
+  Windows `ipconfig`（看「无线局域网适配器」的 IPv4 地址）。
+- 手机浏览器先打开 `http://<电脑IP>:8000/health` 验证，**通了再回应用里填**。
+- 系统防火墙要放行该端口；同一 WiFi 下有些路由器还开了「AP 隔离」，会挡掉手机访问。
+
+### 步骤 4 · 在应用里填地址
+
+设置 → 内容源管理 → 红果短剧 → 视频源域名。候选值点一下即填：
+
+- 网关与 App 同机：`127.0.0.1:8000`
+- 模拟器连宿主机：`10.0.2.2:8000`
+- 跨设备：`192.168.1.20:8000` 这种「电脑 IP + 端口」
+
+> 应用内该页的「在浏览器打开」会按 `https://<域名>` 拼地址，而网关默认是 http；
+> 想打开网关自带页面请手动在浏览器输 `http://<域名>/`。
+
+### 步骤 5 · 密钥留空就行
+
+数据接口要带 `X-Api-Key`，但 `/api-key` 本身免鉴权：解析器启动后第一次请求会自己取一次并缓存，
+**「网关 API Key」这一栏留空即可**。只有两种情况需要手填：
+
+1. 同一个网关给多个来源/客户端用，想固定同一把密钥；
+2. 网关关闭了 `/api-key` 自动签发（此时用 `ADMIN_TOKEN` 调 `/admin/keys` 签发，再粘进来）。
+
+### 步骤 6 · 自检四连（连不上时按顺序打）
+
+```bash
+# 1) 服务活着吗
+curl -sS http://127.0.0.1:8000/health
+# 2) 能拿到密钥吗
+curl -sS http://127.0.0.1:8000/api-key
+# 3) 数据接口通不通（热播前 2 条）
+curl -sS -H "x-api-key: $(curl -sS http://127.0.0.1:8000/api-key | python3 -c 'import json,sys;print(json.load(sys.stdin)["api_key"])')" \
+  'http://127.0.0.1:8000/browse?genre=short_play&sort=hot_score&limit=2&offset=0'
+# 4) 取流是不是 206 video/*
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' -r 0-1023 \
+  -H "x-api-key: <上面那把 key>" 'http://127.0.0.1:8000/stream?vid=<任意 vid>'
+```
+
+第 3 步返回 `{"items":[...]}` 说明数据和密钥都正常，剩下的问题一定在播放或上游风控上。
+
+### 故障排查
+
+| 应用里看到 | 真实原因 | 处理 |
+|---|---|---|
+| 「连不上 hongguo-web 服务…」 | 网关没起 / 地址或端口不对 / 跨设备没放开监听 | 步骤 2 + 步骤 6 第 1 步；跨设备回到步骤 3 |
+| 手机填 `127.0.0.1` 一直转圈 | `127.0.0.1` 指手机自己 | 换成电脑的局域网 IP |
+| 401 / 403 | 密钥没取到，或手填的与网关不一致 | 把「网关 API Key」清空，让解析器自动取 |
+| 「分集只有 ByteVC2…」415 | 该集上游只给 ByteVC2，网关不转码 | 已知限制，改用网关的下载功能存成本地 mp4 |
+| 列表空 / 偶发失败 | 上游风控：200 + 空 body、重复取流被判重 | 等几秒重试；同一集别连续狂点 |
+| `GLIBC_2.28 not found`、`cannot execute binary file` | 发行包内置的 Node 与系统 glibc 不匹配 | 换 `-node24` 变体包，或源码 checkout 用系统 Node |
+| 端口占用 | 8000 被别的程序占了 | `PORT=8001` 重启，应用里地址同步改 |
+
+### 步骤 7 · 想常驻就跑成服务
+
+`start.sh` / `start.bat` 只是薄壳，常驻交给系统：macOS 用 `launchd`、Linux 用 `systemd`、
+Windows 用 `nssm`，命令统一是 `node server/src/main.js`，并带上 `BIND_HOST` / `ADMIN_TOKEN` 环境变量。
+
+## 六、联调与验证
 
 ```bash
 # 1. 启动网关（发行包解压后 scripts/start.sh 亦可）

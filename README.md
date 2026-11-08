@@ -51,6 +51,10 @@
 > [!TIP]
 > 更多小众源（如：百合会、漫小肆、94MT等）请在应用内“源管理”中直接搜索添加。
 
+> [!NOTE]
+> **红果短剧要自建网关才能用**，三步起服务：解压 [hongguo-web](https://github.com/sunnysky123/hongguo-web) 发行包（内置 Node）→ 双击 `scripts\start.bat`（或 `bash scripts/start.sh`）→ 应用里把「视频源域名」填成 `127.0.0.1:8000`（手机连电脑改成 `192.168.x.x:8000` 并让网关监听 `0.0.0.0`），「网关 API Key」留空即自动获取。
+> 手机连不上、401、ByteVC2 播不了等情况见 [部署与设置向导](docs/hongguo_short_play_service_research.md#五部署与设置向导)。
+
 
 ## 🛠️ 开发解析器（源）引导
 
