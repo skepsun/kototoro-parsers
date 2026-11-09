@@ -85,4 +85,18 @@ class AcgxmhIntegrationTest {
 		check(nonVideo.isEmpty()) { "动画源混入非视频条目: ${nonVideo.take(3).map { it.url }}" }
 		println("[ACGXMH] video search=原神 -> ${items.size} 条, first=${items.first().url}")
 	}
+
+	@Test
+	fun searchSecondPageIsNotTheFirstPage() = runBlocking<Unit> {
+		// /q/<词>-2.html 会被站点忽略页码（永远 302 回标签页第 1 页），
+		// 解析器要记住重定向落点并翻那个标签页的第 2 页
+		val filter = ContentListFilter(query = "原神")
+		val first = parser.getListPage(1, SortOrder.UPDATED, filter)
+		val second = parser.getListPage(2, SortOrder.UPDATED, filter)
+		check(first.isNotEmpty()) { "搜索第 1 页为空" }
+		check(second.isNotEmpty()) { "搜索第 2 页为空（翻页没落到标签页）" }
+		val firstIds = first.mapTo(HashSet()) { it.id }
+		check(second.none { it.id in firstIds }) { "搜索第 2 页与第 1 页重复，页码被忽略后没翻页" }
+		println("[ACGXMH] search 原神 page1=${first.size}, page2=${second.size}")
+	}
 }

@@ -29,6 +29,17 @@ class AcgxmhTest {
 	)
 
 	@Test
+	fun `search target path is only taken from the site itself`() {
+		assertEquals("/characters/hero.html", parser.sitePathOf("https://www.acgxmh.com/characters/hero.html"))
+		assertEquals("/anime/douluodalu.html", parser.sitePathOf("https://www.acgxmh.com/anime/douluodalu.html"))
+		// 仍是搜索路由（没被重定向）时不能当翻页目标
+		assertNull(parser.sitePathOf("https://www.acgxmh.com/q/hero-1.html"))
+		// 落到 Cloudflare 保护的搜索主机时不能当翻页目标
+		assertNull(parser.sitePathOf("https://search.acgxmh.com/q/hero-1-abc.html"))
+		assertNull(parser.sitePathOf("not a url"))
+	}
+
+	@Test
 	fun `search uses the site path route instead of the ignored query parameter`() {
 		val filter = ContentListFilter(query = "原神")
 		assertEquals(

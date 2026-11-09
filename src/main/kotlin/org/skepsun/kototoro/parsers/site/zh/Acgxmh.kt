@@ -23,6 +23,7 @@ import org.skepsun.kototoro.parsers.util.urlEncoded
 import java.net.HttpURLConnection.HTTP_NOT_FOUND
 import java.net.URI
 import java.util.EnumSet
+import java.util.concurrent.ConcurrentHashMap
 
 internal abstract class AcgxmhBase(
 	context: ContentLoaderContext,
@@ -36,6 +37,9 @@ internal abstract class AcgxmhBase(
 		.add("User-Agent", UserAgents.CHROME_DESKTOP)
 		.add("Referer", "https://$domain/")
 		.build()
+
+	/** 搜索词 → 站点 302 落到的站内页面路径（如 `/characters/hero.html`），用于翻页。 */
+	private val searchTargets = ConcurrentHashMap<String, String>()
 
 	protected fun imageUrl(raw: String): String? = raw.takeIf { it.isNotBlank() }?.toAbsoluteUrlOrNull(domain)
 
@@ -100,7 +104,9 @@ internal abstract class AcgxmhBase(
 	 * Cloudflare 校验交给宿主浏览器（与 wenku8/xanimu 一致），
 	 * 站点自带「提示信息」页（如搜索过于频繁）转成可读错误，而不是静默返回空列表。
 	 */
-	protected suspend fun loadListDocument(url: String): Document {
+	protected suspend fun loadListDocument(url: String): Document = loadListPage(url).first
+
+	private suspend fun loadListPage(url: String): Pair<Document, String> {
 		val request = Request.Builder()
 			.get()
 			.url(url)
@@ -119,7 +125,57 @@ internal abstract class AcgxmhBase(
 			}
 			throw HttpStatusException("HTTP $code", code, url)
 		}
-		return response.parseHtml().also { it.raiseIfSiteMessage() }
+		// 跟随重定向后的最终地址：站内搜索会 302 到标签页，翻页要落在那个页面上
+		val effectiveUrl = response.request.url.toString()
+		return response.parseHtml().also { it.raiseIfSiteMessage() } to effectiveUrl
+	}
+
+	/**
+	 * 搜索翻页：`/q/<关键词>-<页码>.html` 的页码会被站点忽略（永远 302 到同一张第 1 页），
+	 * 所以第一页拿到重定向落点后记下来，后续页直接翻那个标签页（`-2.html`、`-3.html`…）。
+	 */
+	protected suspend fun loadFilteredListDocument(
+		page: Int,
+		order: SortOrder,
+		filter: ContentListFilter,
+	): Document {
+		val query = filter.query?.trim().orEmpty()
+		if (query.isEmpty()) {
+			return loadListDocument(buildListUrl(page, order, filter))
+		}
+		val target = searchTargets[query]
+		if (target == null) {
+			val (document, effectiveUrl) = loadListPage(buildSearchUrl(query, page))
+			sitePathOf(effectiveUrl)?.let { searchTargets[query] = it }
+			return document
+		}
+		val url = if (page <= 1) "https://$domain$target" else buildPagedPathUrl(target, page)
+		return loadListDocument(url)
+	}
+
+	/** 搜索走 /q/ 路径路由，其它情况交给各源自己的分类页/频道入口。 */
+	internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+		filter.query?.takeIf { it.isNotBlank() }?.let {
+			return buildSearchUrl(it, page)
+		}
+		filter.tags.firstOrNull()?.let {
+			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
+				return buildPagedPathUrl(path, page)
+			}
+		}
+		return buildBrowseUrl(page, order)
+	}
+
+	/** 无关键词、无标签时的默认列表入口（漫画源 /h/，动画源 /gif/）。 */
+	protected abstract fun buildBrowseUrl(page: Int, order: SortOrder): String
+
+	/** 站内页面路径；落到 search.acgxmh.com 或仍是 /q/ 搜索路由时返回 null。 */
+	internal fun sitePathOf(url: String): String? {
+		val uri = runCatching { URI(url) }.getOrNull() ?: return null
+		if (!uri.host.orEmpty().equals(domain, ignoreCase = true)) return null
+		val path = uri.rawPath.orEmpty()
+		if (path.isEmpty() || path.startsWith("/q/")) return null
+		return path
 	}
 
 	internal fun Document.raiseIfSiteMessage() {
@@ -191,7 +247,7 @@ internal class Acgxmh(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		return parseList(loadListDocument(buildListUrl(page, order, filter)))
+		return parseList(loadFilteredListDocument(page, order, filter))
 	}
 
 	override suspend fun getDetails(manga: Content): Content {
@@ -238,19 +294,9 @@ internal class Acgxmh(context: ContentLoaderContext) :
 		return images.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
-	internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
-		filter.query?.takeIf { it.isNotBlank() }?.let {
-			return buildSearchUrl(it, page)
-		}
-		filter.tags.firstOrNull()?.let {
-			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
-				return buildPagedPathUrl(path, page)
-			}
-		}
-		return when (order) {
-			SortOrder.POPULARITY -> "https://$domain/hot/" + if (page > 1) "index-$page.html" else ""
-			else -> buildPagedPathUrl("/h/", page)
-		}
+	override fun buildBrowseUrl(page: Int, order: SortOrder): String = when (order) {
+		SortOrder.POPULARITY -> "https://$domain/hot/" + if (page > 1) "index-$page.html" else ""
+		else -> buildPagedPathUrl("/h/", page)
 	}
 
 	internal fun parseList(doc: Document): List<Content> = doc.select("#list li").mapNotNull { item ->
@@ -303,7 +349,7 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		return parseList(loadListDocument(buildListUrl(page, order, filter)))
+		return parseList(loadFilteredListDocument(page, order, filter))
 	}
 
 	override suspend fun getDetails(manga: Content): Content {
@@ -366,17 +412,8 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 		return playableUrls.map { url -> ContentPage(id = generateUid(url), url = url, preview = null, source = source) }
 	}
 
-	internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
-		filter.query?.takeIf { it.isNotBlank() }?.let {
-			return buildSearchUrl(it, page)
-		}
-		filter.tags.firstOrNull()?.let {
-			it.key.removePrefix("path:").takeIf { path -> path != it.key }?.let { path ->
-				return buildPagedPathUrl(path, page)
-			}
-		}
-		return buildPagedPathUrl(if (order == SortOrder.POPULARITY) "/hanime/" else "/gif/", page)
-	}
+	override fun buildBrowseUrl(page: Int, order: SortOrder): String =
+		buildPagedPathUrl(if (order == SortOrder.POPULARITY) "/hanime/" else "/gif/", page)
 
 	internal fun parseList(doc: Document): List<Content> = (doc.select(".grid-item") + doc.select("#list li")).mapNotNull { item ->
 		val a = item.selectFirst("a.thumb[href], a[href*=/gif/], a[href*=/hanime/]") ?: return@mapNotNull null
