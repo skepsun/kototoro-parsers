@@ -20,6 +20,7 @@ import org.skepsun.kototoro.parsers.model.SortOrder
 class AcgxmhIntegrationTest {
 
 	private val parser = Acgxmh(ContentLoaderContextMock)
+	private val videoParser = AcgxmhVideo(ContentLoaderContextMock)
 
 	@Test
 	fun browseListWorks() = runBlocking {
@@ -73,5 +74,15 @@ class AcgxmhIntegrationTest {
 			"戏仿 标签 key 异常: ${group.tags.map { it.key }}"
 		}
 		println("[ACGXMH] 戏仿 tags=${group.tags.size}, first=${group.tags.first().title} -> ${group.tags.first().key}")
+	}
+
+	@Test
+	fun videoSearchReturnsVideoItems() = runBlocking<Unit> {
+		// 标签页同时含 /gif 与 /h|/hentai 条目，动画源只保留前者
+		val items = videoParser.getListPage(1, SortOrder.UPDATED, ContentListFilter(query = "原神"))
+		check(items.isNotEmpty()) { "动画源搜索「原神」为空（标签页里的 /gif 条目没有被保留）" }
+		val nonVideo = items.filterNot { it.url.startsWith("/gif/") || it.url.startsWith("/hanime/") || it.url.startsWith("/asmr/") }
+		check(nonVideo.isEmpty()) { "动画源混入非视频条目: ${nonVideo.take(3).map { it.url }}" }
+		println("[ACGXMH] video search=原神 -> ${items.size} 条, first=${items.first().url}")
 	}
 }
