@@ -3,6 +3,7 @@ package org.skepsun.kototoro.parsers.site.zh
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
+import org.skepsun.kototoro.parsers.exception.ContentUnavailableException
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.CloudFlareProtectedException
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
@@ -98,5 +99,17 @@ class AcgxmhIntegrationTest {
 		val firstIds = first.mapTo(HashSet()) { it.id }
 		check(second.none { it.id in firstIds }) { "搜索第 2 页与第 1 页重复，页码被忽略后没翻页" }
 		println("[ACGXMH] search 原神 page1=${first.size}, page2=${second.size}")
+	}
+
+	@Test
+	fun videoSearchForMangaOnlyKeywordExplainsItself() = runBlocking<Unit> {
+		// silent → /characters/silent.html，整页都是图集，动画源过滤后为空，应给出可读提示
+		delay(2000)
+		val error = runCatching {
+			videoParser.getListPage(1, SortOrder.UPDATED, ContentListFilter(query = "silent"))
+		}.exceptionOrNull()
+		check(error is ContentUnavailableException) { "期望可读提示，实际: $error" }
+		check(error.message.orEmpty().contains("漫画/图集分类")) { "提示文案不对: ${error.message}" }
+		println("[ACGXMH] video search=silent -> ${error.message}")
 	}
 }

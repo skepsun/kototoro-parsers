@@ -349,7 +349,31 @@ internal class AcgxmhVideo(context: ContentLoaderContext) :
 	)
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-		return parseList(loadFilteredListDocument(page, order, filter))
+		val document = loadFilteredListDocument(page, order, filter)
+		val items = parseList(document)
+		// 站点把同一关键词的漫画/图集/动画混在一张标签页里，动画源过滤后可能为空：
+		// 与其给一个没有任何说明的空列表，不如说清楚结果落在别的分类
+		if (items.isEmpty() && page <= 1 && !filter.query.isNullOrBlank()) {
+			document.describeNonVideoMatches()?.let {
+				throw ContentUnavailableException("ACGXMH：$it")
+			}
+		}
+		return items
+	}
+
+	/** 标签页里非动画条目（漫画/图集/网漫/西漫）的概况，供空结果提示使用。 */
+	internal fun Document.describeNonVideoMatches(): String? {
+		val otherPaths = select("#list li a.thumb[href], #list li a[href]")
+			.mapNotNull { it.attr("href").toSitePath() }
+			.filterNot { it.isVideoContentPath() }
+			.distinct()
+		if (otherPaths.isEmpty()) return null
+		val manga = otherPaths.count {
+			it.startsWith("/h/") || it.startsWith("/hentai/") ||
+				it.startsWith("/webtoon/") || it.startsWith("/western/")
+		}
+		if (manga <= 0) return null
+		return "该关键词有 $manga 条结果落在漫画/图集分类，动画分类为空；请在「ACG漫画网」源中搜索"
 	}
 
 	override suspend fun getDetails(manga: Content): Content {

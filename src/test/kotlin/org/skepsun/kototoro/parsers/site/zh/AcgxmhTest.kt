@@ -116,6 +116,21 @@ class AcgxmhTest {
 	}
 
 	@Test
+	fun `video search explains when every hit is manga or gallery`() {
+		val mangaOnly = with(videoParser) { fixture("tag-page-manga-only.html").describeNonVideoMatches() }
+		assertTrue(mangaOnly.orEmpty().contains("3 条结果落在漫画/图集分类"), mangaOnly)
+		assertTrue(videoParser.parseList(fixture("tag-page-manga-only.html")).isEmpty())
+
+		// 只有动画条目时不该提示
+		val videoOnly = Jsoup.parse(
+			"""<ul id="list"><li><a class="thumb" href="/gif/913460.html" title="只有动画">
+				<img src="https://file3.example-cdn.com/gif/a.webp" alt="只有动画" /></a></li></ul>""",
+			"https://www.acgxmh.com/",
+		)
+		assertNull(with(videoParser) { videoOnly.describeNonVideoMatches() })
+	}
+
+	@Test
 	fun `rate limit message page raises a readable error`() {
 		val e = assertThrows(ContentUnavailableException::class.java) {
 			parser.run { fixture("rate-limit.html").raiseIfSiteMessage() }
