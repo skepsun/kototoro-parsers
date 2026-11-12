@@ -1,0 +1,64 @@
+{
+  "created": 1689667830,
+  "d1": "ia601404.us.archive.org",
+  "dir": "/13/items/newtonspmathema00newtrich",
+  "files_count": 8,
+  "files": [
+    {
+      "name": "newtonspmathema00newtrich_restricted.epub",
+      "format": "EPUB",
+      "size": "999",
+      "private": "true"
+    },
+    {
+      "name": "__ia_thumb.jpg",
+      "format": "Item Tile",
+      "size": "17674"
+    },
+    {
+      "name": "newtonspmathema00newtrich.epub",
+      "format": "EPUB",
+      "size": "11168269"
+    },
+    {
+      "name": "newtonspmathema00newtrich.pdf",
+      "format": "Text PDF",
+      "size": "60451456"
+    },
+    {
+      "name": "newtonspmathema00newtrich_bw.pdf",
+      "format": "Additional Text PDF",
+      "size": "50000000"
+    },
+    {
+      "name": "newtonspmathema00newtrich_djvu.txt",
+      "format": "DjVuTXT",
+      "size": "1766098"
+    },
+    {
+      "name": "newtonspmathema00newtrich_hocr.html",
+      "format": "hOCR",
+      "size": "39908156"
+    },
+    {
+      "name": "scandata.zip",
+      "format": "Scribe Scandata ZIP",
+      "size": "101147635"
+    }
+  ],
+  "metadata": {
+    "identifier": "newtonspmathema00newtrich",
+    "title": "Newton's Principia : the mathematical principles of natural philosophy",
+    "creator": ["Newton, Isaac, Sir, 1642-1727", "Chittenden, N. W. Life of Sir Isaac Newton", "Motte, Andrew, d. 1730"],
+    "date": "c1846",
+    "year": "1846",
+    "publisher": "New-York : Published by Daniel Adee",
+    "language": "eng",
+    "subject": ["Newton, Isaac, Sir, 1642-1727", "Mechanics -- Early works to 1800", "Celestial mechanics -- Early works to 1800"],
+    "mediatype": "texts",
+    "collection": ["cdl", "americana"],
+    "imagecount": "600",
+    "possible-copyright-status": "NOT_IN_COPYRIGHT",
+    "description": ["4, vii, 581 p. : 25 cm", "Translation of: Philosophiae naturalis principia"]
+  }
+}

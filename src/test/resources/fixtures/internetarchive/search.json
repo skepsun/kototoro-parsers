@@ -1,0 +1,34 @@
+{
+  "responseHeader": {
+    "status": 0,
+    "QTime": 579,
+    "params": {
+      "query": "mediatype:texts AND NOT collection:inlibrary",
+      "rows": 50,
+      "wt": "json"
+    }
+  },
+  "response": {
+    "numFound": 48700491,
+    "start": 0,
+    "docs": [
+      {
+        "identifier": "newtonspmathema00newtrich",
+        "title": "Newton's Principia : the mathematical principles of natural philosophy",
+        "creator": ["Newton, Isaac, Sir, 1642-1727", "Motte, Andrew, d. 1730"],
+        "year": "1846",
+        "language": "eng",
+        "subject": ["Newton, Isaac, Sir, 1642-1727", "Mechanics -- Early works to 1800"],
+        "downloads": 511318
+      },
+      {
+        "identifier": "philosophiaenaturalis00newt",
+        "title": "Philosophiae naturalis principia mathematica",
+        "creator": "Newton, Isaac, 1642-1727",
+        "year": "1687",
+        "language": ["lat", "eng"],
+        "downloads": "1203"
+      }
+    ]
+  }
+}

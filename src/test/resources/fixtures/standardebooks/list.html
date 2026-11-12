@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+	<meta charset="utf-8"/>
+	<title>Browse ebooks - Standard Ebooks</title>
+</head>
+<body>
+<main>
+	<section id="ebooks-list">
+		<h1>Browse ebooks</h1>
+		<form method="GET" action="https://standardebooks.org/ebooks" class="filter-form">
+			<label class="tags">
+				<span>Tags</span>
+				<select name="tags[]" multiple="multiple">
+					<option value="adventure">Adventure</option>
+					<option value="fiction">Fiction</option>
+					<option value="philosophy">Philosophy</option>
+				</select>
+			</label>
+			<label class="query">
+				<span>Search</span>
+				<input type="text" name="query" value=""/>
+			</label>
+			<label class="sort">
+				<span>Sort</span>
+				<select name="sort">
+					<option value="default" selected="selected">Default</option>
+					<option value="author-alpha">Author (A&ndash;Z)</option>
+					<option value="popularity">Most popular</option>
+				</select>
+			</label>
+			<button>Filter</button>
+		</form>
+
+		<ol class="ebooks-list grid">
+			<li typeof="schema:Book" about="/ebooks/arthur-conan-doyle/sir-nigel">
+				<div class="thumbnail-container" aria-hidden="true">
+					<a href="/ebooks/arthur-conan-doyle/sir-nigel" tabindex="-1" property="schema:url">
+						<picture>
+							<source srcset="/images/covers/arthur-conan-doyle_sir-nigel/a5c06a007d62adcb8649910b33159e83377ccf62/cover@2x.avif 2x, /images/covers/arthur-conan-doyle_sir-nigel/a5c06a007d62adcb8649910b33159e83377ccf62/cover.avif 1x" type="image/avif"/>
+							<img src="/images/covers/arthur-conan-doyle_sir-nigel/a5c06a007d62adcb8649910b33159e83377ccf62/cover@2x.jpg" alt="" property="schema:image" height="335" width="224" loading="lazy"/>
+						</picture>
+					</a>
+				</div>
+				<p><a href="/ebooks/arthur-conan-doyle/sir-nigel" property="schema:url"><span property="schema:name">Sir Nigel</span></a></p>
+				<p class="author" typeof="schema:Person" property="schema:author" resource="/ebooks/arthur-conan-doyle"><a href="https://standardebooks.org/ebooks/arthur-conan-doyle" property="schema:url"><span property="schema:name">Arthur Conan Doyle</span></a></p>
+			</li>
+			<li typeof="schema:Book" about="/ebooks/thomas-mann/death-in-venice/kenneth-burke">
+				<div class="thumbnail-container" aria-hidden="true">
+					<a href="/ebooks/thomas-mann/death-in-venice/kenneth-burke" tabindex="-1" property="schema:url">
+						<picture>
+							<img src="/images/covers/thomas-mann_death-in-venice/2f0c7e1d2b3a4c5d6e7f8a9b0c1d2e3f4a5b6c7d/cover@2x.jpg" alt="" property="schema:image" height="335" width="224" loading="lazy"/>
+						</picture>
+					</a>
+				</div>
+				<p><a href="/ebooks/thomas-mann/death-in-venice/kenneth-burke" property="schema:url"><span property="schema:name">Death in Venice</span></a></p>
+				<p class="author" typeof="schema:Person" property="schema:author" resource="/ebooks/thomas-mann"><a href="https://standardebooks.org/ebooks/thomas-mann" property="schema:url"><span property="schema:name">Thomas Mann</span></a></p>
+			</li>
+		</ol>
+
+		<nav class="pagination">
+			<ol>
+				<li><a href="/ebooks?page=2&amp;per-page=24">Next</a></li>
+			</ol>
+		</nav>
+	</section>
+</main>
+</body>
+</html>
