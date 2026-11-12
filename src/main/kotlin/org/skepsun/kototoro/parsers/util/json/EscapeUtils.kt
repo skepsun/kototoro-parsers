@@ -16,19 +16,23 @@ public fun String.unescapeJson(): String {
 				'r' -> builder.append('\r')
 				't' -> builder.append('\t')
 				'b' -> builder.append('\b')
+				'f' -> builder.append('\u000c')
 				'u' -> {
-					val hex = StringBuilder(4)
-					require(i + 4 <= length) { "Not enough unicode digits!" }
-					for (x in substring(i, i + 4)) {
-						require(x.isLetterOrDigit()) { "Bad character in unicode escape" }
-						hex.append(x.lowercase())
+					if (i + 4 <= length) {
+						val hex = substring(i, i + 4)
+						val code = hex.toIntOrNull(16)
+						if (code != null) {
+							builder.append(code.toChar())
+							i += 4
+						} else {
+							builder.append(ch)
+						}
+					} else {
+						builder.append(ch)
 					}
-					i += 4 // consume those four digits.
-					val code = hex.toString().toInt(16)
-					builder.append(code.toChar())
 				}
 
-				else -> throw IllegalArgumentException("Illegal escape sequence: \\$ch")
+				else -> builder.append(ch)
 			}
 		} else {
 			builder.append(delimiter)

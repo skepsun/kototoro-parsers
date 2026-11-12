@@ -235,6 +235,29 @@ internal class BoyloveParserTest {
     }
 
     @Test
+    fun `parse long chapter list without stack overflow on JVM`() {
+        val html = buildString {
+            append("<html><head><script>function getChapterList(asc) { let data = JSON.parse(\"{\\\"list\\\":[")
+            for (i in 1..200) {
+                if (i > 1) append(",")
+                append("{\\\"id\\\":$i,\\\"isvip\\\":\\\"0\\\",\\\"title\\\":\\\"第${i}話\\\",\\\"create_time\\\":\\\"2025-01-01 10:00:00\\\"}")
+            }
+            append("]}\"); }</script></head><body></body></html>")
+        }
+        val chapters = parser.parseChapters(Jsoup.parse(html))
+        assertEquals(200, chapters.size)
+        assertEquals("第1話", chapters.first().title)
+        assertEquals("第200話", chapters.last().title)
+    }
+
+    @Test
+    fun `extract chapter json handles single quotes and varied whitespace`() {
+        val script = "function getChapterList(asc, extra) { let data = JSON.parse ( '{\\\"list\\\":[{\\\"id\\\":123,\\\"isvip\\\":\\\"0\\\",\\\"title\\\":\\\"ch1\\\"}]}' ); }"
+        val raw = parser.extractChapterJson(script)
+        assertEquals("{\\\"list\\\":[{\\\"id\\\":123,\\\"isvip\\\":\\\"0\\\",\\\"title\\\":\\\"ch1\\\"}]}", raw)
+    }
+
+    @Test
     fun `parse reader images in order and skip the footer ad`() {
         val pages = parser.parsePages(html("chapter.html"))
         assertEquals(3, pages.size)

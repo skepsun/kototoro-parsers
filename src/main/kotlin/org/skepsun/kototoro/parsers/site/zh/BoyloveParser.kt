@@ -249,10 +249,16 @@ internal class BoyloveParser(context: ContentLoaderContext) :
 
     /** 目录藏在 `getChapterList` 的 JS 字符串字面量里，先按 JS 转义规则还原成 JSON 再解析。 */
     internal fun parseChapters(doc: Document): List<ContentChapter> {
-        val script = doc.select("script").firstOrNull { it.data().contains(CHAPTER_LIST_MARKER) }?.data()
-            ?: return emptyList()
-        val raw = CHAPTER_JSON.find(script)?.groupValues?.get(1) ?: return emptyList()
-        val list = raw.unescapeJson().toJSONObjectOrNull()?.optJSONArray("list") ?: return emptyList()
+        val scripts = doc.select("script").filter { it.data().contains(CHAPTER_LIST_MARKER) }
+        var raw: String? = null
+        for (script in scripts) {
+            raw = extractChapterJson(script.data())
+            if (!raw.isNullOrEmpty()) break
+        }
+        if (raw.isNullOrEmpty()) return emptyList()
+        val list = runCatching {
+            raw.unescapeJson().toJSONObjectOrNull()?.optJSONArray("list")
+        }.getOrNull() ?: return emptyList()
         return list.mapJSONIndexed<ContentChapter?> { index, item ->
             val chapterId = item.getIntOrDefault("id", 0)
             // 付费章节一律不返回：既不能读，也不该出现在目录里
@@ -270,6 +276,51 @@ internal class BoyloveParser(context: ContentLoaderContext) :
                 source = source,
             )
         }.filterNotNull()
+    }
+
+    /**
+     * 提取 `getChapterList` 内传给 `JSON.parse(...)` 的字符串字面量内容。
+     *
+     * 避免使用带回溯/交替的正则（如 `((?:[^"\\]|\\.)*)`）匹配长字符串：
+     * OpenJDK 的 `java.util.regex` 在处理量词内的分支时通过递归实现，
+     * 面对数十乃至上百话、长度数千到数万字符的目录字符串会耗尽调用栈，抛出 [StackOverflowError]。
+     * 该现象在 iOS 嵌入式 Zero 解释器 JVM 环境（栈空间较小）中必然触发，
+     * 而 Android 端因 libcore 使用非递归的 C++ ICU 正则引擎因而表现正常。
+     * 这里采用 O(N) 线性字符扫描提取字面量。
+     */
+    internal fun extractChapterJson(script: String): String? {
+        val markerIndex = script.indexOf(CHAPTER_LIST_MARKER)
+        val scope = if (markerIndex >= 0) script.substring(markerIndex) else script
+        val parseIndex = scope.indexOf("JSON.parse")
+        if (parseIndex < 0) return null
+
+        var startQuote = -1
+        var quoteChar = '"'
+        for (i in parseIndex + "JSON.parse".length until scope.length) {
+            val c = scope[i]
+            if (c == '"' || c == '\'') {
+                startQuote = i
+                quoteChar = c
+                break
+            }
+        }
+        if (startQuote < 0) return null
+
+        var escaped = false
+        var endQuote = -1
+        for (i in startQuote + 1 until scope.length) {
+            val c = scope[i]
+            if (escaped) {
+                escaped = false
+            } else if (c == '\\') {
+                escaped = true
+            } else if (c == quoteChar) {
+                endQuote = i
+                break
+            }
+        }
+        if (endQuote < 0) return null
+        return scope.substring(startQuote + 1, endQuote)
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
@@ -322,9 +373,6 @@ internal class BoyloveParser(context: ContentLoaderContext) :
         private const val ONGOING_FLAG = 0
         private const val VIP_CHAPTER = "1"
         private const val CHAPTER_LIST_MARKER = "getChapterList"
-        private val CHAPTER_JSON = Regex(
-            """function getChapterList\([^)]*\)\s*\{\s*let data = JSON\.parse\("((?:[^"\\]|\\.)*)"\)""",
-        )
         private val AUTHOR_SEPARATORS = Regex("[,，、/&]")
         private val DESCRIPTION_PREFIX = Regex("^简[介介][:：]\\s*")
         private val DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ENGLISH)
