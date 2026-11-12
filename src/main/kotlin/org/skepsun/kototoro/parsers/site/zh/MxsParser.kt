@@ -8,6 +8,7 @@ import org.jsoup.nodes.Element
 import org.skepsun.kototoro.parsers.InternalParsersApi
 import org.skepsun.kototoro.parsers.ContentLoaderContext
 import org.skepsun.kototoro.parsers.ContentSourceParser
+import org.skepsun.kototoro.parsers.config.ConfigKey
 import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.model.ContentRating
 import org.skepsun.kototoro.parsers.model.ContentType
@@ -29,12 +30,27 @@ import java.util.EnumSet
 
 /**
  * 漫小肆（多域名）
+ *
+ * 同一套后端的域名站群，对外自称「漫小肆韓漫 / 92韩漫 / 顶通免费 / 玩漫 / 歪歪漫画」等。
+ * 2026-11-11 实测以下四个域的书单页、详情页、阅读页与图片路径响应字节完全一致：
+ * - `www.mxshm.top`（默认）
+ * - `ikanmh.xyz`
+ * - `jjmhw2.top`
+ * - `www.jjmhw12.top`
+ *
+ * 图片地址在 HTML 里带的是站群中另一个域的绝对地址，[getPages] 会把它重写到当前选中的域名，
+ * 四个域都已验证可直接取图，用户切换域名不会裂图。
  */
 @ContentSourceParser("MXS_", "漫小肆", "zh", type=ContentType.HENTAI_MANGA)
 internal class MxsParser(context: ContentLoaderContext) :
     PagedContentParser(context, ContentParserSource.MXS_, pageSize = 20) {
 
-    override val configKeyDomain = org.skepsun.kototoro.parsers.config.ConfigKey.Domain("www.mxshm.top")
+    override val configKeyDomain = ConfigKey.Domain(
+        "www.mxshm.top",
+        "ikanmh.xyz",
+        "jjmhw2.top",
+        "www.jjmhw12.top",
+    )
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.NEWEST, SortOrder.POPULARITY)
 
     private val recommendTags = listOf(
@@ -96,22 +112,12 @@ internal class MxsParser(context: ContentLoaderContext) :
     private fun baseUrl(): String = "https://${config[configKeyDomain].removeSuffix("/")}"
 
     override suspend fun getListPage(page: Int, order: SortOrder, filter: ContentListFilter): List<Content> {
-        val selection = filter.toSelection()
         if (!filter.query.isNullOrEmpty()) {
             return search(filter.query!!, page)
         }
-        val url = when {
-            selection.recommend == "rank" -> {
-                if (page > 1) return emptyList()
-                "${baseUrl()}/rank"
-            }
-            selection.category.isNotEmpty() || selection.recommend == "all" ||
-                selection.area != "-1" || selection.status != "-1" -> {
-                val tagParam = selection.category.ifEmpty { "全部" }.urlEncoded()
-                "${baseUrl()}/booklist?tag=$tagParam&area=${selection.area}&end=${selection.status}&page=$page"
-            }
-            else -> "${baseUrl()}/update?page=$page"
-        }
+        val selection = filter.toSelection()
+        val url = buildListUrl(page, selection.recommend, selection.category, selection.area, selection.status)
+            ?: return emptyList()
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
         return if (selection.recommend == "rank") {
@@ -121,6 +127,22 @@ internal class MxsParser(context: ContentLoaderContext) :
         }
     }
 
+    /** 榜单页只有一页，其余分页沿用站点的 `page` 查询参数。 */
+    internal fun buildListUrl(page: Int, filter: ContentListFilter): String? {
+        val selection = filter.toSelection()
+        return buildListUrl(page, selection.recommend, selection.category, selection.area, selection.status)
+    }
+
+    private fun buildListUrl(page: Int, recommend: String, category: String, area: String, status: String): String? =
+        when {
+            recommend == "rank" -> if (page > 1) null else "${baseUrl()}/rank"
+            category.isNotEmpty() || recommend == "all" || area != "-1" || status != "-1" -> {
+                val tagParam = category.ifEmpty { "全部" }.urlEncoded()
+                "${baseUrl()}/booklist?tag=$tagParam&area=$area&end=$status&page=$page"
+            }
+            else -> "${baseUrl()}/update?page=$page"
+        }
+
     private suspend fun search(keyword: String, page: Int): List<Content> {
         if (page > 1) return emptyList()
         val url = "${baseUrl()}/search?keyword=${keyword.urlEncoded()}"
@@ -129,7 +151,7 @@ internal class MxsParser(context: ContentLoaderContext) :
         return parseComicList(resp.parseHtml())
     }
 
-    private fun parseComicList(doc: Document): List<Content> {
+    internal fun parseComicList(doc: Document): List<Content> {
         val items = doc.select(".mh-item").ifEmpty {
             doc.select(".mh-list.col7 .mh-item")
         }.ifEmpty {
@@ -218,23 +240,7 @@ internal class MxsParser(context: ContentLoaderContext) :
 
         val tagList = doc.select(".info .tip a[href*='tag=']").mapNotNull { it.text()?.trim() }
 
-        val chapters = doc.select("#detail-list-select li a").mapIndexedNotNull { index, a ->
-            val chapterUrl = a.attr("href")
-            val chapterTitle = a.text().trim()
-            if (chapterUrl.isEmpty() || chapterTitle.isEmpty()) return@mapIndexedNotNull null
-            val chapterId = chapterUrl.substringAfterLast("/")
-            ContentChapter(
-                id = generateUid("$chapterId-${manga.id}"),
-                url = chapterId,
-                title = chapterTitle,
-                number = (index + 1).toFloat(),
-                volume = 0,
-                scanlator = null,
-                uploadDate = 0,
-                branch = null,
-                source = source,
-            )
-        }
+        val chapters = parseChapters(doc, manga)
 
         val tagSet = buildSet {
             if (authors.isNotEmpty()) addAll(authors.map { ContentTag(it, it, source) })
@@ -258,8 +264,35 @@ internal class MxsParser(context: ContentLoaderContext) :
         val url = "${baseUrl()}/chapter/${chapter.url}"
         val resp = webClient.httpGet(url, getRequestHeaders())
         if (!resp.isSuccessful) return emptyList()
-        val doc = resp.parseHtml()
-        val images = doc.select("img.lazy").mapIndexedNotNull { index, img ->
+        return parsePages(resp.parseHtml())
+    }
+
+    /** 章节目录整段 SSR 在详情页，无需翻页；顺序以站点给出的顺序为准。 */
+    internal fun parseChapters(doc: Document, manga: Content): List<ContentChapter> =
+        doc.select("#detail-list-select li a").mapIndexedNotNull { index, a ->
+            val chapterUrl = a.attr("href")
+            val chapterTitle = a.text().trim()
+            if (chapterUrl.isEmpty() || chapterTitle.isEmpty()) return@mapIndexedNotNull null
+            val chapterId = chapterUrl.substringAfterLast("/")
+            ContentChapter(
+                id = generateUid("$chapterId-${manga.id}"),
+                url = chapterId,
+                title = chapterTitle,
+                number = (index + 1).toFloat(),
+                volume = 0,
+                scanlator = null,
+                uploadDate = 0,
+                branch = null,
+                source = source,
+            )
+        }
+
+    /**
+     * 阅读页图片为 `img.lazy[data-original]`，且地址里的域名常常不是当前选中的域名
+     * （站群内互相引用），这里统一重写到当前域名，四个域均已验证可取图。
+     */
+    internal fun parsePages(doc: Document): List<ContentPage> =
+        doc.select("img.lazy").mapIndexedNotNull { index, img ->
             val src = img.attr("data-original").ifEmpty { img.attr("src") }
             if (src.isEmpty()) null else {
                 val image = src.replace(Regex("^https?://[^/]+")) { baseUrl() }
@@ -271,8 +304,6 @@ internal class MxsParser(context: ContentLoaderContext) :
                 )
             }
         }
-        return images
-    }
 
     override suspend fun getPageUrl(page: ContentPage): String = page.url
 
