@@ -15,11 +15,16 @@ jobs:
         -   name: Set up enviroment 🔧
             uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
             with:
-                java-version: '21'
+                # 21 运行 Gradle，8 是 build.gradle.kts 里 jvmToolchain(8) 需要的编译 JDK。
+                # 新版 runner 镜像（ubuntu-26.04）不再预装 JDK 8，必须显式安装，否则
+                # toolchain 解析失败：Cannot find a Java installation matching {languageVersion=8}
+                java-version: |
+                    8
+                    21
                 distribution: 'temurin'
 
         -   name: Set up Gradle 📦
             uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
 
         -   name: Compile parsers 🚀
-            run: ./gradlew compileKotlin
+            run: ./gradlew compileKotlin -Porg.gradle.java.installations.paths="${JAVA_HOME_8_X64:?JDK 8 toolchain is missing}"

@@ -13,14 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up JDK 17
+      - name: Set up JDK 8 & 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          # 17 运行 Gradle，8 是 build.gradle.kts 里 jvmToolchain(8) 需要的编译 JDK；
+          # 新版 runner 镜像（ubuntu-26.04）不再预装 JDK 8，必须显式安装
+          java-version: |
+            8
+            17
           distribution: 'temurin'
-          
+
       - name: Build standard JAR
-        run: ./gradlew jar --no-daemon
+        run: ./gradlew jar --no-daemon -Porg.gradle.java.installations.paths="${JAVA_HOME_8_X64:?JDK 8 toolchain is missing}"
         
       - name: D8 Dexing and Packaging
         run: |
