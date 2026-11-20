@@ -3,13 +3,15 @@ package org.skepsun.kototoro.parsers.site.zh
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import kotlin.time.Duration.Companion.minutes
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentParserSource
 import org.skepsun.kototoro.parsers.model.RATING_UNKNOWN
 
-class WnacgReadTest {
+@EnabledIfEnvironmentVariable(named = "WNACG_INTEGRATION_TEST", matches = "1")
+class WnacgReadIntegrationTest {
 
     private val context = ContentLoaderContextMock
 

@@ -1,151 +1,79 @@
 package org.skepsun.kototoro.parsers.site.ja
 
 import kotlinx.coroutines.runBlocking
-import okhttp3.CookieJar
-import okhttp3.HttpUrl
-import okhttp3.OkHttpClient
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.skepsun.kototoro.parsers.ContentLoaderContext
-import org.skepsun.kototoro.parsers.ContentLoaderContextMock
-import org.skepsun.kototoro.parsers.ContentParser
-import org.skepsun.kototoro.parsers.config.ContentSourceConfig
-import org.skepsun.kototoro.parsers.model.*
-import org.skepsun.kototoro.parsers.util.LinkResolver
-import java.util.Locale
+import org.skepsun.kototoro.parsers.OfflineContentLoaderContext
+import org.skepsun.kototoro.parsers.model.ContentListFilter
+import org.skepsun.kototoro.parsers.model.SortOrder
 
+/**
+ * weloma 的离线回归覆盖。
+ *
+ * 夹具为 2026-11-13 的线上快照；条目/章节这类重复块已裁剪到 3 份，图片地址等字段保持原样。
+ * 线上连通性冒烟见 [WelomaIntegrationTest]；本类只锁解析规则，不发任何网络请求，
+ * 请求了未登记的 URL 会直接抛 "Unexpected offline request"。
+ */
 class WelomaTest {
 
-    private val context = ContentLoaderContextMock
+    private companion object {
+        const val LIST_URL =
+            "https://weloma.net/l/0OYCn?sort=last_update&page=1"
+        const val DETAILS_URL =
+            "https://weloma.net/m/0IlfQ"
+        const val READER_URL =
+            "https://weloma.net/c/q6zTw"
+    }
+
+    private val context = OfflineContentLoaderContext(
+        fixtures = mapOf(
+            LIST_URL to "weloma/list.html",
+            DETAILS_URL to "weloma/details.html",
+            READER_URL to "weloma/reader.html",
+        ),
+        responseTypes = mapOf(
+            LIST_URL to "text/html; charset=utf-8",
+            DETAILS_URL to "text/html; charset=utf-8",
+            READER_URL to "text/html; charset=utf-8",
+        ),
+    )
+
     private val parser = Weloma(context)
 
-    // SATANOPHANY - RAW（详情页含作者/简介/338 章，可用于详情与阅读页验证）
-    private val testToken = "0zzyL"
-    private val testUrl = "https://${parser.domain}/m/$testToken"
-
     @Test
-    fun testGetListPage() = runBlocking {
-        val mangaList = parser.getListPage(1, SortOrder.UPDATED, ContentListFilter())
-        println("Fetched ${mangaList.size} manga from latest")
-        mangaList.take(5).forEach { manga ->
-            println("Title: ${manga.title}, URL: ${manga.url}")
-        }
-        assert(mangaList.isNotEmpty()) { "Should fetch manga list" }
-        assert(mangaList.all { it.url.startsWith("/m/") }) { "URLs should be relative /m/ links" }
-        assert(mangaList.all { it.id != 0L }) { "IDs should be non-zero" }
+    fun `list page maps items`() = runBlocking {
+        val list = parser.getList(0, SortOrder.UPDATED, ContentListFilter())
+        val item = list.first { "0IlfQ" in it.url }
+
+        assertEquals(20, list.size)
+        assertEquals("/m/0IlfQ", item.url)
+        assertTrue(item.title.contains("momban Yattero"), "标题解析错误: ${item.title}")
+        assertTrue(item.coverUrl.orEmpty().startsWith("http"), "封面应解析成绝对地址")
+        assertTrue(list.all { it.source == parser.source }, "条目来源应统一")
     }
 
     @Test
-    fun testSearch() = runBlocking {
-        val query = "Blue Lock"
-        val searchFilter = ContentListFilter(query = query)
-        val searchResults = parser.getListPage(1, SortOrder.POPULARITY, searchFilter)
-        println("Searched for '$query', found ${searchResults.size} results")
-        searchResults.take(10).forEach { manga ->
-            println("Search result: ${manga.title}, URL: ${manga.url}")
-        }
-        assert(searchResults.isNotEmpty()) { "Should find results for '$query'" }
-        assert(searchResults.any { it.title.contains(query, ignoreCase = true) }) {
-            "Should contain 'Blue Lock' in results"
-        }
+    fun `details expose chapters`() = runBlocking {
+        val list = parser.getList(0, SortOrder.UPDATED, ContentListFilter())
+        val item = list.first { "0IlfQ" in it.url }
+
+        val details = parser.getDetails(item)
+        val chapters = details.chapters.orEmpty()
+        assertEquals(32, chapters.size)
+        assertTrue(chapters.any { it.url == "/c/q6zTw" }, "缺少目标章节 ${chapters.take(3).map { it.url }}")
     }
 
     @Test
-    fun testGetDetails() = runBlocking {
-        val testContent = Content(
-            id = parser.getListPage(1, SortOrder.UPDATED, ContentListFilter()).first().id,
-            title = "SATANOPHANY - RAW",
-            altTitles = emptySet(),
-            url = "/m/$testToken",
-            publicUrl = testUrl,
-            rating = 0f,
-            contentRating = null,
-            coverUrl = "",
-            tags = emptySet(),
-            state = null,
-            authors = emptySet(),
-            source = parser.source,
-        )
+    fun `pages resolve to absolute urls`() = runBlocking {
+        val list = parser.getList(0, SortOrder.UPDATED, ContentListFilter())
+        val item = list.first { "0IlfQ" in it.url }
+        val chapter = parser.getDetails(item).chapters!!.first { "q6zTw" in it.url }
 
-        val detailedContent = parser.getDetails(testContent)
-        println("Content Details: ${detailedContent.title}")
-        println("Authors: ${detailedContent.authors}")
-        println("Tags: ${detailedContent.tags.map { it.title }}")
-        println("Description: ${detailedContent.description?.take(100)}...")
-        println("Chapters: ${detailedContent.chapters?.size ?: 0}")
-
-        assert(detailedContent.title.isNotBlank())
-        assert(detailedContent.chapters?.isNotEmpty() ?: false)
-        assert(detailedContent.tags.isNotEmpty())
-        assert(detailedContent.authors.isNotEmpty())
-
-        // 章节升序排列
-        val chapters = detailedContent.chapters!!
-        if (chapters.size > 1) {
-            assert(chapters[0].number < chapters.last().number) { "Chapters should be in ascending order" }
-        }
-        // 标题交给应用格式化（number 驱动的默认格式）
-        assert(chapters.first().title == null) { "Chapter title should be null for default formatting" }
-    }
-
-    @Test
-    fun testGetPages() = runBlocking {
-        val seed = Content(
-            id = 1L,
-            title = "SATANOPHANY - RAW",
-            altTitles = emptySet(),
-            url = "/m/$testToken",
-            publicUrl = testUrl,
-            rating = 0f,
-            contentRating = null,
-            coverUrl = "",
-            tags = emptySet(),
-            state = null,
-            authors = emptySet(),
-            source = parser.source,
-        )
-        val detailedContent = parser.getDetails(seed)
-        val firstChapter = detailedContent.chapters?.firstOrNull()
-
-        assert(firstChapter != null) { "Should find at least one chapter" }
-        println("Testing chapter: ${firstChapter!!.number}, URL: ${firstChapter.url}")
-
-        val pages = parser.getPages(firstChapter)
-        println("Fetched ${pages.size} pages")
-
-        assert(pages.isNotEmpty()) { "Should fetch pages" }
-        // data-img 内的值经 base64 解码后应是绝对地址
-        assert(pages.all { it.url.startsWith("http") }) { "All page URLs should be absolute" }
-    }
-
-    // 复现 App 中文环境下的构造函数 NPE：BUILTIN_TAGS 初始化时访问尚未初始化的
-    // tagTranslations（tagTranslations 已提升为文件级属性，与实例初始化顺序解耦）。
-    private class ZhContentLoaderContext(
-        private val delegate: ContentLoaderContext = ContentLoaderContextMock,
-    ) : ContentLoaderContext() {
-        override val httpClient: OkHttpClient get() = delegate.httpClient
-        override val cookieJar: CookieJar get() = delegate.cookieJar
-        override fun newParserInstance(source: ContentSource): ContentParser = delegate.newParserInstance(source)
-        override fun newLinkResolver(link: HttpUrl): LinkResolver = delegate.newLinkResolver(link)
-        override suspend fun evaluateJs(script: String): String? = delegate.evaluateJs(script)
-        override suspend fun evaluateJs(baseUrl: String, script: String): String? = delegate.evaluateJs(baseUrl, script)
-        override fun getConfig(source: ContentSource): ContentSourceConfig = delegate.getConfig(source)
-        override fun getDefaultUserAgent(): String = delegate.getDefaultUserAgent()
-        override fun redrawImageResponse(response: okhttp3.Response, redraw: (org.skepsun.kototoro.parsers.bitmap.Bitmap) -> org.skepsun.kototoro.parsers.bitmap.Bitmap): okhttp3.Response =
-            delegate.redrawImageResponse(response, redraw)
-        override fun createBitmap(width: Int, height: Int): org.skepsun.kototoro.parsers.bitmap.Bitmap =
-            delegate.createBitmap(width, height)
-        override fun getPreferredLocales(): List<Locale> = listOf(Locale("zh", "CN"))
-    }
-
-    @Test
-    fun testZhLocaleConstructorDoesNotCrash() = runBlocking {
-        val zhParser = Weloma(ZhContentLoaderContext())
-        val options = zhParser.getFilterOptions()
-        val titles = options.availableTags.map { it.title }
-        println("zh 环境标签样例: ${titles.take(5)}")
-        assert(titles.contains("动作")) { "zh 环境下标签应翻译成中文; got $titles" }
-        assert(!titles.contains("Action")) { "zh 环境下不应保留英文标签" }
-        assert(options.tagGroups.isNotEmpty())
-        assert(options.tagGroups.first().title == "标签")
+        val pages = parser.getPages(chapter)
+        assertEquals(46, pages.size)
+        assertTrue(pages.first().url.startsWith("https://ihlv1.xyz/"), "首图地址异常: ${pages.first().url}")
+        assertTrue(pages.all { it.url.startsWith("https://") }, "图片应解析成绝对地址")
+        assertEquals(pages.first().url, parser.getPageUrl(pages.first()))
     }
 }

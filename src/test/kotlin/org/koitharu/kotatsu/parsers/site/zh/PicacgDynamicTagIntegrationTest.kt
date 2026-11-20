@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import kotlin.time.Duration.Companion.minutes
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.ContentParserSource
@@ -22,7 +23,8 @@ import java.io.File
  * - 测试搜索请求体格式是否正确（只包含keyword和sort参数）
  * - 验证不会出现500错误
  */
-class PicacgDynamicTagTest {
+@EnabledIfEnvironmentVariable(named = "PICACG_INTEGRATION_TEST", matches = "1")
+class PicacgDynamicTagIntegrationTest {
 
     private val context = ContentLoaderContextMock
 

@@ -5,6 +5,7 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import kotlin.time.Duration.Companion.minutes
 import org.skepsun.kototoro.parsers.CommonHeadersInterceptor
 import org.skepsun.kototoro.parsers.InMemoryCookieJar
@@ -20,7 +21,8 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
-class WnacgReadFlowTest {
+@EnabledIfEnvironmentVariable(named = "WNACG_INTEGRATION_TEST", matches = "1")
+class WnacgReadFlowIntegrationTest {
 
     // 复用现有测试上下文，网络严谨性在图片 HEAD/GET 阶段通过自建 OkHttpClient 体现
 

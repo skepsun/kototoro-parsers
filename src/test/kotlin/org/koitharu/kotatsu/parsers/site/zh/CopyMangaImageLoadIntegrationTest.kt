@@ -3,6 +3,7 @@ package org.skepsun.kototoro.parsers.site.zh
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.Content
 import org.skepsun.kototoro.parsers.model.ContentParserSource
@@ -21,7 +22,8 @@ import kotlin.time.Duration.Companion.minutes
  * - 校验响应成功与 Content-Type 为图片
  * - 校验图片请求头（Referer、UA）与拦截器逻辑一致
  */
-class CopyContentImageLoadTest {
+@EnabledIfEnvironmentVariable(named = "COPYMANGA_INTEGRATION_TEST", matches = "1")
+class CopyContentImageLoadIntegrationTest {
 
     private val context = ContentLoaderContextMock
 

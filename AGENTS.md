@@ -28,6 +28,7 @@
 - 新站点至少覆盖列表、详情/章节、阅读页解析，以及站点特有的解密或 URL 处理。
 - 默认测试必须离线、确定且可重复；将最小化且脱敏的响应保存到 `src/test/resources/fixtures/`。
 - 真实网络测试命名为 `*IntegrationTest.kt`，使用 `@EnabledIfEnvironmentVariable` 显式启用。环境变量采用 `<SOURCE>_INTEGRATION_TEST=1`，不得让普通 `test` 隐式访问线上站点。
+- `ContentLoaderContextMock` 内置离线护栏：未设置任何 `<SOURCE>_INTEGRATION_TEST=1` 时，访问非回环地址会立刻抛 `IOException` 并提示改用夹具回放，因此忘记加门控的联网测试会当场暴露而不是偶发超时。清点记录见 `docs/test-offline-inventory.md`。
 - 在线验证应检查首尾图片可访问及响应类型，但不要把短期章节数量、易变化标题等不必要细节写成脆弱断言。
 
 ## 解析器实现约定

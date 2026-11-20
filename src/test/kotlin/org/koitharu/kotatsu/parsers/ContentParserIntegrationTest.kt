@@ -5,6 +5,7 @@ import okhttp3.HttpUrl
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Assumptions
 import org.junit.jupiter.api.Disabled
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.params.ParameterizedTest
 import org.skepsun.kototoro.parsers.core.PagedContentParser
 import org.skepsun.kototoro.parsers.core.SinglePageContentParser
@@ -19,7 +20,8 @@ import org.skepsun.kototoro.test_util.*
 import kotlin.time.Duration.Companion.minutes
 
 //@ExtendWith(AuthCheckExtension::class)
-internal class ContentParserTest {
+@EnabledIfEnvironmentVariable(named = "CONTENT_PARSER_INTEGRATION_TEST", matches = "1")
+internal class ContentParserIntegrationTest {
 
 	private val context = ContentLoaderContextMock
 	private val timeout = 2.minutes

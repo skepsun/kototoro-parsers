@@ -4,13 +4,15 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.test_util.isDistinctBy
 import org.skepsun.kototoro.test_util.isUrlAbsolute
 import kotlin.time.Duration.Companion.minutes
 
-class CopyContentXigelideTest {
+@EnabledIfEnvironmentVariable(named = "COPYMANGA_INTEGRATION_TEST", matches = "1")
+class CopyContentXigelideIntegrationTest {
 
     private val context = ContentLoaderContextMock
 

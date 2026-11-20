@@ -3,12 +3,14 @@ package org.koitharu.kotatsu.parsers.site.zh
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.site.zh.Dmbus
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.SortOrder
 
-class DmbusTest {
+@EnabledIfEnvironmentVariable(named = "DMBUS_INTEGRATION_TEST", matches = "1")
+class DmbusIntegrationTest {
 
     private val parser = Dmbus(ContentLoaderContextMock)
 

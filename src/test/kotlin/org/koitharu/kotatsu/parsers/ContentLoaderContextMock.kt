@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.HttpUrl
+import okhttp3.Interceptor
 import okhttp3.Protocol
 import org.skepsun.kototoro.parsers.bitmap.Bitmap
 import org.skepsun.kototoro.parsers.config.ContentSourceConfig
@@ -21,6 +22,7 @@ import org.skepsun.kototoro.parsers.util.insertCookies
 import org.skepsun.kototoro.parsers.util.getCookies
 import org.skepsun.kototoro.test_util.BitmapTestImpl
 import java.awt.image.BufferedImage
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
@@ -35,12 +37,22 @@ import javax.net.ssl.X509TrustManager
 
 internal object ContentLoaderContextMock : ContentLoaderContext() {
 
+    /**
+     * 离线护栏开关：只要没有设置任何 `<SOURCE>_INTEGRATION_TEST=1`，普通 `./gradlew test`
+     * 就不允许真实出网。需要在线上验证的用例应改名为 `*IntegrationTest` 并用
+     * `@EnabledIfEnvironmentVariable` 打开，此时护栏自动关闭。
+     */
+    val isOfflineGuardEnabled: Boolean = System.getenv().none { (name, value) ->
+        name.endsWith("_INTEGRATION_TEST") && value == "1"
+    }
+
     override val cookieJar = InMemoryCookieJar()
 
     override val httpClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .addInterceptor(CommonHeadersInterceptor())
         .addInterceptor(CloudFlareInterceptor())
+        .apply { if (isOfflineGuardEnabled) addInterceptor(offlineGuardInterceptor()) }
         .apply {
             resolveProxyFromEnv()?.let { proxy(it) }
         }
@@ -210,6 +222,25 @@ internal object ContentLoaderContextMock : ContentLoaderContext() {
         return Proxy(type, InetSocketAddress(host, port))
     }
 
+    /**
+     * 离线护栏：把「普通测试偷偷联网」从偶发失败/挂死，变成当场可见的明确报错。
+     * 抛 [IOException] 是为了让原本会吞掉网络异常的用例行为保持不变（与断网跑等价），
+     * 只把原因换成人话，避免又变成一次「CI 上莫名超时」。
+     */
+    private fun offlineGuardInterceptor(): Interceptor = Interceptor { chain ->
+        val url = chain.request().url
+        if (url.host in LOOPBACK_HOSTS) {
+            chain.proceed(chain.request())
+        } else {
+            throw IOException(
+                "离线测试禁止真实网络请求: $url\n" +
+                    "· 需要线上验证：把用例改名为 *IntegrationTest，并加 " +
+                    "@EnabledIfEnvironmentVariable(named = \"<SOURCE>_INTEGRATION_TEST\", matches = \"1\")；\n" +
+                    "· 需要离线覆盖：把最小化脱敏响应存到 src/test/resources/fixtures/，用 OfflineContentLoaderContext 回放。",
+            )
+        }
+    }
+
     override fun newParserInstance(source: ContentSource): ContentParser {
         return (source as ContentParserSource).newParser(this)
     }
@@ -217,4 +248,6 @@ internal object ContentLoaderContextMock : ContentLoaderContext() {
     override fun newLinkResolver(link: HttpUrl): LinkResolver {
         throw UnsupportedOperationException("LinkResolver not available in test")
     }
+
+    private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "::1")
 }

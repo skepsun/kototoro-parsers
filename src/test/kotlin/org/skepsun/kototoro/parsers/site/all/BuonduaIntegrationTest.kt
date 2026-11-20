@@ -2,11 +2,13 @@ package org.skepsun.kototoro.parsers.site.all
 
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 
-class BuonduaTest {
+@EnabledIfEnvironmentVariable(named = "BUONDUA_INTEGRATION_TEST", matches = "1")
+class BuonduaIntegrationTest {
 
     private val context = ContentLoaderContextMock
     private val parser = Buondua(context)

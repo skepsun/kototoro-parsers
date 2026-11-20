@@ -2,11 +2,13 @@ package org.skepsun.kototoro.parsers.site.ja
 
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.skepsun.kototoro.parsers.ContentLoaderContextMock
 import org.skepsun.kototoro.parsers.model.*
 import org.skepsun.kototoro.parsers.util.*
 
-class Klz9Test {
+@EnabledIfEnvironmentVariable(named = "KLZ9_INTEGRATION_TEST", matches = "1")
+class Klz9IntegrationTest {
 
     private val context = ContentLoaderContextMock
     private val parser = Klz9(context)
