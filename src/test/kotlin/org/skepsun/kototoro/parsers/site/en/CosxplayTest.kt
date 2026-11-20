@@ -45,4 +45,37 @@ class CosxplayTest {
             parser.buildListUrl(2, SortOrder.UPDATED, ContentListFilter.EMPTY),
         )
     }
+
+    /**
+     * 站点排序条只有 Popular / Newest / Most viewed / Longest 四项，
+     * 每一项都对应真实的 `?filter=` 参数（`/?filter=longest` 在存档里也有 246 条快照）。
+     * SortOrder 没有 “Longest”，因此不暴露它，更不能拿 ALPHABETICAL 顶替。
+     */
+    @Test
+    fun `sort orders map to real site filters`() {
+        assertEquals(
+            "https://cosxplay.com/?filter=popular",
+            parser.buildListUrl(1, SortOrder.POPULARITY, ContentListFilter.EMPTY),
+        )
+        assertEquals(
+            "https://cosxplay.com/?filter=most-viewed",
+            parser.buildListUrl(1, SortOrder.RATING, ContentListFilter.EMPTY),
+        )
+        assertEquals(
+            setOf(SortOrder.POPULARITY, SortOrder.UPDATED, SortOrder.RATING),
+            parser.availableSortOrders,
+        )
+    }
+
+    @Test
+    fun `unsupported sort order falls back to site default without a fake filter`() {
+        assertEquals(
+            "https://cosxplay.com/",
+            parser.buildListUrl(1, SortOrder.ALPHABETICAL, ContentListFilter.EMPTY),
+        )
+        assertEquals(
+            "https://cosxplay.com/",
+            parser.buildListUrl(1, SortOrder.ADDED, ContentListFilter.EMPTY),
+        )
+    }
 }

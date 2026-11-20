@@ -70,11 +70,13 @@ internal class Cosxplay(context: ContentLoaderContext) :
 
     override val configKeyDomain = ConfigKey.Domain("cosxplay.com")
 
+    // 站点只提供 Popular(默认) / Newest / Most viewed / Longest 四种排序（见首页排序条
+    // /?filter=latest、?filter=most-viewed、?filter=longest）。SortOrder 没有 "Longest" 取值，
+    // 所以不暴露它：旧代码把 ALPHABETICAL 映射成 longest，等于把「按时长」当「按字母」给用户。
     override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-        SortOrder.UPDATED,      // Newest (latest)
-        SortOrder.POPULARITY,   // Best (popular) - also used for most-viewed
-        SortOrder.RATING,       // Most viewed (most-viewed)
-        SortOrder.ALPHABETICAL, // Longest (longest)
+        SortOrder.POPULARITY, // Popular（站点默认排序）
+        SortOrder.UPDATED,    // Newest -> ?filter=latest
+        SortOrder.RATING,     // Most viewed -> ?filter=most-viewed
     )
 
     override val filterCapabilities: ContentListFilterCapabilities
@@ -317,12 +319,12 @@ internal class Cosxplay(context: ContentLoaderContext) :
         return base.toString()
     }
     
+    // 只映射站点真实存在的排序；未识别的 order 回落到站点默认（Popular，不带参数）。
     private fun getSortFilter(order: SortOrder): String? {
         return when (order) {
             SortOrder.UPDATED -> "latest"
             SortOrder.RATING -> "most-viewed"
             SortOrder.POPULARITY -> "popular"
-            SortOrder.ALPHABETICAL -> "longest"  // 使用 ALPHABETICAL 代表 Longest
             else -> null
         }
     }

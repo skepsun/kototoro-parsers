@@ -164,8 +164,18 @@ SEARCH_AUDIT=1 SEARCH_AUDIT_CONCURRENCY=8 SEARCH_AUDIT_TIMEOUT_SEC=150 \
 - PO85：保留 KVS 路径式 `/search/<q>/<n>/`（与站点 `/latest-updates/99/` 的翻页同构），
   另修关键词落在路径段时空格编码：`URLEncoder` 的 `+` 在路径里是字面加号，改为 `%20`。
 
-验证：新增离线用例固定 URL 形态——`CosxplayTest` 3 例、`XanimuTest` 3 例、`Po85Test` 4 例，
+验证：新增离线用例固定 URL 形态——`CosxplayTest` 5 例、`XanimuTest` 3 例、`Po85Test` 4 例，
 `./gradlew test --tests "*CosxplayTest" --tests "*XanimuTest" --tests "*Po85Test"` 全绿。
+
+顺带修掉的排序谎报（COSXPLAY）：
+
+- 站点排序条只有四项，且都对应真实的 `?filter=` 参数（CDX 存档计数：
+  `?filter=popular` 256、`?filter=latest` 257、`?filter=most-viewed` 275、`?filter=longest` 246）；
+  Popular 是默认态，站点自己的链接就是裸 `/`。
+- 旧实现把 `SortOrder.ALPHABETICAL` 映射成 `longest`，等于把「按时长」当「按字母」暴露给用户。
+  `SortOrder` 没有 Longest 取值，因此不再暴露该排序：`availableSortOrders` 收敛为
+  `POPULARITY`(popular) / `UPDATED`(latest) / `RATING`(most-viewed)，无法识别的 order 回落裸 `/`（站点默认）。
+  代价是「Longest」这一站点能力目前无法从客户端选中，需要模型层新增 SortOrder 取值才能支持。
 
 遗留：真机联网复核仍缺（本机过不去 Cloudflare），可用 `SEARCH_AUDIT=1` 重跑
 `AllSourcesSearchAuditTest` 或真机搜索这两个关键词确认。
