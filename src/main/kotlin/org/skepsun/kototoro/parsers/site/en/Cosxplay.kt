@@ -279,13 +279,14 @@ internal class Cosxplay(context: ContentLoaderContext) :
     
 
     
-    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+    internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
-        
-        // 处理搜索
+
+        // 搜索分页：站点自身的翻页链接是 /page/N/?s=<q>（见搜索结果页的分页区），
+        // 旧的 ?s=<q>&page=N 会被 WordPress 忽略，第 2 页起拿到的仍是第 1 页
         if (!filter.query.isNullOrBlank()) {
+            if (page > 1) base.append("/page/").append(page)
             base.append("/?s=").append(filter.query.urlEncoded())
-            if (page > 1) base.append("&page=").append(page)
             return base.toString()
         }
         

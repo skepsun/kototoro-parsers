@@ -155,9 +155,10 @@ internal class Po85(
         return items
     }
 
-    private fun buildUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+    internal fun buildUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         if (!filter.query.isNullOrBlank()) {
-            val encodedQuery = java.net.URLEncoder.encode(filter.query!!, "UTF-8")
+            // 关键词落在路径段里，空格必须是 %20（URLEncoder 给的 + 在路径中是字面加号）
+            val encodedQuery = java.net.URLEncoder.encode(filter.query!!, "UTF-8").replace("+", "%20")
             // Search pagination: /search/query/page/
             return if (page > 1) "https://$domain/search/$encodedQuery/$page/" else "https://$domain/search/$encodedQuery/"
         }

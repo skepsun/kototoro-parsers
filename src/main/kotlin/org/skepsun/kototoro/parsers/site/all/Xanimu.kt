@@ -245,13 +245,14 @@ internal class Xanimu(context: ContentLoaderContext) :
         )
     }
 
-    private fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
+    internal fun buildListUrl(page: Int, order: SortOrder, filter: ContentListFilter): String {
         val base = StringBuilder("https://").append(domain)
 
         if (!filter.query.isNullOrBlank()) {
-            // WordPress 搜索
+            // WordPress 搜索；分页沿用站点自身翻页链接的 /page/N/?s=<q> 形态，
+            // 旧的 &paged=N 不生效，第 2 页起会重复第 1 页
+            if (page > 1) base.append("/page/").append(page)
             base.append("/?s=").append(filter.query.urlEncoded())
-            if (page > 1) base.append("&paged=").append(page)
         } else if (filter.tags.isNotEmpty()) {
             // 多标签过滤
             val tagSlugs = filter.tags.joinToString("+") { it.key }

@@ -132,3 +132,40 @@ SEARCH_AUDIT=1 SEARCH_AUDIT_CONCURRENCY=8 SEARCH_AUDIT_TIMEOUT_SEC=150 \
 2. 站点侧兜底（TUKU）与需登录/需浏览器的源（BAIHEHUI、BILINOVEL、MHKAMI）按源单独修复，
    不要用客户端启发式去「猜」结果的真实性。
 3. 新增源时把「垃圾查询返回空」纳入集成测试，避免再次出现忽略关键词却声明支持搜索的解析器。
+
+## 2026-11-20 复核：COSXPLAY / PO85 / XANIMU
+
+起因：用户反馈这三个源的搜索「基本都只返回固定的列表」，要求确认站点是否真的不支持搜索，
+不支持就关闭搜索能力。
+
+本机无法直连这三个域名（本地 DNS 被污染到 sinkhole IP，用 DoH 取到真实 IP 后仍是 Cloudflare
+托管校验 403），所以改用 Wayback 快照核对站点自身协议与搜索结果页结构。
+
+**结论：三者都真实支持搜索，未关闭搜索能力。** 真正的缺陷在搜索分页形态，已修。
+
+站点侧证据（快照 2025-11 ~ 2026-11）：
+
+- COSXPLAY：`/?s=asuka` 返回 200，`<title>You searched for asuka | CosXplay.com</title>`，
+  结果区标题 `asuka Porn (215 Videos)`，首页搜索表单本身就是 `GET /` + `name="s"`；
+  卡片为 `div.video-block[data-post-id]` > `a.thumb` + `span.title` + `img.video-img[data-src]`，
+  与 `Cosxplay.parseList` 的选择器一致，前两张卡片标题均命中 asuka。
+- XANIMU：同一 WP-Script 模板，`?s=meru the succubus` → `(6 videos found)`、
+  `?s=Lili tekken` → `(56 Videos)`，命中数随关键词变化，卡片结构与 `Xanimu.parseList` 一致。
+- PO85：`https://www.85po.com/search/トイレ/` 返回 200，`<title>トイレ的搜索結果</title>`、
+  `h1 搜索影片： トイレ`，40 个 `a[href*='/v/']` 卡片，与 `Po85.parseList` 的复合选择器一致；
+  CDX 里该路径有 3442 条 200 快照，路径式搜索路由是站点主路由而非我们猜测。
+
+修掉的缺陷（分页，不是搜索能力）：
+
+- COSXPLAY：搜索结果页自身的翻页链接是 `/page/2/?s=<q>&filter=<sort>`。旧实现拼
+  `?s=<q>&page=2`，`page` 在 WP 搜索上下文里不生效，第 2 页起拿回同一批条目。
+  现在 page>1 走 `/page/N/?s=<q>`。
+- XANIMU：同一模板，旧实现拼 `&paged=N`，同样改为 `/page/N/?s=<q>`。
+- PO85：保留 KVS 路径式 `/search/<q>/<n>/`（与站点 `/latest-updates/99/` 的翻页同构），
+  另修关键词落在路径段时空格编码：`URLEncoder` 的 `+` 在路径里是字面加号，改为 `%20`。
+
+验证：新增离线用例固定 URL 形态——`CosxplayTest` 3 例、`XanimuTest` 3 例、`Po85Test` 4 例，
+`./gradlew test --tests "*CosxplayTest" --tests "*XanimuTest" --tests "*Po85Test"` 全绿。
+
+遗留：真机联网复核仍缺（本机过不去 Cloudflare），可用 `SEARCH_AUDIT=1` 重跑
+`AllSourcesSearchAuditTest` 或真机搜索这两个关键词确认。
