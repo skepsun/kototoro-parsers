@@ -17,7 +17,7 @@
 | 反爬 | 未见 Cloudflare / 签名 / 风控；连续 11 次请求全 200 | ✅ 无需 `CloudflareHelper` |
 | 播放 | `play` 接口下发 m3u8，播放列表与分片实测 200 | ✅ 走现有 HLS 播放链路 |
 | 封面 | AES-128-CBC 密文，key/iv 硬编码在前端 | ⚠️ 需解密拦截器 |
-| 分页 | `page` / `size` 真分页（3218 条 / 161 页 @ size=20） | ✅ `PagedContentParser` |
+| 分页 | `page` / `size` 真分页，**`page` 从 1 起**（传 `page=0` 返回 400） | ✅ `PagedContentParser`（`firstPage = 1`） |
 | 搜索 | `/api/search?q=` 可用（`女王` → 40 条 / 14 页） | ✅ 真搜索，非假搜索 |
 | 排序 | `sort=new` 生效；未知值静默回落默认（热榜序） | ✅ 仅暴露 2 种 |
 | 内容类型 | 全部为成人向 AI/真人竖屏短剧 | ⚠️ `ContentType.HENTAI_VIDEO` |
@@ -28,8 +28,8 @@
 |---|---|
 | 主域名 | `https://huangguoai.com`（`configKeyDomain`） |
 | 备用 | `https://huangguoai.pages.dev/`（地址发布页，非 API 镜像） |
-| 图片 CDN | `pic.drleao.cn`（镜像曾见 `new.drleao.cn` / `new2.drleao.cn` / `image.drleao.cn`） |
-| 视频 CDN | `yd-hls.hzjvlo.cn` / `yd-lphu-hls.hzjvlo.cn` / `tp2.drleao.cn` |
+| 图片 CDN | `pic.qnlycc.cn`（2026-11-20 由 `pic.drleao.cn` 迁移而来；镜像曾见 `new.drleao.cn` / `new2.drleao.cn` / `image.drleao.cn`） |
+| 视频 CDN | `yd-lphu-hls.tjyyjk.cn`（2026-11-20 起）；分片 `tp1..tp8.qnlycc.cn` |
 | 必要头 | `User-Agent`（Chrome 桌面）、`Accept: application/json`、`Referer: https://huangguoai.com/` |
 
 响应统一信封：`{"data": …, "status": 1, "msg": "", "req_time": …}`，`status == 1` 为成功。
@@ -40,11 +40,11 @@
 
 | 用途 | 请求 | 说明 |
 |---|---|---|
-| 全站流 | `GET /api/videos?page=&size=[&sort=new]` | 默认序≈按 `hot` 倒序；`sort=new` 为最新 |
-| 分类流 | `GET /api/videos/category/{cate}?page=&size=[&sort=new]` | cate ∈ `ai-duanju` / `ai-manju` / `ai-huanlian` / `ai-mogai` |
+| 全站流 | `GET /api/videos?page=&size=[&sort=new]` | `page` **从 1 起**；默认序≈按 `hot` 倒序；`sort=new` 为最新 |
+| 分类流 | `GET /api/videos/category/{cate}?page=&size=[&sort=new]` | cate ∈ `ai-duanju` / `ai-manju`（`ai-huanlian` / `ai-mogai` 于 2026-11-20 返回 410，已从源里移除） |
 | 搜索 | `GET /api/search?q={kw}&page=&size=` | 参数名是 `q`（传 `keyword` 返回 `status:0`） |
 | 详情 | `GET /api/videos/{id}` | 含 `episodes[]`、`cover`、`tags`、`score`、`is_finished` |
-| 分集播放 | `GET /api/videos/{id}/play?ep={n}` | 返回 HLS m3u8；`page_texts` 可省略 |
+| 分集播放 | `POST /api/videos/{id}/episodes/{ep}/playback` | 返回 `data.streams.main` 即 HLS m3u8（2026-11-20 改版；老 `GET .../play?ep=` 的 `video_url` 已恒为空） |
 | 榜单 | `GET /api/ranks/{hot\|recommend\|potential}` | 固定 20 条、忽略分页（不够做翻页流） |
 
 列表响应：`{items: [VideoCard], pagination: {page, pages, size, total}}`。
@@ -80,16 +80,17 @@ IV  : 97b60394abc2fbe1                   (ASCII, 16B)
 ## 四、播放链路（实测可播）
 
 ```
-GET /api/videos/12/play?ep=1
-→ https://yd-lphu-hls.hzjvlo.cn/videos5/{hash}/{hash}.m3u8?auth_key=…&via=hgdj
-   #EXT-X-KEY:METHOD=AES-128,URI="https://tp2.drleao.cn/videos5/{hash}/crypt.key?auth_key=…",IV=0x…
+POST /api/videos/12/episodes/1/playback   (body: {}, Content-Type: application/json)
+→ data.streams.main = https://yd-lphu-hls.tjyyjk.cn/videos5/{hash}/{hash}.m3u8?auth_key=…&v=3
+   #EXT-X-KEY:METHOD=AES-128,URI="https://tpN.qnlycc.cn/videos5/{hash}/crypt.key?auth_key=…",IV=0x…
    → 分片 .ts 实测 200 / 1 680 544 B
 ```
 
-- m3u8 与分片**无需 Referer** 即可取（本机实测），但仍然给播放页带上 `Referer: https://huangguoai.com/` 更稳。
-- `auth_key` 约 1 小时过期 → 必须**播放前现取** `play`，不能长期缓存章节地址；
-  建议章节 URL 存站内相对地址 `/api/videos/{id}/play?ep={n}`，在 `getPages()` 时才换真链。
-- 详情里的 `video_url` 是第 1 集的预置 m3u8，可直接复用（少了 `ep=1` 的一次请求）。
+- m3u8 与分片**无需 Referer** 即可取（本机实测），但仍然给播放链带上 `Referer: https://huangguoai.com/` 更稳。
+- `auth_key` 约 1 小时过期 → 必须**播放前现取** playback，不能长期缓存直链；
+  所以章节 URL 存的是 playback 相对地址，`getPages()` 时才换真链。
+- 详情里的 `video_url` 自 2026-11-20 起恒为空，**不再**作为第 1 集预置地址；
+  `episodes[]` 缺失时按 `episode_count` / `total_episodes` 合成 1..N 集即可。
 
 ## 四之二、标签筛选：只有 4 个频道是真的（2026-11-04 补充实测）
 
@@ -119,15 +120,17 @@ GET /api/videos/12/play?ep=1
 | `SortOrder.POPULARITY` | 默认流（`/api/videos`，实测即热度倒序） |
 | `availableTags` | 4 个 v1 分类：AI成人短剧 / AI成人漫剧 / AI换脸 / AI魔改 |
 | `getDetails()` | `/api/videos/{id}` → `episodes[]` 转 `ContentChapter` |
-| `ContentChapter.url` | `/video/{id}/{ep}`（站内相对，与域名无关） |
-| `getPages()` | `/api/videos/{id}/play?ep={ep}` → 单个 `ContentPage(url = m3u8)` |
+| `ContentChapter.url` | `/api/videos/{id}/episodes/{ep}/playback`（站内相对，与域名无关；老写法 `.../play?ep={n}` 仍可反解） |
+| `getPages()` | `POST` 该章节地址 → `data.streams.main` → 单个 `ContentPage(url = m3u8)` |
 | `Content.rating` | `score / 10f`（0–1） |
 | `Content.state` | `is_finished` → `FINISHED` / `ONGOING` |
 | `Content.contentRating` | `ContentRating.ADULT` |
-| 封面解密 | `intercept()` 拦截 `*.drleao.cn` 的 `.jpg/.jpeg/.png/.webp/.gif` 响应并解密 |
+| 封面解密 | `intercept()` 拦截路径扩展名为图片的响应并解密（不按 host 匹配，见下） |
 
-**不要**按 host 泛匹配 `drleao.cn`：`tp2/tp3.drleao.cn` 同时承载 `crypt.key`（16 B 裸密钥）和 `.ts` 分片，
-误解密会把播放打坏。按「host ∈ 图片 CDN 白名单 + 扩展名」或沿用 `DdManhuaParser` 的 `#fragment` 标记法。
+**不要**按 host 泛匹配图片 CDN：该域族同时承载 `crypt.key`（16 B 裸密钥）和 `.ts` 分片，
+误解密会把播放打坏。2026-11-20 起改为**只看路径扩展名**（`.jpg/.jpeg/.png/.webp/.gif`），
+因为站方会轮换图片 CDN 域名（`pic.drleao.cn` → `pic.qnlycc.cn`），白名单必然滞后。
+`.ts` / `crypt.key` / `.m3u8` 都不带图片扩展名，天然不会被误拦；解密失败则原样透传。
 
 ## 六、实施计划（预估 1 个工作日）
 
@@ -198,3 +201,56 @@ GET /api/videos/12/play?ep=1
 若产品侧改判为 A，只需从 `HuangguoDrama.CHANNELS` 去掉 `ai-huanlian` 与 `ai-mogai` 两项，其余代码无需改动。
 
 `.github/summary.yaml` 的 `total` 由 95 变为 96（KSP 已自动登记新源）。
+
+## 十、2026-11-20 改版复核：封面无法加载 + 无法播放
+
+线上反馈：封面全白、点开任意一集都放不出来。本机经 `curl --proxy 127.0.0.1:7890`
+逐条复核（直连仍超时），确认是站方两次静默改版叠加，与解析器逻辑无关：
+
+### 10.1 封面：CDN 换了域名，白名单没跟上
+
+`list.json` / `detail.json` 的 `cover` 已从 `pic.drleao.cn` 换成 `pic.qnlycc.cn`。
+旧实现的拦截条件含 host 白名单，新域名不在名单里 → 拦截器放行未解密的 AES 密文 →
+`binary/octet-stream` 被当图片塞给 UI，表现为封面空白。
+
+复核 key/iv **未变**（同一份 174 816 B 密文，`openssl enc -d -aes-128-cbc -nopad`
+解出 `FFD8FFE0` JPEG + 合法 PKCS#7 尾部）。修复方式是**放弃 host 匹配、只看路径扩展名**，
+理由见第五节：`.ts` / `crypt.key` / `.m3u8` 不带图片扩展名，扩展名判据本身已经足够排他，
+而 host 白名单只要站方换一次 CDN 就会再次失效。
+
+### 10.2 播放：`/play` 接口被 `/playback` 取代
+
+| 请求 | 返回 |
+|---|---|
+| `GET /api/videos/12/play?ep=1` | `status:1`，但 `video_url` / `video_key` / `video_iv` **全为空** |
+| `GET /api/videos/12`（详情） | `video_url` 同样为空 |
+| `POST /api/videos/12/episodes/{ep}/playback`，body `{}` | `data.streams.main` = 可用 m3u8（ep 1 / 10 / 21 均验过） |
+
+因此 `getPages()` 改为对章节相对地址发 `POST`，再按
+`streams.main → streams.hevc → video_url → video_url_hevc` 依次取第一个非空值。
+章节 URL 随之改成 `/api/videos/{id}/episodes/{ep}/playback`；`episodeRefOf()` 同时保留
+老写法 `/api/videos/{id}/play?ep={n}` 的反解分支，升级前已入库的章节列表无需重新添加收藏。
+
+注意详情页路径 `/video/{id}` 与接口路径 `/api/videos/{id}` 是两段不同的正则，
+老写法反解必须用接口段匹配，否则拿不到影片 id。
+
+### 10.3 其他同步的实测结论
+
+- **`page` 从 1 起**：`page=0` 直接 400，`PagedContentParser` 侧设 `firstPage = 1`。
+- **`sort=popular` 不再接受**：`/api/site/sorts/video` 仍把它列在返回里，但带它请求列表返回 400；
+  `POPULARITY` 因此改为不带 `sort` 参数（默认序即热度倒序）。
+- **两个频道下线**：`ai-huanlian` / `ai-mogai` 返回 **410 内容已下线**，已从 `CHANNELS` 移除；
+  历史保存的这两个标签会退化为关键词搜索而不是报错。
+- **`.ts` 分片的偶发 403**：新入库剧集的首个分片偶尔返回 403（`Server: Lego Server`，
+  无 `Set-Cookie`、不要求额外鉴权头），稍后同一 URL 在 `tp1..tp8` 上全部 200。
+  判定为边缘节点/出口线路抖动，**不是**解析器缺陷，播放链路不做重试逻辑。
+
+### 10.4 复核命令
+
+```bash
+./gradlew test --tests "*Huangguo*" --no-daemon   # 离线夹具全覆盖
+HUANGGUO_INTEGRATION_TEST=1 ./gradlew test --tests "*Huangguo*IntegrationTest" --no-daemon
+```
+
+离线夹具已按新协议重录：`play.json` 换成 `streams.main` 信封、`detail.json` 的 `video_url` 置空并补
+`total_episodes`，另加 `detail_no_episodes.json` 锁住「episodes 缺失时按集数合成章节」的分支。

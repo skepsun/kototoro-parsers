@@ -3,7 +3,7 @@
     "id": 12,
     "title": "测试剧集 A",
     "description": "测试用简介 A：仅用于离线解析测试。",
-    "cover": "https://pic.drleao.cn/upload_01/upload/20260101/cover_a.jpg?auth_key=1793783714-0-0-bbbbbbbb",
+    "cover": "https://pic.qnlycc.cn/upload_01/upload/20260101/cover_a.jpg?auth_key=1793783714-0-0-bbbbbbbb",
     "tags": [
       "超能力",
       "都市",
@@ -39,9 +39,10 @@
         "title": "第3集"
       }
     ],
-    "video_url": "https://yd-lphu-hls.hzjvlo.cn/videos5/0123456789abcdef/0123456789abcdef.m3u8?auth_key=1793777832-0-0-dddddddd",
+    "video_url": "",
     "video_url_hevc": "",
-    "video_type": 1
+    "video_type": 1,
+    "total_episodes": 3
   },
   "status": 1,
   "msg": "",

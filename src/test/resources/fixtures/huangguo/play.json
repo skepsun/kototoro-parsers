@@ -1,13 +1,26 @@
 {
   "data": {
+    "mode": 1,
+    "timestamp": 1793777900,
+    "manifest_method": "GET",
+    "cdn": {
+      "m3u8Enabled": true,
+      "otherEnabled": false,
+      "authKey": "x-cdn-auth",
+      "authValue": "4aae16c3b20ec822f87518504478bb35",
+      "app": "150",
+      "imgEnabled": false,
+      "imgAuthKey": "x-cdn-auth",
+      "imgAuthValue": "b58c4e6ff6583177f8f85f1a22e8fc01"
+    },
     "id": "12",
-    "ep_num": "2",
-    "duration": "185",
-    "title": "第2集",
-    "video_url": "https://yd-lphu-hls.hzjvlo.cn/videos5/fedcba9876543210/fedcba9876543210.m3u8?auth_key=1793777863-0-0-eeeeeeee&v=3",
-    "video_url_hevc": "",
-    "page_canonical": "https://huangguoai.com/video/12/ep-2/",
-    "media_id": ""
+    "ep": 2,
+    "media_id": "",
+    "streams": {
+      "main": "https://yd-lphu-hls.tjyyjk.cn/videos5/fedcba9876543210/fedcba9876543210.m3u8?auth_key=1793777863-150.0.web.abc-0-eeeeeeee&v=3",
+      "hevc": "https://yd-lphu-hls.tjyyjk.cn/m3m/ffffffffffffffff.m3u8?auth_key=1793777863-150.0.web.abc-0-ffffffff&v=3",
+      "preview": ""
+    }
   },
   "status": 1,
   "msg": "",

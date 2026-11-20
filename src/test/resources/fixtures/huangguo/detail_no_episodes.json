@@ -1,0 +1,27 @@
+{
+  "data": {
+    "id": 233,
+    "title": "测试剧集 C（详情不带 episodes）",
+    "description": "测试用简介 C：只给集数，剧情分配列表缺失，用来验证按 episode_count 补齐章节。",
+    "cover": "https://pic.qnlycc.cn/upload_01/upload/20260103/cover_c.jpg?auth_key=1793783714-0-0-dddddddd",
+    "tags": [],
+    "score": 0,
+    "is_finished": false,
+    "episode_count": 4,
+    "total_episodes": 4,
+    "duration": "150",
+    "author": {
+      "id": 2003,
+      "name": "第三个作者",
+      "avatar": ""
+    },
+    "actors": [],
+    "episodes": [],
+    "video_url": "",
+    "video_url_hevc": "",
+    "video_type": 1
+  },
+  "status": 1,
+  "msg": "",
+  "req_time": 1793777900
+}

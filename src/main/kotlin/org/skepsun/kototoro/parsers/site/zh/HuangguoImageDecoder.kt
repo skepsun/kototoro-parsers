@@ -11,19 +11,24 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * 黄果短剧的封面 CDN（`*.drleao.cn`）返回的不是图片，而是 AES-128-CBC/NoPadding 密文，
+ * 黄果短剧的封面 CDN 返回的不是图片，而是 AES-128-CBC/NoPadding 密文，
  * `Content-Type` 为 `binary/octet-stream`。key/iv 是站点前端里的固定常量。
  *
  * 两个关键约束（详见 docs/huangguo_drama_api_research.md）:
- * 1. 同一个域下 `tp2/tp3.drleao.cn` **还**在发 HLS 的 `crypt.key`（16 字节裸密钥）和 `.ts` 分片，
- *    因此只能按「图片扩展名」判定，不能按域名泛匹配，否则会把播放打坏。
+ * 1. 图片 CDN 与 HLS 分片 CDN 是同一套 `*.<cdn-domain>` 主机族，`tpN.*` 还在发
+ *    `crypt.key`（16 字节裸密钥）、`.ts` 分片与 `.m3u8` 播放列表，**绝不能**当图片解密，
+ *    否则会把播放打坏。因此只按「图片扩展名」判定，不按域名。
  * 2. 站点存在未加密的老图（直接就是 `FFD8...`），必须先探测魔数，命中就直接透传。
+ *
+ * 判定只看扩展名、不看域名是刻意的：该站 CDN 域名换得很勤
+ * （2026-11-04 是 `pic.drleao.cn`，2026-11-20 已迁到 `pic.qnlycc.cn`），
+ * 一旦把域名写死，CDN 一迁封面就会全部退化成密文而无法显示。
+ * 域名无关的判定 + 魔数探测 + 解密失败原样透传，三者叠加后误判也不会损坏数据。
  */
 internal object HuangguoImageDecoder {
 
     private const val IMAGE_KEY = "f5d965df75336270"
     private const val IMAGE_IV = "97b60394abc2fbe1"
-    private const val IMAGE_HOST_SUFFIX = "drleao.cn"
 
     private val IMAGE_PATH_REGEX = Regex("""\.(?:jpe?g|png|webp|gif)$""", RegexOption.IGNORE_CASE)
 
@@ -31,12 +36,11 @@ internal object HuangguoImageDecoder {
         0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     )
 
-    fun isImageRequest(url: HttpUrl): Boolean {
-        if (!url.host.endsWith(IMAGE_HOST_SUFFIX, ignoreCase = true)) {
-            return false
-        }
-        return IMAGE_PATH_REGEX.containsMatchIn(url.encodedPath)
-    }
+    /**
+     * 只按图片扩展名判定，与 CDN 域名无关 —— 站点换 CDN 域名时封面不必跟着改代码。
+     * HLS 的 `crypt.key` / `.ts` / `.m3u8` 都不匹配图片扩展名，不会被误拦。
+     */
+    fun isImageRequest(url: HttpUrl): Boolean = IMAGE_PATH_REGEX.containsMatchIn(url.encodedPath)
 
     fun decodeResponse(response: Response): Response {
         if (!response.isSuccessful || !isImageRequest(response.request.url)) {

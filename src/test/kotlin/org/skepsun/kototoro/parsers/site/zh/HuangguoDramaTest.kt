@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.skepsun.kototoro.parsers.OfflineContentLoaderContext
 import org.skepsun.kototoro.parsers.exception.ParseException
+import org.skepsun.kototoro.parsers.model.ContentChapter
 import org.skepsun.kototoro.parsers.model.ContentListFilter
 import org.skepsun.kototoro.parsers.model.ContentState
 import org.skepsun.kototoro.parsers.model.ContentTag
@@ -26,6 +27,9 @@ internal class HuangguoDramaTest {
             "https://huangguoai.com/api/videos/category/ai-duanju?page=1&size=20&sort=new" to "huangguo/list.json",
             "https://huangguoai.com/api/search?q=%E5%A5%B3%E7%8E%8B&page=1&size=20" to "huangguo/search.json",
             "https://huangguoai.com/api/videos/12" to "huangguo/detail.json",
+            "https://huangguoai.com/api/videos/233" to "huangguo/detail_no_episodes.json",
+            "https://huangguoai.com/api/videos/12/episodes/2/playback" to "huangguo/play.json",
+            // 2026-11 改版前的老写法，升级用户已入库的章节仍要能播
             "https://huangguoai.com/api/videos/12/play?ep=2" to "huangguo/play.json",
         ),
     )
@@ -54,27 +58,29 @@ internal class HuangguoDramaTest {
         )
         // 频道标签按 key、按标题、按去掉 AI 前缀的写法都能落到分类接口
         assertEquals(
-            "https://huangguoai.com/api/videos/category/ai-huanlian?page=1&size=20&sort=new",
+            "https://huangguoai.com/api/videos/category/ai-manju?page=1&size=20&sort=new",
+            p.buildListUrl(
+                1,
+                SortOrder.UPDATED,
+                ContentListFilter(tags = setOf(ContentTag("AI成人漫剧", "some-stale-key", p.source))),
+            ),
+        )
+        assertEquals(
+            "https://huangguoai.com/api/videos/category/ai-manju?page=1&size=20&sort=new",
+            p.buildListUrl(
+                1,
+                SortOrder.UPDATED,
+                ContentListFilter(tags = setOf(ContentTag("成人漫剧", "成人漫剧", p.source))),
+            ),
+        )
+        // ai-huanlian / ai-mogai 已被站点下线（410），不再按频道处理，
+        // 老筛选值退化成关键词搜索而不是报错
+        assertEquals(
+            "https://huangguoai.com/api/search?q=AI%E6%8D%A2%E8%84%B8&page=1&size=20",
             p.buildListUrl(
                 1,
                 SortOrder.UPDATED,
                 ContentListFilter(tags = setOf(ContentTag("AI换脸", "ai-huanlian", p.source))),
-            ),
-        )
-        assertEquals(
-            "https://huangguoai.com/api/videos/category/ai-huanlian?page=1&size=20&sort=new",
-            p.buildListUrl(
-                1,
-                SortOrder.UPDATED,
-                ContentListFilter(tags = setOf(ContentTag("AI换脸", "some-stale-key", p.source))),
-            ),
-        )
-        assertEquals(
-            "https://huangguoai.com/api/videos/category/ai-huanlian?page=1&size=20&sort=new",
-            p.buildListUrl(
-                1,
-                SortOrder.UPDATED,
-                ContentListFilter(tags = setOf(ContentTag("换脸", "换脸", p.source))),
             ),
         )
         // 站点没有真标签接口的内容标签（如详情里的「都市」）退化成关键词搜索，而不是回落全站
@@ -88,14 +94,14 @@ internal class HuangguoDramaTest {
         )
         // 多个标签里只要有一个能落到频道，就按频道过滤
         assertEquals(
-            "https://huangguoai.com/api/videos/category/ai-mogai?page=1&size=20&sort=new",
+            "https://huangguoai.com/api/videos/category/ai-duanju?page=1&size=20&sort=new",
             p.buildListUrl(
                 1,
                 SortOrder.UPDATED,
                 ContentListFilter(
                     tags = setOf(
                         ContentTag("都市", "都市", p.source),
-                        ContentTag("AI魔改", "ai-mogai", p.source),
+                        ContentTag("AI成人短剧", "ai-duanju", p.source),
                     ),
                 ),
             ),
@@ -116,7 +122,7 @@ internal class HuangguoDramaTest {
         assertEquals("/video/12", first.url)
         assertEquals("https://huangguoai.com/video/12/", first.publicUrl)
         // auth_key 有时效，入库前裁掉，避免收藏后封面 403
-        assertEquals("https://pic.drleao.cn/upload_01/upload/20260101/cover_a.jpg", first.coverUrl)
+        assertEquals("https://pic.qnlycc.cn/upload_01/upload/20260101/cover_a.jpg", first.coverUrl)
         assertEquals(first.coverUrl, first.largeCoverUrl)
         assertEquals(0.96f, requireNotNull(first.rating), 0.001f)
         assertEquals(ContentState.FINISHED, first.state)
@@ -142,7 +148,7 @@ internal class HuangguoDramaTest {
         // 站点 episodes[].title 常常是整段剧情简介，这里统一成「第N集」
         assertEquals(listOf("第1集", "第2集", "第3集"), chapters.map { it.title })
         assertEquals(listOf(1f, 2f, 3f), chapters.map { it.number })
-        assertEquals("/api/videos/12/play?ep=2", chapters[1].url)
+        assertEquals("/api/videos/12/episodes/2/playback", chapters[1].url)
         assertEquals(ContentState.FINISHED, details.state)
     }
 
@@ -155,13 +161,59 @@ internal class HuangguoDramaTest {
         val pages = p.getPages(chapter)
 
         assertEquals(1, pages.size)
+        // 改版后地址在 data.streams.main，不再是 data.video_url
         assertEquals(
-            "https://yd-lphu-hls.hzjvlo.cn/videos5/fedcba9876543210/fedcba9876543210.m3u8" +
-                "?auth_key=1793777863-0-0-eeeeeeee&v=3",
+            "https://yd-lphu-hls.tjyyjk.cn/videos5/fedcba9876543210/fedcba9876543210.m3u8" +
+                "?auth_key=1793777863-150.0.web.abc-0-eeeeeeee&v=3",
             pages.single().url,
         )
         assertEquals("https://huangguoai.com/", pages.single().headers?.get("Referer"))
         assertNotNull(pages.single().headers?.get("User-Agent"))
+    }
+
+    @Test
+    fun `still plays chapters saved before the api rewrite`() = runBlocking {
+        val p = parser()
+        // 升级前入库的章节地址是 /api/videos/{id}/play?ep={n}
+        val legacy = ContentChapter(
+            id = 4242L,
+            title = "第2集",
+            number = 2f,
+            volume = 0,
+            url = "/api/videos/12/play?ep=2",
+            scanlator = null,
+            uploadDate = 0L,
+            branch = null,
+            source = p.source,
+        )
+
+        val pages = p.getPages(legacy)
+
+        assertTrue(pages.single().url.contains(".m3u8"), "老章节地址未能解析出播放地址")
+    }
+
+    @Test
+    fun `parses episode references from both url shapes`() {
+        val p = parser()
+
+        assertEquals(12 to 2, p.episodeRefOf("/api/videos/12/episodes/2/playback"))
+        assertEquals(12 to 2, p.episodeRefOf("https://huangguoai.com/api/videos/12/episodes/2/playback"))
+        assertEquals(12 to 2, p.episodeRefOf("/api/videos/12/play?ep=2"))
+        assertNull(p.episodeRefOf("/video/12"))
+        assertNull(p.episodeRefOf("/api/videos/12/play?ep=0"))
+    }
+
+    @Test
+    fun `synthesizes chapters from episode count when episodes are missing`() = runBlocking {
+        val p = parser()
+        val seed = p.getList(0, SortOrder.UPDATED, ContentListFilter.EMPTY).first()
+            .copy(url = "/video/233")
+
+        val chapters = p.getDetails(seed).chapters.orEmpty()
+
+        // 改版后详情不再预置 video_url，只凭 episode_count 也要能补齐章节
+        assertEquals(listOf(1f, 2f, 3f, 4f), chapters.map { it.number })
+        assertEquals("/api/videos/233/episodes/4/playback", chapters.last().url)
     }
 
     @Test
@@ -189,7 +241,7 @@ internal class HuangguoDramaTest {
         val chapters = p.parseChapters(episodes, videoId = 12)
 
         assertEquals(listOf(1f, 2f), chapters.map { it.number })
-        assertEquals("/api/videos/12/play?ep=1", chapters.first().url)
+        assertEquals("/api/videos/12/episodes/1/playback", chapters.first().url)
     }
 
     @Test
@@ -238,10 +290,10 @@ internal class HuangguoDramaTest {
     fun `normalizes covers and detail paths`() {
         val p = parser()
         assertEquals(
-            "https://pic.drleao.cn/a/b.webp",
-            p.normalizeCover("https://pic.drleao.cn/a/b.webp?auth_key=1-0-0-abc"),
+            "https://pic.qnlycc.cn/a/b.webp",
+            p.normalizeCover("https://pic.qnlycc.cn/a/b.webp?auth_key=1-0-0-abc"),
         )
-        assertEquals("https://pic.drleao.cn/a/b.webp", p.normalizeCover("//pic.drleao.cn/a/b.webp"))
+        assertEquals("https://pic.qnlycc.cn/a/b.webp", p.normalizeCover("//pic.qnlycc.cn/a/b.webp"))
         assertNull(p.normalizeCover("   "))
         assertNull(p.normalizeCover("data:image/png;base64,AAAA"))
 

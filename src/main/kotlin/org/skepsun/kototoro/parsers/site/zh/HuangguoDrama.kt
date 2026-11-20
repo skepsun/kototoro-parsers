@@ -1,6 +1,7 @@
 package org.skepsun.kototoro.parsers.site.zh
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.json.JSONArray
@@ -33,7 +34,7 @@ import java.util.EnumSet
  * 黄果短剧 — 竖屏 AI / 真人短剧站，直连 JSON API。
  *
  * 站点: https://huangguoai.com（备用地址发布页 https://huangguoai.pages.dev/）
- * 最后验证: 2026-11-04（经本机 7890 代理实机验证，接口见 docs/huangguo_drama_api_research.md）
+ * 最后验证: 2026-11-20（经本机 7890 代理实机复核，接口见 docs/huangguo_drama_api_research.md）
  *
  * 数据模型: 一部剧 = 一个 [Content]，一集 = 一个 [ContentChapter]，播放地址是 HLS(m3u8)。
  *
@@ -42,17 +43,21 @@ import java.util.EnumSet
  * - 分类: GET /api/videos/category/{cate}?page=&size=
  * - 搜索: GET /api/search?q=&page=&size=（参数名是 q，传 keyword 会报错）
  * - 详情: GET /api/videos/{id}，一次返回完整 episodes[]
- * - 播放: GET /api/videos/{id}/play?ep={n}，返回带 auth_key 的 m3u8，约 1 小时过期
+ * - 播放: **POST** /api/videos/{id}/episodes/{ep}/playback → data.streams.main 即 m3u8，约 1 小时过期
  *
  * 注意:
+ * - `page` 从 1 开始，传 0 会直接 400「请求参数无效」。
  * - 站点只会**静默忽略**未知的排序参数（未知值一律回落默认序），
- *   因此这里只暴露实测生效的两种排序。
+ *   因此这里只暴露实测生效的两种排序。`sort=popular` 虽然写在 /api/site/sorts/video 里，
+ *   但 feed 接口对它会返回 400，所以不能直接拿来用。
  * - 封面 CDN 返回的是 AES 密文而不是图片，
  *   由 [intercept] 走 [HuangguoImageDecoder] 解密。
  * - 分集 `title` 字段经常塞的是整段剧情简介而不是「第N集」，
  *   这里统一规范成「第N集」，避免异常长且露骨的文字直接进章节列表。
- * - 只有 4 个频道（ai-duanju / ai-manju / ai-huanlian / ai-mogai）支持真实筛选；
- *   详情里的 `tags` 没有对应接口，点选后按关键词搜索处理（见 [buildListUrl]）。
+ * - 目前只有 `ai-duanju` / `ai-manju` 两个频道还有内容；
+ *   `ai-huanlian` / `ai-mogai`（AI 换脸 / 魔改）自 2026-11-20 起返回 410「内容已下线」，
+ *   已从筛选项里移除（这类换脸内容本身也不适合接入）。
+ *   详情里的 `tags`（「都市」「换脸」…）没有对应接口，点选后按关键词搜索处理（见 [buildListUrl]）。
  */
 @ContentSourceParser(
     "HUANGGUO",
@@ -84,7 +89,7 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
         )
 
     override suspend fun getFilterOptions(): ContentListFilterOptions = ContentListFilterOptions(
-        // 站点只有这 4 个频道能真正筛选，其余标签在详情里展示，但点选后按关键词搜索处理
+        // 站点只有这两类频道能真正筛选，其余标签在详情里展示，但点选后按关键词搜索处理
         availableTags = CHANNELS.mapTo(linkedSetOf()) { (key, title) -> ContentTag(title, key, source) },
         availableContentTypes = EnumSet.of(ContentType.HENTAI_VIDEO),
     )
@@ -112,7 +117,7 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
         val url = "https://$domain${apiDetailPath(videoId)}"
         val data = webClient.httpGet(url, getRequestHeaders()).parseJson().requireData(url)
         val chapters = parseChapters(data.optJSONArray("episodes"), videoId)
-            .ifEmpty { fallbackChapter(data, videoId, url) }
+            .ifEmpty { fallbackChapters(data, videoId) }
         val cover = normalizeCover(data.optString("cover"))
         val tags = parseTags(data)
         return content.copy(
@@ -128,12 +133,16 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
     }
 
     override suspend fun getPages(chapter: ContentChapter): List<ContentPage> {
-        val url = chapter.url.takeIf { it.startsWith("http") } ?: "https://$domain${chapter.url}"
-        val data = webClient.httpGet(url, getRequestHeaders()).parseJson().requireData(url)
-        val streamUrl = data.optString("video_url").trim()
-            .ifEmpty { data.optString("video_url_hevc").trim() }
+        val episode = episodeRefOf(chapter.url)
+            ?: throw ParseException("黄果短剧: 无法从章节地址解析剧集编号", chapter.url)
+        val url = "https://$domain${playPath(episode.first, episode.second)}"
+        // 站点 2026-11 改版后播放地址只走 POST；GET /api/videos/{id}/play?ep= 的 video_url 已恒为空
+        val data = webClient.httpPost(url.toHttpUrl(), JSONObject(), getRequestHeaders())
+            .parseJson()
+            .requireData(url)
+        val streamUrl = extractStreamUrl(data)
         if (streamUrl.isEmpty()) {
-            throw ParseException("黄果短剧: 播放接口未返回 video_url", url)
+            throw ParseException("黄果短剧: 播放接口未返回 m3u8 地址", url)
         }
         return listOf(
             ContentPage(
@@ -150,6 +159,20 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
     }
 
     /**
+     * 新接口把播放地址放在 `streams.main`（另有 `hevc` / `preview` 两个变体）。
+     * 旧字段 `video_url` 现在恒为空，保留兜底是为了老响应的兼容性。
+     */
+    private fun extractStreamUrl(data: JSONObject): String {
+        val streams = data.optJSONObject("streams")
+        if (streams != null) {
+            streams.optString("main").trim().takeIf(String::isNotEmpty)?.let { return it }
+            streams.optString("hevc").trim().takeIf(String::isNotEmpty)?.let { return it }
+        }
+        data.optString("video_url").trim().takeIf(String::isNotEmpty)?.let { return it }
+        return data.optString("video_url_hevc").trim()
+    }
+
+    /**
      * 封面 CDN 返回 AES-128-CBC 密文，这里在响应链上解密，对上层完全透明。
      */
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -157,7 +180,7 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
     }
 
     /**
-     * 站点只有 4 个频道有真实筛选能力。详情里的 `tags`（「都市」「换脸」…）在服务端没有对应接口：
+     * 站点只有分类接口对应的频道有真实筛选能力。详情里的 `tags`（「都市」「换脸」…）在服务端没有对应接口：
      * `/tag/{slug}/` 页面确实存在，但卡片并不按标签过滤（实测 /tag/fanzui/ 里混入大量无关剧集），
      * 所以这类标签退化成站点搜索的关键词，至少保证「点了标签列表会随之收窄」，而不是原地不动返回全站。
      */
@@ -269,33 +292,30 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
     }
 
     /**
-     * 详情里 `episodes` 缺失时，退化到详情自带的第 1 集预置地址，保证至少能播一集。
+     * 详情里 `episodes` 缺失时，按 `episode_count` / `total_episodes` 补齐 1..N 集。
+     *
+     * 改版后播放地址不再由详情预置（`video_url` 恒为空），只要集数已知就能逐集现取，
+     * 所以这里不需要再依赖任何预置流地址。
      */
-    private fun fallbackChapter(data: JSONObject, videoId: Int, url: String): List<ContentChapter> {
-        val hasStream = data.optString("video_url").isNotBlank() ||
-            data.optString("video_url_hevc").isNotBlank()
-        if (!hasStream) {
-            // 站点声明有集数却既不给 episodes 也不给预置流，
-            // 属于响应结构变化，需要显式报错
-            if (data.optInt("episode_count") > 0) {
-                throw ParseException("黄果短剧: 详情缺少 episodes 且无预置播放地址", url)
-            }
+    internal fun fallbackChapters(data: JSONObject, videoId: Int): List<ContentChapter> {
+        val count = maxOf(data.optInt("episode_count"), data.optInt("total_episodes"))
+        if (count <= 0) {
             return emptyList()
         }
-        val path = playPath(videoId, 1)
-        return listOf(
+        return (1..count).map { number ->
+            val path = playPath(videoId, number)
             ContentChapter(
                 id = generateUid(path),
-                title = "第1集",
-                number = 1f,
+                title = "第${number}集",
+                number = number.toFloat(),
                 volume = 0,
                 url = path,
                 scanlator = null,
                 uploadDate = 0L,
                 branch = null,
                 source = source,
-            ),
-        )
+            )
+        }
     }
 
     /**
@@ -311,7 +331,29 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
         return match.groupValues[1].toIntOrNull()
     }
 
-    internal fun playPath(videoId: Int, episode: Int): String = "/api/videos/$videoId/play?ep=$episode"
+    /** 播放接口的站内相对地址（域名无关），播放前现取，避免缓存过期链。 */
+    internal fun playPath(videoId: Int, episode: Int): String = "/api/videos/$videoId/episodes/$episode/playback"
+
+    /**
+     * 从章节地址还原「影片 id + 集号」。
+     * 同时接受 2026-11 之前入库的老写法 `/api/videos/{id}/play?ep={n}`，
+     * 让升级前已经下载过章节列表的用户不必重新添加收藏。
+     */
+    internal fun episodeRefOf(url: String): Pair<Int, Int>? {
+        EPISODE_PATH_REGEX.find(url)?.let { match ->
+            val videoId = match.groupValues[1].toIntOrNull()
+            val episode = match.groupValues[2].toIntOrNull()
+            return if (videoId != null && episode != null && videoId > 0 && episode > 0) {
+                videoId to episode
+            } else {
+                null
+            }
+        }
+        // 老写法：集号在查询串里，影片 id 在 /api/videos/{id} 段（与详情页的 /video/{id} 不是同一段）
+        val episode = EP_QUERY_REGEX.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        val videoId = API_VIDEO_ID_REGEX.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        return if (videoId > 0 && episode > 0) videoId to episode else null
+    }
 
     internal fun apiDetailPath(videoId: Int): String = "/api/videos/$videoId"
 
@@ -380,15 +422,24 @@ internal class HuangguoDrama(context: ContentLoaderContext) :
     private companion object {
 
         /**
-         * 站点的 5 个频道，`chigua`（吃瓜）是帖子而非剧集，走 /api/posts，本解析器不接入。
+         * 站点频道。`chigua`（吃瓜）是帖子而非剧集，走 /api/posts，本解析器不接入；
+         * `ai-huanlian` / `ai-mogai` 自 2026-11-20 起返回 410「内容已下线」，不再暴露，
+         * 老筛选值会自然退化成关键词搜索而不报错。
          */
         val CHANNELS = listOf(
             "ai-duanju" to "AI成人短剧",
             "ai-manju" to "AI成人漫剧",
-            "ai-huanlian" to "AI换脸",
-            "ai-mogai" to "AI魔改",
         )
 
         val VIDEO_ID_REGEX = Regex("""/video/(\d+)""")
+
+        /** 接口路径里的影片 id：`/api/videos/{id}/...` */
+        val API_VIDEO_ID_REGEX = Regex("""/api/videos/(\d+)""")
+
+        /** 新播放接口写法：`/api/videos/{id}/episodes/{ep}/playback` */
+        val EPISODE_PATH_REGEX = Regex("""/api/videos/(\d+)/episodes/(\d+)/playback""")
+
+        /** 2026-11 改版前的老写法：`/api/videos/{id}/play?ep={n}` */
+        val EP_QUERY_REGEX = Regex("""[?&]ep=(\d+)""")
     }
 }

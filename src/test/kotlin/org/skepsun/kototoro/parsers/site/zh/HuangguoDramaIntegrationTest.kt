@@ -26,6 +26,8 @@ class HuangguoDramaIntegrationTest {
         val details = parser.getDetails(list.first())
         val chapters = requireNotNull(details.chapters).takeIf { it.isNotEmpty() } ?: error("章节列表为空")
         assertTrue(chapters.all { it.url.startsWith("/api/videos/") })
+        // 章节地址必须能还原出「影片 id + 集号」，否则播放前现取时会拿不到播放接口
+        assertTrue(chapters.all { parser.episodeRefOf(it.url) != null }, "章节地址无法解析出集号")
 
         val pages = parser.getPages(chapters.first())
         assertEquals(1, pages.size)

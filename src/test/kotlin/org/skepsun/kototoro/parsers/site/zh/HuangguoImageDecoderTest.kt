@@ -69,13 +69,28 @@ internal class HuangguoImageDecoderTest {
     }
 
     @Test
-    fun `treats only image paths on the cover cdn as encrypted`() {
+    fun `treats image paths as encrypted regardless of cdn host`() {
+        // 站点换过 CDN 域名（drleao.cn → qnlycc.cn），判定必须与域名无关，否则封面会退化成密文
+        assertTrue(HuangguoImageDecoder.isImageRequest("https://pic.qnlycc.cn/a/b.jpg".toHttpUrl()))
         assertTrue(HuangguoImageDecoder.isImageRequest("https://pic.drleao.cn/a/b.jpg".toHttpUrl()))
         assertTrue(HuangguoImageDecoder.isImageRequest("https://new2.drleao.cn/a/b.PNG".toHttpUrl()))
-        // 同域还承载 HLS 的裸密钥与分片，绝不能当图片解密
+        assertTrue(HuangguoImageDecoder.isImageRequest("https://future-cdn.example/upload/x.webp".toHttpUrl()))
+        // 同族主机还承载 HLS 的裸密钥、分片与播放列表，绝不能当图片解密
+        assertFalse(HuangguoImageDecoder.isImageRequest("https://tp6.qnlycc.cn/videos5/x/crypt.key".toHttpUrl()))
         assertFalse(HuangguoImageDecoder.isImageRequest("https://tp2.drleao.cn/videos5/x/crypt.key".toHttpUrl()))
-        assertFalse(HuangguoImageDecoder.isImageRequest("https://tp3.drleao.cn/videos5/x/x0.ts".toHttpUrl()))
-        assertFalse(HuangguoImageDecoder.isImageRequest("https://yd-hls.hzjvlo.cn/videos5/x/x.m3u8".toHttpUrl()))
+        assertFalse(HuangguoImageDecoder.isImageRequest("https://tp4.qnlycc.cn/videos5/x/x0.ts".toHttpUrl()))
+        assertFalse(HuangguoImageDecoder.isImageRequest("https://yd-lphu-hls.tjyyjk.cn/videos5/x/x.m3u8".toHttpUrl()))
+    }
+
+    @Test
+    fun `decodes covers served from the current cover host`() {
+        val plain = Base64.getDecoder().decode(ONE_PIXEL_PNG)
+        val response = imageResponse(encrypt(plain), url = "https://pic.qnlycc.cn/upload_01/upload/20261120/cover_x.png")
+
+        val decoded = HuangguoImageDecoder.decodeResponse(response)
+
+        assertArrayEquals(plain, decoded.body.bytes())
+        assertEquals("image/png", decoded.body.contentType().toString())
     }
 
     @Test
@@ -100,9 +115,12 @@ internal class HuangguoImageDecoderTest {
         return cipher.doFinal(padded)
     }
 
-    private fun imageResponse(body: ByteArray): Response {
+    private fun imageResponse(
+        body: ByteArray,
+        url: String = "https://pic.qnlycc.cn/upload_01/upload/20260101/cover_a.jpg?auth_key=1-0-0-abc",
+    ): Response {
         val request = Request.Builder()
-            .url("https://pic.drleao.cn/upload_01/upload/20260101/cover_a.jpg?auth_key=1-0-0-abc")
+            .url(url)
             .build()
         return Response.Builder()
             .request(request)
